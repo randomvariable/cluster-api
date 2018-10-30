@@ -70,3 +70,7 @@ verify:
 # Push the docker image
 docker-push:
 	docker push ${IMG}
+
+book:
+	gitbook install . ./docs
+	gitbook build . ./docs
