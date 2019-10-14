@@ -1,0 +1,53 @@
+@startuml
+title User creates a Cluster with ControlPlane
+
+' -- GROUPS START ---
+
+box #lightgreen
+participant "API Server"
+end box
+
+box #violet
+participant "ControlPlane Controller"
+end box
+
+' -- GROUPS END ---
+
+note right of "ControlPlane Controller":Watches ControlPlanes,\nClusters, and owned Machines
+
+"API Server"-->>"ControlPlane Controller": Machine Updated
+
+"ControlPlane Controller"-> "ControlPlane Controller":Enqueues ControlPlane Reconcile
+
+"ControlPlane Controller"-> "ControlPlane Controller":ControlPlane Controller Reconcile
+activate "ControlPlane Controller"
+
+note over "ControlPlane Controller": - ✅ ControlPlane.OwnerReferences \ncontains a Cluster
+
+"ControlPlane Controller"->"API Server": Get Cluster
+"ControlPlane Controller"<<--"API Server": Response
+
+note over "ControlPlane Controller": - ✅ Cluster.Status.Phase is "Pending" \n- ✅ Cluster.Status.InfrastructureReady is true\n- ✅ ControlPlane instance is valid
+
+"ControlPlane Controller"->"API Server": Get Machines maching label selector
+"ControlPlane Controller"<<--"API Server": Response
+
+opt ControlPlane.Spec.Replicas >= 1, 1 or more existing Machines found that is "Ready"
+
+"ControlPlane Controller"-> "ControlPlane Controller":Set ControlPlane.Status.Initialized = true
+"ControlPlane Controller"-> "ControlPlane Controller":Set ControlPlane.Status.Phase = "Initialized"
+
+opt num Machines matches Replicas, and all Machines "Ready"
+
+"ControlPlane Controller"-> "ControlPlane Controller":Set ControlPlane.Status.Ready = true
+"ControlPlane Controller"-> "ControlPlane Controller":Set ControlPlane.Status.Phase = "Ready"
+
+end
+
+end
+
+"ControlPlane Controller"->"API Server": Patch ControlPlane
+"ControlPlane Controller"<<--"API Server": Response
+
+hide footbox
+@enduml

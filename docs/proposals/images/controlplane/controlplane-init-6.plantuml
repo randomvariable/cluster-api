@@ -1,0 +1,54 @@
+@startuml
+title User scales up a ControlPlane
+actor User
+
+' -- GROUPS START ---
+
+box #lightgreen
+participant "API Server"
+end box
+
+box #violet
+participant "ControlPlane Controller"
+end box
+
+' -- GROUPS END ---
+
+User->"API Server":kubectl scale cp/my-control-plane -replicas=3
+"API Server"-->>"ControlPlane Controller": ControlPlane Updated
+
+"ControlPlane Controller"-> "ControlPlane Controller":Enqueues ControlPlane Reconcile
+
+"ControlPlane Controller"-> "ControlPlane Controller":ControlPlane Controller Reconcile
+activate "ControlPlane Controller"
+
+note over "ControlPlane Controller": - ✅ ControlPlane.OwnerReferences \ncontains a Cluster
+
+"ControlPlane Controller"->"API Server": Get Cluster
+"ControlPlane Controller"<<--"API Server": Response
+
+note over "ControlPlane Controller": - ✅ Cluster.Status.InfrastructureReady is true\n- ✅ ControlPlane instance is valid
+
+"ControlPlane Controller"->"API Server": Get Machines maching label selector
+"ControlPlane Controller"<<--"API Server": Response
+
+opt ControlPlane.Spec.Replicas >= 1, all existing Machines "Ready", num Machines < Replicas
+
+"ControlPlane Controller"->"API Server": Create KubeadmConfig from ControlPlane.Spec.KubeadmConfigSpec
+"ControlPlane Controller"<<--"API Server": Response
+
+"ControlPlane Controller"->"API Server": Create InfrastructureMachine from ControlPlane.Spec.InfrastructureTemplate
+"ControlPlane Controller"<<--"API Server": Response
+
+"ControlPlane Controller"->"API Server": Create Machine using refs from created KubeadmConfig and InfrastructureMachine resources
+"ControlPlane Controller"<<--"API Server": Response
+
+"ControlPlane Controller"-> "ControlPlane Controller":Set ControlPlane.Status.Phase = "ScalingUp"
+
+end
+
+"ControlPlane Controller"->"API Server": Update ControlPlane
+"ControlPlane Controller"<<--"API Server": Response
+
+hide footbox
+@enduml
