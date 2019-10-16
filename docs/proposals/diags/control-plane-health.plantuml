@@ -26,7 +26,7 @@ if (ControlPlane.OwnerReferences contains a Cluster) then (true)
     while (more pods?) is (true)
       :ControlPlane.Status.CriticalPods += 1;
       if (Pod.PodStatus.phase == Running or Succeeded) then (true)
-        :ControlPlane.Status.CriticalPodsAvailable += 1;
+        :ControlPlane.Status.AvailableCriticalPods += 1;
       else (false)
       endif
     endwhile
@@ -40,7 +40,7 @@ if (ControlPlane.OwnerReferences contains a Cluster) then (true)
         while (more members?) is (true)
           :ControlPlane.Status.DatastoreReplicas += 1;
           if (member is ok) then (true)
-            :ControlPlane.Status.DatastoreAvailableReplicas += 1;
+            :ControlPlane.Status.AvailableDatastoreReplicas += 1;
           else (false)
             #LightGreen:post EtcdUnhealthy event to machine with unhealthy member;
           endif
@@ -54,11 +54,11 @@ if (ControlPlane.OwnerReferences contains a Cluster) then (true)
     end note
     while (more deployments?) is (true)
       :ControlPlane.Status.DNSReplicas += Deployment.Spec.Replicas;
-      :ControlPlane.Status.DNSAvailable += Deployment.Status.AvailableReplicas;
+      :ControlPlane.Status.AvailableDNSReplicas += Deployment.Status.AvailableReplicas;
     endwhile
     while (more daemonsets?) is (true)
       :ControlPlane.Status.DNSReplicas += Daemonset.Spec.Replicas;
-      :ControlPlane.Status.DNSAvailable += Daemonset.Status.AvailableReplicas;
+      :ControlPlane.Status.AvailableDNSReplicas += Daemonset.Status.AvailableReplicas;
     endwhile
   else (false)
   endif
