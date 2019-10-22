@@ -63,10 +63,18 @@ The lexicon used in this document is described in more detail [here](https://git
 
 ## Summary
 
-Management of the control plane is currently handled in Cluster API at the infrastructure provider level (although many providers have converged on using the same implementation), based on the special annotation of standard Cluster API machines which then changes the machine bootstrapping logic within a particular infrastructure provider.
-The purpose of this document is to instead treat machine-based control plane management as a first-class component that is part of the API and Cluster, where multiple Cluster API machines will belong to a single control plane object, with its own infrastructure independent provider. The control plane covered by this document is defined as consisting of the Kubernetes API server, scheduler, controller manager, DNS and proxy services, and the underlying etcd datastore.
+This proposal outlines a new process for Cluster API to manage control plane machines as a single concept. This includes
+upgrading, scaling up, and modifying the underlying image (e.g. AMI) of the control plane machines.
+
+The control plane covered by this document is defined as the Kubernetes API server, scheduler, controller manager, DNS
+and proxy services, and the underlying etcd data store.
 
 ## Motivation
+
+During 2019 we saw control plane management implementations in each infrastructure provider. Much like
+bootstrapping was identified as being reimplemented in every infrastructure provider and then extracted into Cluster API
+Bootstrap Provider Kubeadm (CABPK), we believe we can reduce the redundancy of control plane management across providers
+and centralize the logic in Cluster API.
 
 ### Goals
 
