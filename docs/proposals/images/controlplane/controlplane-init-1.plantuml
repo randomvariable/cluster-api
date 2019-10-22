@@ -23,10 +23,6 @@ activate "Cluster API Cluster Controller"
 note over "Cluster API Cluster Controller": - ✅ Cluster.Status.InfrastructureReady is false\n- ✅ Cluster.Spec.ControlPlaneRef is populated\n- ✅ Cluster.Spec.ControlPlaneRef -> Status.Ready is false
 
 opt Required only if the object hasn't been seen before
-"Cluster API Cluster Controller"-> "Cluster API Cluster Controller":Add watcher for \nCluster.Spec.InfrastructureRef.Kind objects
-end
-
-opt Required only if the object hasn't been seen before
 "Cluster API Cluster Controller"-> "Cluster API Cluster Controller":Add watcher for \nCluster.Spec.ControlPlaneRef.Kind objects
 end
 

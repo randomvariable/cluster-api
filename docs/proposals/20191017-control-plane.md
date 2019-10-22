@@ -45,6 +45,7 @@ status: provisional
       - [Code organization](#code-organization)
     - [Risks and Mitigations](#risks-and-mitigations)
       - [etcd membership](#etcd-membership)
+      - [Upgrade where changes needed to KubeadmConfig are not currently possible](#upgrade-where-changes-needed-to-kubeadmconfig-are-not-currently-possible)
   - [Design Details](#design-details)
     - [Test Plan](#test-plan)
     - [Graduation Criteria](#graduation-criteria)
@@ -86,6 +87,7 @@ and centralize the logic in Cluster API.
 #### Additional goals of the default kubeadm machine-based Implementation
 
 - To provide a kubeadm-based implementation that is infrastructure provider agnostic
+- To enable declarative orchestrated replacement of control plane machines, such as to rollout an OS-level CVE fix.
 - To manage a kubeadm-based, "stacked etcd" control plane
 - To enable scaling of the number of control plane nodes
 - To support pre-existing, user-managed, external etcd clusters
@@ -109,29 +111,30 @@ Non-Goals listed in this document are intended to scope bound the current v1alph
 - To provide CNI configuration. This is deferred to external, higher level tooling.
 - To provide the upgrade logic to handle changes to infrastructure (networks, firewalls etc…) that may need to be done to support a control plane on a newer version of Kubernetes (e.g. a cloud controller manager requires updated permissions against infrastructure APIs). We expect the work on add-on components to help to resolve some of these issues.
 - To provide horizontal or vertical auto scaling of control plane components, especially as etcd places hard performance limits beyond 3 nodes (due to latency).
+- To support upgrades where the infrastructure does not rely on a Load Balancer for access to the API Server.
 
 ## Proposal
 
 ### User Stories
 
 1. As a cluster operator, I want my Kubernetes clusters to have high availability control planes to meet my SLOs with application developers.
-1. As a developer, I want to be able to deploy as small as possible a cluster, e.g. to meet my organization’s cost requirements.
-1. As a cluster operator, I want to be able to scale up my control plane to meet the increased demand that workloads are placing on my cluster.
-1. As a cluster operator, I want to be able to remove a control plane replica that I have determined is faulty and should be replaced.
-1. As a cluster operator, I want my cluster architecture to be always consistent with best practices, in order to have reliable cluster provisioning without having to understand the details of underlying datastores, replication etc…
-1. As a cluster operator, I want to know if my cluster’s control plane is healthy in order to understand if I am meeting my SLOs with my end users.
-1. As a cluster operator, I want to be able to quickly respond to a Kubernetes CVE by upgrading my clusters in an automated fashion.
-1. As a cluster operator, I want to be able to quickly respond to a non-Kubernetes CVE that affects my base image or Kubernetes dependencies by upgrading my clusters in an automated fashion.
-1. As a cluster operator, I would like to upgrade to a new minor version of Kubernetes so that my cluster remains supported.
-1. As a cluster operator, I want to know why my cluster isn’t working properly after creation. I have ended up with an API server I can access, but CNI isn’t working, and new machines are not registering themselves with the control plane.
+2. As a developer, I want to be able to deploy as small as possible a cluster, e.g. to meet my organization’s cost requirements.
+3. As a cluster operator, I want to be able to scale up my control plane to meet the increased demand that workloads are placing on my cluster.
+4. As a cluster operator, I want to be able to remove a control plane replica that I have determined is faulty and should be replaced.
+5. As a cluster operator, I want my cluster architecture to be always consistent with best practices, in order to have reliable cluster provisioning without having to understand the details of underlying datastores, replication etc…
+6. As a cluster operator, I want to know if my cluster’s control plane is healthy in order to understand if I am meeting my SLOs with my end users.
+7. As a cluster operator, I want to be able to quickly respond to a Kubernetes CVE by upgrading my clusters in an automated fashion.
+8. As a cluster operator, I want to be able to quickly respond to a non-Kubernetes CVE that affects my base image or Kubernetes dependencies by upgrading my clusters in an automated fashion.
+9. As a cluster operator, I would like to upgrade to a new minor version of Kubernetes so that my cluster remains supported.
+10. As a cluster operator, I want to know why my cluster isn’t working properly after creation. I have ended up with an API server I can access, but CNI isn’t working, and new machines are not registering themselves with the control plane.
 
 #### Identified features from user stories
 
 1. Based on the function of kubeadm, the control plane provider must be able to scale the number of replicas of a control plane from 1 to X, meeting user stories 1 through 4.
-1. To address user story 5, the control plane provider must provide validation of the number of replicas in a control plane. Where the stacked etcd topology is used (i.e., in the default implementation), the number of replicas must be an odd number, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members). When external etcd is used, any number is valid.
-1. In service of user story 5, the control plane provider must also manage etcd membership via kubeadm as part of scaling down (`kubeadm` takes care of adding the new etcd member when joining).
-1. The control plane provider should provide indicators of health to meet user story 6 and 10. This should include at least the state of etcd and information about which replicas are currently healthy or not. For the default implementation, health attributes based on artifacts kubeadm installs on the cluster may also be of interest to cluster operators.
-1. The control plane provider must be able to upgrade a control plane’s version of Kubernetes as well as updating the underlying machine image on where applicable (e.g. virtual machine based infrastructure).
+2. To address user story 5, the control plane provider must provide validation of the number of replicas in a control plane. Where the stacked etcd topology is used (i.e., in the default implementation), the number of replicas must be an odd number, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members). When external etcd is used, any number is valid.
+3. In service of user story 5, the control plane provider must also manage etcd membership via kubeadm as part of scaling down (`kubeadm` takes care of adding the new etcd member when joining).
+4. The control plane provider should provide indicators of health to meet user story 6 and 10. This should include at least the state of etcd and information about which replicas are currently healthy or not. For the default implementation, health attributes based on artifacts kubeadm installs on the cluster may also be of interest to cluster operators.
+5. The control plane provider must be able to upgrade a control plane’s version of Kubernetes as well as updating the underlying machine image on where applicable (e.g. virtual machine based infrastructure).
 
 ### Implementation Details/Notes/Constraints
 
@@ -150,7 +153,7 @@ import (
 
 // ControlPlaneSpec defines the desired state of ControlPlane
 type ControlPlaneSpec struct {
-    // Number of desired machines. Defaults to 1.
+    // Number of desired machines. Defaults to 1. When stacked etcd is used only 1, 3, 5, or 7 will be permitted, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
     // This is a pointer to distinguish between explicit zero and not specified.
     // +optional
     Replicas *int32 `json:"replicas,omitempty"`
@@ -187,16 +190,9 @@ type ControlPlaneStatus struct {
     // +optional
     UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
 
-    // Total number of fully running machines, including the number of active
-    // etcd cluster members when running as stacked
+    // Total number of fully running and ready control plane machines
     // +optional
     ReadyReplicas int32 `json:"readyReplicas,omitempty"`
-
-    // Total number of available machines targeted by this control plane.
-    // This is the same as ReadyReplicas, but exposed to be similar to the
-    // status exposed by MachineDeployments and Deployments
-    // +optional
-    AvailableReplicas int32 `json:"readyReplicas,omitempty"`
 
     // Total number of unavailable machines targeted by this control plane.
     // This is the total number of machines that are still required for
@@ -304,7 +300,9 @@ With the following validations:
 
 - If `ControlPlane.Spec.KubeadmConfigSpec` does not define external etcd (webhook):
   - `ControlPlane.Spec.Replicas` in [1, 3, 5, 7]
+  - Configuration of external etcd is determined by introspecting the provided `KubeadmConfigSpec`.
 - `ControlPlane.Spec.Version != ""` (openapi)
+- `ControlPlane.Spec.KubeadmConfigSpec` must be treated as immutable (via webhook)
 
 And the following defaulting:
 
@@ -326,7 +324,7 @@ And the following defaulting:
 ```go
     // ControlPlaneReady defines if the control plane is ready
     // +optional
-    ControlPlaneReady bool `json:"controlPlaneReady"`
+    ControlPlaneReady bool `json:"controlPlaneReady,omitempty"`
 ```
 
 #### Behavioral Changes from v1alpha2
@@ -335,6 +333,8 @@ And the following defaulting:
   - [Status.ControlPlaneInitialized](https://github.com/kubernetes-sigs/cluster-api/issues/1243) is set based on the value of Status.Initialized for the referenced resource.
   - Status.ControlPlaneReady is set based on the value of Status.Ready for the referenced resource, this field is intended to eventually replace Status.ControlPlaneInitialized as a field that will be kept up to date instead of set only once.
 - Current behavior will be preserved if `Cluster.Spec.ControlPlaneRef` is not set.
+- CA certificate secrets that were previously generated by the Kubeadm bootstrapper will now be generated by the ControlPlane Controller, maintaining backwards compatibility with the previous behavior if the ControlPlane is not used.
+- The kubeconfig secret that was previously created by the Machine Controller will now be generated by the ControlPlane Controller, maintaining backwards compatibility with the previous behavior if the ControlPlane is not used.
 
 #### Behaviors
 
@@ -342,7 +342,7 @@ And the following defaulting:
 
 - After a ControlPlane object is created, it must bootstrap a control plane with a given number of replicas.
 - If an error occurs, `ControlPlane.Status.ErrorStatus` and `ControlPlane.Status.ErrorMessage` are populated.
-- Cannot create an even number of stacked control planes or anything other than 1, 3, 5, or 7
+- `ControlPlane.Spec.Replicas` must be one of {1,3,5,7}.
 - Can create an arbitrary number of control planes if etcd is external to the control plane
 - Creating a ControlPlane with > 1 replicas is equivalent to creating a ControlPlane with 1 replica followed by scaling the ControlPlane to 3 replicas
 - The kubeadm bootstrapping configuration provided via `ControlPlane.Spec.KubeadmConfigSpec` should specify the `InitConfiguration`, `ClusterConfiguration`, and `JoinConfiguration` stanzas, and the ControlPlane controller will be responsible for splitting the config and passing it to the underlying Machines created as appropriate.
@@ -444,10 +444,11 @@ spec:
 
 - Allow scale up a control plane with stacked etcd to only 1, 3, 5, or 7, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
 - However, allow a control plane using an external etcd cluster to scale up to other numbers such as 2 or 4.
-- Scale up operations should not be done in conjunction with an upgrade operation.
+- Scale up operations must not be done in conjunction with an upgrade operation, this should be enforced using a validation webhook.
 - Scale up operations *could* be blocked based on the Health status
   - for stacked etcd quorum must be considered
   - for external etcd only availability of etcd should be considered.
+  - Health status is described below.
 
 ![controlplane-init-6](images/controlplane/controlplane-init-6.png)
 
@@ -459,10 +460,11 @@ spec:
     - Update the kubeadm generated config map
 - Scale down a control plane with an external etcd
   - Same as above minus etcd management
-- Scale down operations should not be done in conjunction with an upgrade operation, this should not impact manual operations for recovery.
+- Scale down operations must not be done in conjunction with an upgrade operation, this should not impact manual operations for recovery. This should also be enforced using a validation webhook.
 - Scale down operations *could* be blocked based on the Health status
   - for stacked etcd quorum must be considered
   - for external etcd only availability of etcd should be considered.
+  - Health status is described below.
 - Scale to 0 must be rejected for the initial support, see below for deletion workflows.
 
 ![controlplane-init-7](images/controlplane/controlplane-init-7.png)
@@ -470,7 +472,9 @@ spec:
 ##### Delete of the entire ControlPlane (kubectl delete controlplane my-controlplane)
 
 - Completely removing the control plane and issuing a delete on the underlying machines.
-  - Deletion is equivalent to a scale to 1 followed by a deletion of a single replica Control Plane.
+  - Deletion is equivalent to a scale to 1 followed by a deletion of a single replica control plane.
+- User documentation should focus on deletion of the Cluster resource rather than the ControlPlane resource.
+- Cluster deletion will need to be modified to ensure ControlPlane deletion is done in the proper order.
 
 ##### Cluster upgrade (using create-swap-and-delete)
 
@@ -483,16 +487,17 @@ spec:
 - An upgrade will look like this:
   - Serially go through each control plane replica not at the current config hash
     - Check health of any replicas for the current config hash
-    - Uniquely mark the existing replica machine through setting an annotation and persisting the change (controlplane.cluster.x-k8s.io/selected-for-upgrade)
+    - Uniquely mark the existing replica machine through setting an annotation and persisting the change (cluster.x-k8s.io/controlplane/selected-for-upgrade)
     - Check cluster health
     - Provision a new machine at the correct version
     - Poll on health of replicas with the current config hash
     - Poll on cluster health with the correct replica number
+    - Remove the replica’s etcd member from the etcd cluster
+    - Update the kubeadm generated config map
     - Delete the marked controlplane machine
 - Upgrade of worker nodes is deferred to the MachineDeployment controller
 - Determining if a Machine is "up to date" will be done through the use of an annotation (controlplane.cluster.x-k8s.io/configuration-hash) that is placed on the Machine at creation time. The value of this annotation is generated by computing the Hash of the ControlPlaneSpec (minus the replicas field). This would allow triggering an Upgrade based on any changes to Version, InfrastructureTemplate, or the KubeadmConfiguration used.
   - For example, a CVE is patched in containerd and updated images are available. Note that the Kubernetes version is not changed. To trigger an upgrade, the user updates the image in the InfrastructureTemplate (for an AWS cluster, the image is stored in InfrastructureTemplate.Spec.AMI.ID).
-- Where necessary, we will import behaviours from the MachineSet and MachineDeployment controllers.
 - The controller should tolerate the manual removal of a replica during the upgrade process. A replica that fails during the upgrade may block the completion of the upgrade. Removal or other remedial action may be necessary to allow the upgrade to complete.
 
 ##### Control plane healthcheck
@@ -529,6 +534,10 @@ The types introduced in this proposal will live in the `cluster.x-k8s.io` API gr
 - If the leader is selected for deletion during a replacement for upgrade or scale down, the etcd cluster will be unavailable during that period as leader election takes place. Small time periods of unavailability should not significantly impact the running of the managed cluster’s API server.
 - Replication of the etcd log, if done for a sufficiently large datastore and saturates the network, machines may fail leader election, bringing down the cluster. To mitigate this, the control plane provider will only create machines serially, ensuring cluster health before moving onto operations for the next machine.
 - When performing a scaling operation, or an upgrade using create-swap-delete, there are periods when there are an even number of nodes. Any network partitions or host failures that occur at this point will cause the etcd cluster to split brain. Etcd 3.4 is under consideration for Kubernetes 1.17, which brings non-voting cluster members, which can be used to safely add new machines without affecting quorum. [Changes to kubeadm](https://github.com/kubernetes/kubeadm/issues/1793) will be required to support this and is out of scope for the timeframe of v1alpha3.
+
+#### Upgrade where changes needed to KubeadmConfig are not currently possible
+
+- We don't anticipate that this will immediately cause issues, but could potentially cause problems when adopt new versions of the Kubeadm configuration that include features such as kustomize templates. These potentially would need to be modified as part of an upgrade.
 
 ## Design Details
 
