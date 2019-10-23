@@ -153,7 +153,8 @@ import (
 
 // ControlPlaneSpec defines the desired state of ControlPlane
 type ControlPlaneSpec struct {
-    // Number of desired machines. Defaults to 1. When stacked etcd is used only 1, 3, 5, or 7 will be permitted, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
+    // Number of desired machines. Defaults to 1. When stacked etcd is used only 
+    // odd numbers are permitted, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
     // This is a pointer to distinguish between explicit zero and not specified.
     // +optional
     Replicas *int32 `json:"replicas,omitempty"`
@@ -299,7 +300,7 @@ const (
 With the following validations:
 
 - If `ControlPlane.Spec.KubeadmConfigSpec` does not define external etcd (webhook):
-  - `ControlPlane.Spec.Replicas` in [1, 3, 5, 7]
+  - `ControlPlane.Spec.Replicas` is an odd number.
   - Configuration of external etcd is determined by introspecting the provided `KubeadmConfigSpec`.
 - `ControlPlane.Spec.Version != ""` (openapi)
 - `ControlPlane.Spec.KubeadmConfigSpec` must be treated as immutable (via webhook)
@@ -342,7 +343,7 @@ And the following defaulting:
 
 - After a ControlPlane object is created, it must bootstrap a control plane with a given number of replicas.
 - If an error occurs, `ControlPlane.Status.ErrorStatus` and `ControlPlane.Status.ErrorMessage` are populated.
-- `ControlPlane.Spec.Replicas` must be one of {1,3,5,7}.
+- `ControlPlane.Spec.Replicas` must be an odd number.
 - Can create an arbitrary number of control planes if etcd is external to the control plane
 - Creating a ControlPlane with > 1 replicas is equivalent to creating a ControlPlane with 1 replica followed by scaling the ControlPlane to 3 replicas
 - The kubeadm bootstrapping configuration provided via `ControlPlane.Spec.KubeadmConfigSpec` should specify the `InitConfiguration`, `ClusterConfiguration`, and `JoinConfiguration` stanzas, and the ControlPlane controller will be responsible for splitting the config and passing it to the underlying Machines created as appropriate.
@@ -442,7 +443,8 @@ spec:
 
 ##### Scale Up
 
-- Allow scale up a control plane with stacked etcd to only 1, 3, 5, or 7, as per [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
+- Allow scale up a control plane with stacked etcd to only odd numbers, as per 
+  [etcd best practice](https://etcd.io/docs/v3.3.12/faq/#why-an-odd-number-of-cluster-members).
 - However, allow a control plane using an external etcd cluster to scale up to other numbers such as 2 or 4.
 - Scale up operations must not be done in conjunction with an upgrade operation, this should be enforced using a validation webhook.
 - Scale up operations *could* be blocked based on the Health status
