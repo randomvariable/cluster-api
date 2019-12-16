@@ -78,6 +78,32 @@ help:  ## Display this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
 ## --------------------------------------
+## Development
+## --------------------------------------
+
+providers:
+	mkdir -p providers
+
+.PHONY: cluster-api-provider-%
+cluster-api-provider-%:
+	make providers/cluster-api-provider-$*
+
+providers/cluster-api-provider-%: providers
+	make sig-sponsored-checkout REPO=cluster-api-provider-$*
+
+.PHONY: sig-sponsored-checkout
+sig-sponsored-checkout:
+	cd providers && git clone https://github.com/kubernetes-sigs/$(REPO)
+
+.PHONY: install-cert-manager-into-context
+install-cert-manager-into-context:
+	kubectl get ns cert-manager; \
+		if [[ $$? -ne 0 ]]; \
+			then kubectl apply  -f ./cluster-api/config/certmanager/cert-manager.yaml; \
+			kubectl wait --for=condition=Available --timeout=300s apiservice v1beta1.webhook.certmanager.k8s.io; \
+		fi
+
+## --------------------------------------
 ## Testing
 ## --------------------------------------
 

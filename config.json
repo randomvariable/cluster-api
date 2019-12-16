@@ -1,0 +1,7 @@
+{
+  "default_registry": "harbor.home.internal.randomvariable.co.uk/capa-0.5",
+  "k8s_contexts": [
+    "kubernetes-admin@home"
+  ],
+  "provider": "docker"
+}

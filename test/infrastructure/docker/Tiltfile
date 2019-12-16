@@ -1,0 +1,31 @@
+settings = {
+    "docker": {
+        "default_image": "gcr.io/k8s-staging-capi-docker/capd-manager",
+    },
+}
+
+settings.update(read_json(
+    "../../../config.json",
+    default = {},
+))
+
+image = settings.get("docker")["default_image"]
+
+manifests = kustomize("config/default")
+
+k8s_yaml(manifests)
+
+docker_build(
+    image,
+    ".",
+    dockerfile = "development.Dockerfile",
+    live_update = [
+        sync("main.go", "/workspace"),
+        sync("api", "/workspace/api"),
+        sync("third_party", "/workspace/controllers"),
+        sync("controllers", "/workspace/third_party"),
+        run("go build -o /manager ."),
+        run("./restart.sh"),
+    ],
+    target = "",
+)
