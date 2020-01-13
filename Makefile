@@ -39,8 +39,14 @@ TOOLS_DIR := hack/tools
 TOOLS_BIN_DIR := $(TOOLS_DIR)/bin
 BIN_DIR := bin
 E2E_FRAMEWORK_DIR := test/framework
+DOCKER_PROVIDER_DIR := test/infrastructure/docker
 RELEASE_NOTES_BIN := bin/release-notes
 RELEASE_NOTES := $(TOOLS_DIR)/$(RELEASE_NOTES_BIN)
+
+GOMODULE_DIRECTORIES := . $(DOCKER_PROVIDER_DIR) $(E2E_FRAMEWORK_DIR) $(TOOLS_DIR)
+GOMODULES := $(addsuffix /, $(addprefix go-module-,$(GOMODULE_DIRECTORIES)))
+GOMODULE_FILES := $(addsuffix /go.mod, $(GOMODULE_DIRECTORIES))
+GOSUM_FILES := $(addsuffix /go.sum, $(GOMODULE_DIRECTORIES))
 
 # Binaries.
 KUSTOMIZE := $(TOOLS_BIN_DIR)/kustomize
@@ -269,12 +275,12 @@ generate-kubeadm-control-plane-manifests: $(CONTROLLER_GEN) ## Generate manifest
 		output:webhook:dir=./controlplane/kubeadm/config/webhook \
 		webhook
 
+.PHONY: go-module/
+go-module-%/:
+	cd $* && go mod tidy
+
 .PHONY: modules
-modules: ## Runs go mod to ensure modules are up to date.
-	go mod tidy
-	cd $(TOOLS_DIR); go mod tidy
-	cd $(E2E_FRAMEWORK_DIR); go mod tidy
-	cd test/e2e; go mod tidy
+modules: $(GOMODULES) ## Runs go mod to ensure modules are up to date.
 
 ## --------------------------------------
 ## Docker
@@ -490,7 +496,7 @@ verify:
 
 .PHONY: verify-modules
 verify-modules: modules
-	@if !(git diff --quiet HEAD -- go.sum go.mod hack/tools/go.mod hack/tools/go.sum); then \
+	@if !(git diff --quiet HEAD -- $(GOMODULE_FILES) $(GOSUM_FILES)); then \
 		echo "go module files are out of date"; exit 1; \
 	fi
 
