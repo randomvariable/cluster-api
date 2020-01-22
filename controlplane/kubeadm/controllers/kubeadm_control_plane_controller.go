@@ -25,6 +25,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -48,6 +49,8 @@ import (
 	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	cpremote "sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/remote"
+	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	capierrors "sigs.k8s.io/cluster-api/errors"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
@@ -290,6 +293,8 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 		return errors.Wrap(err, "failed to create remote cluster client")
 	}
 
+	r.etcdConditions(remoteClient, cluster)
+
 	readyMachines := int32(0)
 	for _, m := range ownedMachines {
 
@@ -300,6 +305,7 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 		if node == nil {
 			continue
 		}
+
 		if noderefutil.IsNodeReady(node) {
 			readyMachines++
 		}
@@ -312,7 +318,99 @@ func (r *KubeadmControlPlaneReconciler) updateStatus(ctx context.Context, kcp *c
 			kcp.Status.Initialized = true
 		}
 	}
+
 	return nil
+}
+
+func (r *KubeadmControlPlaneReconciler) etcdConditions(remoteClient client.Client, cluster clusterv1.Cluster, machines []*clusterv1.Machine) {
+
+	remCluster := cpremote.NewRemoteCluster(remoteClient, cluster)
+
+
+	rm := cpremote.NewRemoteMachine(remCluster, m)
+	client, err := rm.NewEtcdClient()
+	if err != nil {
+		r.Log.Info("thingy")
+		continue
+	}
+
+	etcdAlarms, err := client.Alarms()
+	if err != nil {
+		r.Log.Info("thingy")
+		continue
+	}
+	okAlarms := make([]*etcd.MemberAlarm)
+	corruptAlarms := make([]*etcd.AlarmCorrupt)
+	noSpaceAlarms := make([]*etcd.AlarmNoSpace)
+
+
+	for i := range etcdAlarms {
+		a := etcdAlarms[i]
+		switch a.Type; alarmType {
+		case etcd.AlarmOk {
+
+
+		}
+
+	}
+
+
+
+}
+
+// NewDeploymentCondition creates a new deployment condition.
+func NewCondition(condType controlplanev1.ConditionType, status v1.ConditionStatus, reason, message string) *controlplanev1.Condition {
+	return &controlplanev1.Condition{
+		Type:               condType,
+		Status:             status,
+		LastUpdateTime:     metav1.Now(),
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+}
+
+// GetDeploymentCondition returns the condition with the provided type.
+func GetCondition(status controlplanev1.KubeadmControlPlaneStatus, condType controlplanev1.ConditionType) *controlplanev1.Condition {
+	for i := range status.Conditions {
+		c := status.Conditions[i]
+		if c.Type == condType {
+			return &c
+		}
+	}
+	return nil
+}
+
+// SetDeploymentCondition updates the deployment to include the provided condition. If the condition that
+// we are about to add already exists and has the same status and reason then we are not going to update.
+func SetCondition(status *controlplanev1.KubeadmControlPlaneStatus, condition controlplanev1.Condition) {
+	currentCond := GetCondition(*status, condition.Type)
+	if currentCond != nil && currentCond.Status == condition.Status && currentCond.Reason == condition.Reason {
+		return
+	}
+	// Do not update lastTransitionTime if the status of the condition doesn't change.
+	if currentCond != nil && currentCond.Status == condition.Status {
+		condition.LastTransitionTime = currentCond.LastTransitionTime
+	}
+	newConditions := filterOutCondition(status.Conditions, condition.Type)
+	status.Conditions = append(newConditions, condition)
+}
+
+// RemoveDeploymentCondition removes the deployment condition with the provided type.
+func RemoveCondition(status *controlplanev1.KubeadmControlPlaneStatus, condType controlplanev1.ConditionType) {
+	status.Conditions = filterOutCondition(status.Conditions, condType)
+}
+
+// filterOutCondition returns a new slice of deployment conditions without conditions with the provided type.
+func filterOutCondition(conditions []controlplanev1.Condition, condType controlplanev1.ConditionType) []controlplanev1.Condition {
+	var newConditions []controlplanev1.Condition
+	for _, c := range conditions {
+		if c.Type == condType {
+			continue
+		}
+		newConditions = append(newConditions, c)
+	}
+	return newConditions
 }
 
 func (r *KubeadmControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, numMachines int) error {

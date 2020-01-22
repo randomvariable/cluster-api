@@ -251,7 +251,7 @@ func (c *Client) UpdateMemberPeerList(id uint64, peerURLs []string) (*[]Member, 
 }
 
 // Alarms retrieves all alarms on a cluster.
-func (c *Client) Alarms() (*[]MemberAlarm, error) {
+func (c *Client) Alarms() ([]*MemberAlarm, error) {
 	resp, err := c.doCall(
 		func(ctx context.Context) (interface{}, error) {
 			return c.etcdClient.AlarmList(ctx)
@@ -263,15 +263,15 @@ func (c *Client) Alarms() (*[]MemberAlarm, error) {
 
 	alarmResponse := resp.(*clientv3.AlarmResponse)
 
-	memberAlarms := make([]MemberAlarm, 0, len(alarmResponse.Alarms))
+	memberAlarms := make([]*MemberAlarm, 0, len(alarmResponse.Alarms))
 	for _, a := range alarmResponse.Alarms {
-		memberAlarms = append(memberAlarms, MemberAlarm{
+		memberAlarms = append(memberAlarms, &MemberAlarm{
 			MemberID: a.GetMemberID(),
 			Type:     AlarmType(a.GetAlarm()),
 		})
 	}
 
-	return &memberAlarms, nil
+	return memberAlarms, nil
 }
 
 func (c *Client) doCall(call func(context.Context) (interface{}, error)) (interface{}, error) {

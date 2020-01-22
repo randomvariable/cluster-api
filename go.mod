@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/MakeNowJust/heredoc v1.0.0
+	github.com/aws/aws-sdk-go v1.28.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-logr/logr v0.1.0
