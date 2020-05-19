@@ -1,0 +1,8 @@
+@startuml auth
+Controller -> "API Server": Create service account
+Controller -> "API Server": Get service account secret
+Controller -> Host: Inject service account JWT
+"Node Agent" --> "Controller": Report
+"Controller" --> "API Server": SubjectAccessReview
+"API Server" -> "Controller": Authorized
+@enduml
