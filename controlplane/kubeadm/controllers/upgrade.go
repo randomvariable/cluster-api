@@ -21,66 +21,65 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/pkg/errors"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
-	ctx context.Context,
-	cluster *clusterv1.Cluster,
-	kcp *controlplanev1.KubeadmControlPlane,
-	controlPlane *internal.ControlPlane,
-) (ctrl.Result, error) {
+func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(ctx context.Context, controlPlane *internal.ControlPlane) (ctrl.Result, error) {
 	logger := controlPlane.Logger()
 
 	// TODO: handle reconciliation of etcd members and kubeadm config in case they get out of sync with cluster
 
-	workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(cluster))
+	workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, util.ObjectKey(controlPlane.Cluster))
 	if err != nil {
-		logger.Error(err, "failed to get remote client for workload cluster", "cluster key", util.ObjectKey(cluster))
+		logger.Error(err, "failed to get remote client for workload cluster", "cluster key", util.ObjectKey(controlPlane.Cluster))
 		return ctrl.Result{}, err
 	}
 
-	parsedVersion, err := semver.ParseTolerant(kcp.Spec.Version)
+	parsedVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", kcp.Spec.Version)
+		return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
 	}
 
+	logger.Info("reconciling kubelet RBAC role")
 	if err := workloadCluster.ReconcileKubeletRBACRole(ctx, parsedVersion); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile the remote kubelet RBAC role")
 	}
 
+	logger.Info("reconciling kubelet RBAC binding")
 	if err := workloadCluster.ReconcileKubeletRBACBinding(ctx, parsedVersion); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to reconcile the remote kubelet RBAC binding")
 	}
 
 	// Ensure kubeadm cluster role  & bindings for v1.18+
 	// as per https://github.com/kubernetes/kubernetes/commit/b117a928a6c3f650931bdac02a41fca6680548c4
+	logger.Info("ensuring RBAC permissions for bootstrap tokens")
 	if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to set role and role binding for kubeadm")
 	}
 
+	logger.Info("updating kubernetes version in kubeadm config map")
 	if err := workloadCluster.UpdateKubernetesVersionInKubeadmConfigMap(ctx, parsedVersion); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update the kubernetes version in the kubeadm config map")
 	}
 
-	if kcp.Spec.KubeadmConfigSpec.ClusterConfiguration != nil {
-		imageRepository := kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.ImageRepository
+	if controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration != nil {
+		imageRepository := controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.ImageRepository
+		logger.Info("setting image repository", "image-repository", imageRepository)
 		if err := workloadCluster.UpdateImageRepositoryInKubeadmConfigMap(ctx, imageRepository); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to update the image repository in the kubeadm config map")
 		}
 	}
 
-	if kcp.Spec.KubeadmConfigSpec.ClusterConfiguration != nil && kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local != nil {
-		meta := kcp.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local.ImageMeta
+	if controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration != nil && controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local != nil {
+		meta := controlPlane.KCP.Spec.KubeadmConfigSpec.ClusterConfiguration.Etcd.Local.ImageMeta
+		logger.Info("setting etcd image metadata", "etcd-image-metadata", meta)
 		if err := workloadCluster.UpdateEtcdVersionInKubeadmConfigMap(ctx, meta.ImageRepository, meta.ImageTag); err != nil {
 			return ctrl.Result{}, errors.Wrap(err, "failed to update the etcd version in the kubeadm config map")
 		}
 	}
-
+	logger.Info("updating kubelet config map")
 	if err := workloadCluster.UpdateKubeletConfigMap(ctx, parsedVersion); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to upgrade kubelet config map")
 	}
@@ -90,9 +89,12 @@ func (r *KubeadmControlPlaneReconciler) upgradeControlPlane(
 		return ctrl.Result{}, err
 	}
 
-	if status.Nodes <= *kcp.Spec.Replicas {
+	logger = logger.WithValues("node-count", status.Nodes)
+	if status.Nodes <= *controlPlane.KCP.Spec.Replicas {
 		// scaleUp ensures that we don't continue scaling up while waiting for Machines to have NodeRefs
-		return r.scaleUpControlPlane(ctx, cluster, kcp, controlPlane)
+		logger.Info("waiting for nodes to register")
+		return r.scaleUpControlPlane(ctx, controlPlane)
 	}
-	return r.scaleDownControlPlane(ctx, cluster, kcp, controlPlane)
+	logger.Info("scaling down")
+	return r.scaleDownControlPlane(ctx, controlPlane)
 }

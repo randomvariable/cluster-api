@@ -38,17 +38,31 @@ type ControlPlane struct {
 }
 
 // NewControlPlane returns an instantiated ControlPlane.
-func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, ownedMachines FilterableMachineCollection) *ControlPlane {
+func NewControlPlane(cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane) *ControlPlane {
 	return &ControlPlane{
-		KCP:      kcp,
-		Cluster:  cluster,
-		Machines: ownedMachines,
+		KCP:     kcp,
+		Cluster: cluster,
 	}
 }
 
 // Logger returns a logger with useful context.
 func (c *ControlPlane) Logger() logr.Logger {
-	return Log.WithValues("namespace", c.KCP.Namespace, "name", c.KCP.Name, "cluster-name", c.Cluster.Name)
+	logger := Log.WithValues(
+		"namespace", c.KCP.Namespace,
+		"name", c.KCP.Name,
+		"cluster-name", c.Cluster.Name,
+		"spec-hash", c.SpecHash(),
+		"kubernetes-version", c.Version(),
+		"uid", c.KCP.UID,
+	)
+	if len(c.Machines) > 0 {
+		logger = logger.WithValues(
+			"replica-count", len(c.Machines),
+			"replica-needing-upgrade-count", len(c.MachinesNeedingUpgrade()),
+			"failure-domain-with-fewest-replicas", c.FailureDomainWithFewestMachines(),
+		)
+	}
+	return logger
 }
 
 // FailureDomains returns a slice of failure domain objects synced from the infrastructure provider into Cluster.Status.

@@ -258,7 +258,8 @@ func TestCloneConfigsAndGenerateMachine(t *testing.T) {
 	bootstrapSpec := &bootstrapv1.KubeadmConfigSpec{
 		JoinConfiguration: &kubeadmv1.JoinConfiguration{},
 	}
-	g.Expect(r.cloneConfigsAndGenerateMachine(context.Background(), cluster, kcp, bootstrapSpec, nil)).To(Succeed())
+	controlPlane := internal.NewControlPlane(cluster, kcp)
+	g.Expect(r.cloneConfigsAndGenerateMachine(context.Background(), controlPlane, bootstrapSpec, nil)).To(Succeed())
 
 	machineList := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -328,7 +329,8 @@ func TestKubeadmControlPlaneReconciler_generateMachine(t *testing.T) {
 		managementCluster: &internal.Management{Client: fakeClient},
 		recorder:          record.NewFakeRecorder(32),
 	}
-	g.Expect(r.generateMachine(context.Background(), kcp, cluster, infraRef, bootstrapRef, nil)).To(Succeed())
+	controlPlane := internal.NewControlPlane(cluster, kcp)
+	g.Expect(r.generateMachine(context.Background(), controlPlane, infraRef, bootstrapRef, nil)).To(Succeed())
 
 	machineList := &clusterv1.MachineList{}
 	g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -376,7 +378,8 @@ func TestKubeadmControlPlaneReconciler_generateKubeadmConfig(t *testing.T) {
 		recorder: record.NewFakeRecorder(32),
 	}
 
-	got, err := r.generateKubeadmConfig(context.Background(), kcp, cluster, spec.DeepCopy())
+	controlPlane := internal.NewControlPlane(cluster, kcp)
+	got, err := r.generateKubeadmConfig(context.Background(), controlPlane, spec.DeepCopy())
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(got).NotTo(BeNil())
 	g.Expect(got.Name).To(HavePrefix(kcp.Name))

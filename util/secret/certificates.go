@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -162,10 +163,23 @@ func (c Certificates) GetByPurpose(purpose Purpose) *Certificate {
 	return nil
 }
 
+func (c *Certificate) Logger(cluster client.ObjectKey) logr.Logger {
+	logger := Log.WithValues(
+		"cluster-name", cluster.Name,
+		"namespace", cluster.Namespace,
+		"certificate-purpose", c.Purpose,
+		"cert-file-name", c.CertFile,
+		"key-file-name", c.KeyFile,
+		"is-external", c.External,
+	)
+	return logger
+}
+
 // Lookup looks up each certificate from secrets and populates the certificate with the secret data.
 func (c Certificates) Lookup(ctx context.Context, ctrlclient client.Client, clusterName client.ObjectKey) error {
 	// Look up each certificate as a secret and populate the certificate/key
 	for _, certificate := range c {
+		logger := certificate.Logger(clusterName)
 		s := &corev1.Secret{}
 		key := client.ObjectKey{
 			Name:      Name(clusterName.Name, certificate.Purpose),
@@ -174,6 +188,7 @@ func (c Certificates) Lookup(ctx context.Context, ctrlclient client.Client, clus
 		if err := ctrlclient.Get(ctx, key, s); err != nil {
 			if apierrors.IsNotFound(err) {
 				if certificate.External {
+					logger.Error(err, "external certificate not found")
 					return errors.WithMessage(err, "external certificate not found")
 				}
 				continue
@@ -183,6 +198,7 @@ func (c Certificates) Lookup(ctx context.Context, ctrlclient client.Client, clus
 		// If a user has a badly formatted secret it will prevent the cluster from working.
 		kp, err := secretToKeyPair(s)
 		if err != nil {
+			logger.Error(err, "unable to create key pair from secret")
 			return err
 		}
 		certificate.KeyPair = kp
@@ -237,9 +253,11 @@ func (c Certificates) Generate() error {
 // SaveGenerated will save any certificates that have been generated as Kubernetes secrets.
 func (c Certificates) SaveGenerated(ctx context.Context, ctrlclient client.Client, clusterName client.ObjectKey, owner metav1.OwnerReference) error {
 	for _, certificate := range c {
+		logger := certificate.Logger(clusterName)
 		if !certificate.Generated {
 			continue
 		}
+		logger.Info("saving certificate as secret")
 		s := certificate.AsSecret(clusterName, owner)
 		if err := ctrlclient.Create(ctx, s); err != nil {
 			return errors.WithStack(err)

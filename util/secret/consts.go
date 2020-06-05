@@ -16,6 +16,8 @@ limitations under the License.
 
 package secret
 
+import "k8s.io/klog/klogr"
+
 // Purpose is the name to append to the secret generated for a cluster.
 type Purpose string
 
@@ -51,4 +53,6 @@ const (
 var (
 	// allSecretPurposes defines a lists with all the secret suffix used by Cluster API
 	allSecretPurposes = []Purpose{Kubeconfig, ClusterCA, EtcdCA, ServiceAccount, FrontProxyCA, APIServerEtcdClient}
+	// Log is the global logger for the internal package.
+	Log = klogr.New()
 )

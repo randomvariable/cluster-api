@@ -60,7 +60,7 @@ func TestKubeadmControlPlaneReconciler_initializeControlPlane(t *testing.T) {
 		KCP:     kcp,
 	}
 
-	result, err := r.initializeControlPlane(context.Background(), cluster, kcp, controlPlane)
+	result, err := r.initializeControlPlane(context.Background(), controlPlane)
 	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -117,7 +117,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 			Machines: fmc.Machines,
 		}
 
-		result, err := r.scaleUpControlPlane(context.Background(), cluster, kcp, controlPlane)
+		result, err := r.scaleUpControlPlane(context.Background(), controlPlane)
 		g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
 		g.Expect(err).ToNot(HaveOccurred())
 
@@ -173,7 +173,7 @@ func TestKubeadmControlPlaneReconciler_scaleUpControlPlane(t *testing.T) {
 				Machines: beforeMachines,
 			}
 
-			_, err := r.scaleUpControlPlane(context.Background(), cluster.DeepCopy(), kcp.DeepCopy(), controlPlane)
+			_, err := r.scaleUpControlPlane(context.Background(), controlPlane)
 			g.Expect(err).To(HaveOccurred())
 			g.Expect(err).To(MatchError(&capierrors.RequeueAfterError{RequeueAfter: healthCheckFailedRequeueAfter}))
 
@@ -215,7 +215,7 @@ func TestKubeadmControlPlaneReconciler_scaleDownControlPlane_NoError(t *testing.
 		Machines: machines,
 	}
 
-	_, err := r.scaleDownControlPlane(context.Background(), cluster, kcp, controlPlane)
+	_, err := r.scaleDownControlPlane(context.Background(), controlPlane)
 	g.Expect(err).ToNot(HaveOccurred())
 }
 

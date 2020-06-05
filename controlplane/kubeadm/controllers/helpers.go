@@ -98,7 +98,7 @@ func (r *KubeadmControlPlaneReconciler) reconcileExternalReference(ctx context.C
 	return patchHelper.Patch(ctx, obj)
 }
 
-func (r *KubeadmControlPlaneReconciler) cloneConfigsAndGenerateMachine(ctx context.Context, cluster *clusterv1.Cluster, kcp *controlplanev1.KubeadmControlPlane, bootstrapSpec *bootstrapv1.KubeadmConfigSpec, failureDomain *string) error {
+func (r *KubeadmControlPlaneReconciler) cloneConfigsAndGenerateMachine(ctx context.Context, controlPlane *internal.ControlPlane, bootstrapSpec *bootstrapv1.KubeadmConfigSpec, failureDomain *string) error {
 	var errs []error
 
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
@@ -106,18 +106,18 @@ func (r *KubeadmControlPlaneReconciler) cloneConfigsAndGenerateMachine(ctx conte
 	infraCloneOwner := &metav1.OwnerReference{
 		APIVersion: controlplanev1.GroupVersion.String(),
 		Kind:       "KubeadmControlPlane",
-		Name:       kcp.Name,
-		UID:        kcp.UID,
+		Name:       controlPlane.KCP.Name,
+		UID:        controlPlane.KCP.UID,
 	}
 
 	// Clone the infrastructure template
 	infraRef, err := external.CloneTemplate(ctx, &external.CloneTemplateInput{
 		Client:      r.Client,
-		TemplateRef: &kcp.Spec.InfrastructureTemplate,
-		Namespace:   kcp.Namespace,
+		TemplateRef: &controlPlane.KCP.Spec.InfrastructureTemplate,
+		Namespace:   controlPlane.KCP.Namespace,
 		OwnerRef:    infraCloneOwner,
-		ClusterName: cluster.Name,
-		Labels:      internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+		ClusterName: controlPlane.Cluster.Name,
+		Labels:      internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 	})
 	if err != nil {
 		// Safe to return early here since no resources have been created yet.
@@ -125,14 +125,14 @@ func (r *KubeadmControlPlaneReconciler) cloneConfigsAndGenerateMachine(ctx conte
 	}
 
 	// Clone the bootstrap configuration
-	bootstrapRef, err := r.generateKubeadmConfig(ctx, kcp, cluster, bootstrapSpec)
+	bootstrapRef, err := r.generateKubeadmConfig(ctx, controlPlane, bootstrapSpec)
 	if err != nil {
 		errs = append(errs, errors.Wrap(err, "failed to generate bootstrap config"))
 	}
 
 	// Only proceed to generating the Machine if we haven't encountered an error
 	if len(errs) == 0 {
-		if err := r.generateMachine(ctx, kcp, cluster, infraRef, bootstrapRef, failureDomain); err != nil {
+		if err := r.generateMachine(ctx, controlPlane, infraRef, bootstrapRef, failureDomain); err != nil {
 			errs = append(errs, errors.Wrap(err, "failed to create Machine"))
 		}
 	}
@@ -169,20 +169,20 @@ func (r *KubeadmControlPlaneReconciler) cleanupFromGeneration(ctx context.Contex
 	return kerrors.NewAggregate(errs)
 }
 
-func (r *KubeadmControlPlaneReconciler) generateKubeadmConfig(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, cluster *clusterv1.Cluster, spec *bootstrapv1.KubeadmConfigSpec) (*corev1.ObjectReference, error) {
+func (r *KubeadmControlPlaneReconciler) generateKubeadmConfig(ctx context.Context, controlPlane *internal.ControlPlane, spec *bootstrapv1.KubeadmConfigSpec) (*corev1.ObjectReference, error) {
 	// Create an owner reference without a controller reference because the owning controller is the machine controller
 	owner := metav1.OwnerReference{
 		APIVersion: controlplanev1.GroupVersion.String(),
 		Kind:       "KubeadmControlPlane",
-		Name:       kcp.Name,
-		UID:        kcp.UID,
+		Name:       controlPlane.KCP.Name,
+		UID:        controlPlane.KCP.UID,
 	}
 
 	bootstrapConfig := &bootstrapv1.KubeadmConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            names.SimpleNameGenerator.GenerateName(kcp.Name + "-"),
-			Namespace:       kcp.Namespace,
-			Labels:          internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+			Name:            names.SimpleNameGenerator.GenerateName(controlPlane.KCP.Name + "-"),
+			Namespace:       controlPlane.KCP.Namespace,
+			Labels:          internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 			OwnerReferences: []metav1.OwnerReference{owner},
 		},
 		Spec: *spec,
@@ -203,19 +203,19 @@ func (r *KubeadmControlPlaneReconciler) generateKubeadmConfig(ctx context.Contex
 	return bootstrapRef, nil
 }
 
-func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, kcp *controlplanev1.KubeadmControlPlane, cluster *clusterv1.Cluster, infraRef, bootstrapRef *corev1.ObjectReference, failureDomain *string) error {
+func (r *KubeadmControlPlaneReconciler) generateMachine(ctx context.Context, controlPlane *internal.ControlPlane, infraRef, bootstrapRef *corev1.ObjectReference, failureDomain *string) error {
 	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      names.SimpleNameGenerator.GenerateName(kcp.Name + "-"),
-			Namespace: kcp.Namespace,
-			Labels:    internal.ControlPlaneLabelsForClusterWithHash(cluster.Name, hash.Compute(&kcp.Spec)),
+			Name:      names.SimpleNameGenerator.GenerateName(controlPlane.KCP.Name + "-"),
+			Namespace: controlPlane.KCP.Namespace,
+			Labels:    internal.ControlPlaneLabelsForClusterWithHash(controlPlane.Cluster.Name, hash.Compute(&controlPlane.KCP.Spec)),
 			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(kcp, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane")),
+				*metav1.NewControllerRef(controlPlane.KCP, controlplanev1.GroupVersion.WithKind("KubeadmControlPlane")),
 			},
 		},
 		Spec: clusterv1.MachineSpec{
-			ClusterName:       cluster.Name,
-			Version:           &kcp.Spec.Version,
+			ClusterName:       controlPlane.Cluster.Name,
+			Version:           &controlPlane.KCP.Spec.Version,
 			InfrastructureRef: *infraRef,
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: bootstrapRef,

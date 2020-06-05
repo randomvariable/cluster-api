@@ -454,7 +454,9 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 			managementClusterUncached: fmc,
 		}
 
-		g.Expect(r.reconcile(context.Background(), cluster, kcp)).To(Equal(ctrl.Result{}))
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+
+		g.Expect(r.reconcile(context.Background(), controlPlane)).To(Equal(ctrl.Result{}))
 
 		machineList := &clusterv1.MachineList{}
 		g.Expect(fakeClient.List(context.Background(), machineList, client.InNamespace(cluster.Namespace))).To(Succeed())
@@ -528,7 +530,9 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 			managementClusterUncached: fmc,
 		}
 
-		result, err := r.reconcile(context.Background(), cluster, kcp)
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+
+		result, err := r.reconcile(context.Background(), controlPlane)
 		g.Expect(result).To(Equal(ctrl.Result{}))
 		g.Expect(err).To(HaveOccurred())
 		g.Expect(err.Error()).To(ContainSubstring("has just been deleted"))
@@ -584,8 +588,8 @@ func TestKubeadmControlPlaneReconciler_adoption(t *testing.T) {
 			managementCluster:         fmc,
 			managementClusterUncached: fmc,
 		}
-
-		g.Expect(r.reconcile(context.Background(), cluster, kcp)).To(Equal(ctrl.Result{}))
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+		g.Expect(r.reconcile(context.Background(), controlPlane)).To(Equal(ctrl.Result{}))
 		// Message: Warning AdoptionFailed Could not adopt Machine test/test0: its version ("v1.15.0") is outside supported +/- one minor version skew from KCP's ("v1.17.0")
 		g.Expect(recorder.Events).To(Receive(ContainSubstring("minor version")))
 
@@ -1080,7 +1084,8 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 			recorder: record.NewFakeRecorder(32),
 		}
 
-		_, err := r.reconcileDelete(context.Background(), cluster, kcp)
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+		_, err := r.reconcileDelete(context.Background(), controlPlane)
 		g.Expect(err).To(MatchError(&capierrors.RequeueAfterError{RequeueAfter: deleteRequeueAfter}))
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
 
@@ -1088,7 +1093,7 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 		g.Expect(fakeClient.List(context.Background(), &controlPlaneMachines)).To(Succeed())
 		g.Expect(controlPlaneMachines.Items).To(BeEmpty())
 
-		result, err := r.reconcileDelete(context.Background(), cluster, kcp)
+		result, err := r.reconcileDelete(context.Background(), controlPlane)
 		g.Expect(result).To(Equal(ctrl.Result{}))
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(BeEmpty())
@@ -1131,7 +1136,8 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 			recorder: record.NewFakeRecorder(32),
 		}
 
-		_, err := r.reconcileDelete(context.Background(), cluster, kcp)
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+		_, err := r.reconcileDelete(context.Background(), controlPlane)
 		g.Expect(err).To(MatchError(&capierrors.RequeueAfterError{RequeueAfter: deleteRequeueAfter}))
 
 		g.Expect(kcp.Finalizers).To(ContainElement(controlplanev1.KubeadmControlPlaneFinalizer))
@@ -1164,7 +1170,8 @@ func TestKubeadmControlPlaneReconciler_reconcileDelete(t *testing.T) {
 			Log:      log.Log,
 		}
 
-		result, err := r.reconcileDelete(context.Background(), cluster, kcp)
+		controlPlane := internal.NewControlPlane(cluster, kcp)
+		result, err := r.reconcileDelete(context.Background(), controlPlane)
 		g.Expect(result).To(Equal(ctrl.Result{}))
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(kcp.Finalizers).To(BeEmpty())

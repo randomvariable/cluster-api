@@ -125,7 +125,7 @@ docker-build-e2e: ## Rebuild all Cluster API provider images to be used in the e
 
 .PHONY: test-e2e
 test-e2e: ## Run the e2e tests
-	$(MAKE) -C test/e2e run
+	$(MAKE) -C test/e2e run GINKGO_ARGS=$(GINKGO_ARGS)
 
 ## --------------------------------------
 ## Binaries
