@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -454,7 +455,7 @@ func (r *KubeadmControlPlaneReconciler) adoptMachines(ctx context.Context, contr
 	}
 
 	kcpVersion, err := semver.ParseTolerant(controlPlane.KCP.Spec.Version)
-	logger = logger.WithValues("kubernetes-version", kcpVersion)
+	logger = logger.WithValues("kubernetes-version", controlPlane.KCP.Spec.Version)
 	if err != nil {
 		logger.Error(err, "failed to parse Kubernetes version")
 		return errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
@@ -546,6 +547,8 @@ func (r *KubeadmControlPlaneReconciler) adoptMachines(ctx context.Context, contr
 		mLogger.Info("computed hash")
 		// 2. add kubeadm.controlplane.cluster.x-k8s.io/hash as a label in each machine
 		m.Labels[controlplanev1.KubeadmControlPlaneHashLabelKey] = newConfigurationHash
+
+		mLogger.Info("spec dumps", "spec", spew.Sdump(controlPlane.KCP.Spec), "synthetic-spec", spew.Sdump(syntheticSpec))
 
 		// Note that ValidateOwnerReferences() will reject this patch if another
 		// OwnerReference exists with controller=true.
