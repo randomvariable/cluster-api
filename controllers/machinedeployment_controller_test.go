@@ -61,6 +61,7 @@ var _ = Describe("MachineDeployment Reconciler", func() {
 		Expect(testEnv.Delete(ctx, namespace)).To(Succeed())
 	})
 
+	// FIXME
 	It("Should reconcile a MachineDeployment", func() {
 		labels := map[string]string{
 			"foo":                      "bar",
@@ -105,7 +106,8 @@ var _ = Describe("MachineDeployment Reconciler", func() {
 							Name:       "md-template",
 						},
 						Bootstrap: clusterv1.Bootstrap{
-							Data: pointer.StringPtr("data"),
+							Data:           pointer.StringPtr("data"),
+							DataSecretName: pointer.StringPtr("data-secret-name"),
 						},
 					},
 				},
@@ -191,6 +193,7 @@ var _ = Describe("MachineDeployment Reconciler", func() {
 		// Verify that expected number of machines are created
 		By("Verify expected number of machines are created")
 		machines := &clusterv1.MachineList{}
+		// FIXME: FAILING TEST
 		Eventually(func() int {
 			if err := testEnv.List(ctx, machines, client.InNamespace(namespace.Name)); err != nil {
 				return -1

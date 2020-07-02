@@ -70,7 +70,8 @@ var _ = Describe("MachineHealthCheck", func() {
 					Spec: clusterv1.MachineSpec{
 						ClusterName: cluster.Name,
 						Bootstrap: clusterv1.Bootstrap{
-							Data: pointer.StringPtr("data"),
+							Data:           pointer.StringPtr("data"),
+							DataSecretName: pointer.StringPtr("data-secret-name"),
 						},
 					},
 					Status: clusterv1.MachineStatus{
@@ -121,7 +122,6 @@ var _ = Describe("MachineHealthCheck", func() {
 					Expect(testEnv.Status().Patch(ctx, infraMachine, infraMachinePatch)).To(Succeed())
 
 					machine := machine.DeepCopy()
-					machine.Spec.Bootstrap.DataSecretName = pointer.StringPtr("test-mhc-machine-")
 					machine.Spec.InfrastructureRef = corev1.ObjectReference{
 						APIVersion: infraMachine.GetAPIVersion(),
 						Kind:       infraMachine.GetKind(),
@@ -179,11 +179,12 @@ var _ = Describe("MachineHealthCheck", func() {
 							"selector": string(uuid.NewUUID()),
 						},
 					},
+					NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
 					UnhealthyConditions: []clusterv1.UnhealthyCondition{
 						{
 							Type:    corev1.NodeReady,
 							Status:  corev1.ConditionUnknown,
-							Timeout: metav1.Duration{Duration: 50 * time.Minute},
+							Timeout: metav1.Duration{Duration: 5 * time.Minute},
 						},
 					},
 				},
@@ -216,7 +217,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return mhc.GetLabels()
-				}, timeout*3).Should(HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name))
+				}).Should(HaveKeyWithValue(clusterv1.ClusterLabelName, cluster.Name))
 			})
 
 			Specify("when the label has the wrong value", func() {
@@ -315,7 +316,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return &mhc.Status
-				}, timeout).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
 					ExpectedMachines:   2,
 					CurrentHealthy:     2,
 					ObservedGeneration: 1,
@@ -343,7 +344,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return &mhc.Status
-				}, timeout).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
 					ExpectedMachines:   3,
 					CurrentHealthy:     2,
 					ObservedGeneration: 1,
@@ -373,7 +374,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return &mhc.Status
-				}, timeout).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
 					ExpectedMachines:   3,
 					CurrentHealthy:     1,
 					ObservedGeneration: 1,
@@ -396,7 +397,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						}
 					}
 					return
-				}, timeout*20).Should(Equal(2))
+				}).Should(Equal(2))
 
 				// Calculate how many Machines have been remediated.
 				Eventually(func() (remediated int) {
@@ -414,7 +415,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						}
 					}
 					return
-				}, timeout*3).Should(Equal(0))
+				}).Should(Equal(0))
 			})
 		})
 
@@ -439,10 +440,11 @@ var _ = Describe("MachineHealthCheck", func() {
 				}
 				return &mhc.Status
 			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
-				ExpectedMachines: 3,
-				CurrentHealthy:   2,
-				Targets:          targetMachines},
-			), timeout)
+				ExpectedMachines:   3,
+				CurrentHealthy:     2,
+				ObservedGeneration: 1,
+				Targets:            targetMachines},
+			))
 
 			// Calculate how many Machines have health check succeeded = false.
 			Eventually(func() (unhealthy int) {
@@ -460,7 +462,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout).Should(Equal(0))
+			}).Should(Equal(0))
 
 			// Calculate how many Machines have been remediated.
 			Eventually(func() (remediated int) {
@@ -478,12 +480,12 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*3).Should(Equal(0))
+			}).Should(Equal(0))
 		})
 
 		Specify("when a Machine has no Node ref for longer than the NodeStartupTimeout", func() {
 			mhc.Spec.ClusterName = cluster.Name
-			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 50 * time.Second}
+			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -503,10 +505,11 @@ var _ = Describe("MachineHealthCheck", func() {
 				}
 				return &mhc.Status
 			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
-				ExpectedMachines: 3,
-				CurrentHealthy:   2,
-				Targets:          targetMachines},
-			), timeout*5)
+				ExpectedMachines:   3,
+				CurrentHealthy:     2,
+				ObservedGeneration: 1,
+				Targets:            targetMachines},
+			))
 
 			// Calculate how many Machines have health check succeeded = false.
 			Eventually(func() (unhealthy int) {
@@ -524,7 +527,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*10).Should(Equal(1))
+			}).Should(Equal(1))
 
 			// Calculate how many Machines have been remediated.
 			Eventually(func() (remediated int) {
@@ -542,7 +545,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*5).Should(Equal(1))
+			}).Should(Equal(1))
 		})
 
 		Specify("when a Machine's Node has gone away", func() {
@@ -563,7 +566,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					return apierrors.IsNotFound(err)
 				}
 				return apierrors.IsNotFound(testEnv.Get(ctx, util.ObjectKey(nodeToBeRemoved), nodeToBeRemoved))
-			}, timeout*5).Should(BeTrue())
+			}).Should(BeTrue())
 
 			// Make sure the status matches.
 			Eventually(func() *clusterv1.MachineHealthCheckStatus {
@@ -572,10 +575,11 @@ var _ = Describe("MachineHealthCheck", func() {
 					return nil
 				}
 				return &mhc.Status
-			}, timeout*5).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
-				ExpectedMachines: 3,
-				CurrentHealthy:   2,
-				Targets:          targetMachines},
+			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				ExpectedMachines:   3,
+				CurrentHealthy:     2,
+				ObservedGeneration: 1,
+				Targets:            targetMachines},
 			))
 
 			// Calculate how many Machines have health check succeeded = false.
@@ -594,7 +598,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*5).Should(Equal(1))
+			}).Should(Equal(1))
 
 			// Calculate how many Machines have been remediated.
 			Eventually(func() (remediated int) {
@@ -612,7 +616,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*5).Should(Equal(1))
+			}).Should(Equal(1))
 		})
 
 		Specify("should react when a Node transitions to unhealthy", func() {
@@ -633,10 +637,11 @@ var _ = Describe("MachineHealthCheck", func() {
 					return nil
 				}
 				return &mhc.Status
-			}, timeout).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
-				ExpectedMachines: 1,
-				CurrentHealthy:   1,
-				Targets:          targetMachines},
+			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				ExpectedMachines:   1,
+				CurrentHealthy:     1,
+				ObservedGeneration: 1,
+				Targets:            targetMachines},
 			))
 
 			// Transition the node to unhealthy.
@@ -658,10 +663,11 @@ var _ = Describe("MachineHealthCheck", func() {
 					return nil
 				}
 				return &mhc.Status
-			}, timeout*3).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
-				ExpectedMachines: 1,
-				CurrentHealthy:   0,
-				Targets:          targetMachines},
+			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+				ExpectedMachines:   1,
+				CurrentHealthy:     0,
+				ObservedGeneration: 1,
+				Targets:            targetMachines},
 			))
 
 			// Calculate how many Machines have health check succeeded = false.
@@ -680,7 +686,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*10).Should(Equal(1))
+			}).Should(Equal(1))
 
 			// Calculate how many Machines have been remediated.
 			Eventually(func() (remediated int) {
@@ -698,7 +704,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout).Should(Equal(1))
+			}).Should(Equal(1))
 		})
 
 		Specify("when in a MachineSet, unhealthy machines should be deleted", func() {
@@ -741,7 +747,8 @@ var _ = Describe("MachineHealthCheck", func() {
 						Spec: clusterv1.MachineSpec{
 							ClusterName: cluster.Name,
 							Bootstrap: clusterv1.Bootstrap{
-								Data: pointer.StringPtr("test"),
+								Data:           pointer.StringPtr("test"),
+								DataSecretName: pointer.StringPtr("test-data-secret-name"),
 							},
 							InfrastructureRef: corev1.ObjectReference{
 								APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
@@ -765,7 +772,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					return -1
 				}
 				return len(machines.Items)
-			}, timeout*10).Should(Equal(1))
+			}).Should(Equal(1))
 
 			// Create the MachineHealthCheck instance.
 			mhc.Spec.ClusterName = cluster.Name
@@ -797,7 +804,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}, timeout*3).Should(Equal(1))
+			}).Should(Equal(1))
 
 			// Unpause the MachineSet reconciler.
 			machineSetPatch = client.MergeFrom(machineSet.DeepCopy())
@@ -809,7 +816,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				machine := unhealthyMachine.DeepCopy()
 				err := testEnv.Get(ctx, util.ObjectKey(unhealthyMachine), machine)
 				return apierrors.IsNotFound(err) || !machine.DeletionTimestamp.IsZero()
-			}, timeout)
+			})
 		})
 	})
 })
@@ -929,7 +936,8 @@ func newTestMachineHealthCheck(name, namespace, cluster string, labels map[strin
 			Selector: metav1.LabelSelector{
 				MatchLabels: l,
 			},
-			ClusterName: cluster,
+			NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
+			ClusterName:        cluster,
 			UnhealthyConditions: []clusterv1.UnhealthyCondition{
 				{
 					Type:    corev1.NodeReady,
@@ -1299,7 +1307,8 @@ func TestIsAllowedRemediation(t *testing.T) {
 
 			mhc := &clusterv1.MachineHealthCheck{
 				Spec: clusterv1.MachineHealthCheckSpec{
-					MaxUnhealthy: tc.maxUnhealthy,
+					MaxUnhealthy:       tc.maxUnhealthy,
+					NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
 				},
 				Status: clusterv1.MachineHealthCheckStatus{
 					ExpectedMachines:   tc.expectedMachines,

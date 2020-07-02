@@ -50,6 +50,8 @@ LINK_CHECKER_BIN := bin/liche
 LINK_CHECKER := $(TOOLS_DIR)/$(LINK_CHECKER_BIN)
 GO_APIDIFF_BIN := bin/go-apidiff
 GO_APIDIFF := $(TOOLS_DIR)/$(GO_APIDIFF_BIN)
+GINKGO_BIN := bin/ginkgo
+GINKGO := $(TOOLS_DIR)/$(GINKGO_BIN)
 
 # Binaries.
 # Need to use abspath so we can invoke these from subdirectories
@@ -111,8 +113,8 @@ help:  ## Display this help
 ## --------------------------------------
 
 .PHONY: test
-test: ## Run tests
-	source ./scripts/fetch_ext_bins.sh; fetch_tools; setup_envs; go test -v ./... $(TEST_ARGS)
+test: $(GINKGO) ## Run tests. Specify number of nodes with GINKGO_NODES= (default 1)
+	source ./scripts/fetch_ext_bins.sh; fetch_tools; setup_envs; $(GINKGO) -skipPackage e2e,infrastructure/docker -failFast -progress -race -stream -nodes $(GINKGO_NODES) test -v ./... $(TEST_ARGS)
 
 .PHONY: docker-build-e2e
 docker-build-e2e: ## Rebuild all Cluster API provider images to be used in the e2e tests
@@ -172,6 +174,9 @@ $(LINK_CHECKER): $(TOOLS_DIR)/go.mod
 
 $(GO_APIDIFF): $(TOOLS_DIR)/go.mod
 	cd $(TOOLS_DIR) && go build -tags=tools -o $(GO_APIDIFF_BIN) github.com/joelanford/go-apidiff
+
+$(GINKGO): $(TOOLS_DIR)/go.mod
+	cd $(TOOLS_DIR) && go build -tags=tools -o $(GINKGO_BIN) github.com/onsi/ginkgo/ginkgo
 
 .PHONY: e2e-framework
 e2e-framework: ## Builds the CAPI e2e framework
@@ -506,6 +511,7 @@ docker-build-example-provider: ## Build the docker image for example provider
 
 .PHONY: clean
 clean: ## Remove all generated files
+	$(MAKE) clean-envtest
 	$(MAKE) clean-bin
 	$(MAKE) clean-book
 
@@ -584,3 +590,8 @@ diagrams: ## Build proposal diagrams
 .PHONY: serve-book
 serve-book: ## Build and serve the book with live-reloading enabled
 	$(MAKE) -C docs/book serve
+
+.PHONY: clean-envtest
+clean-envtest: ## Shutdown all envtest instances
+	-killall -9 etcd
+	-killall -9 kube-apiserver

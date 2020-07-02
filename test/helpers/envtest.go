@@ -27,14 +27,9 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo"
-
-	//. "github.com/onsi/gomega"
-
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
-	//admissionv1beta1 "k8s.io/api/admission/v1beta1"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	admissionv1beta1 "k8s.io/api/admissionregistration/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -56,9 +51,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
+const (
+	mutatingWebhookKind   = "MutatingWebhookConfiguration"
+	validatingWebhookKind = "ValidatingWebhookConfiguration"
+	mutatingwebhook       = "mutating-webhook-configuration"
+	validatingwebhook     = "validating-webhook-configuration"
+)
+
 func init() {
 	klog.InitFlags(nil)
-	log.SetLogger(klogr.New())
+	logger := klogr.New()
+	log.SetLogger(logger)
+	ctrl.SetLogger(logger)
 	klog.SetOutput(ginkgo.GinkgoWriter)
 }
 
@@ -134,6 +138,8 @@ func NewTestEnvironment() *TestEnvironment {
 
 	mgr, err := ctrl.NewManager(env.Config, options)
 
+	clusterv1.DisableMinimumNodeStartupTimeout()
+
 	if err := (&clusterv1.Cluster{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook: %+v", err)
 	}
@@ -185,13 +191,6 @@ func NewTestEnvironment() *TestEnvironment {
 	}
 }
 
-const (
-	mutatingWebhookKind   = "MutatingWebhookConfiguration"
-	validatingWebhookKind = "ValidatingWebhookConfiguration"
-	mutatingwebhook       = "mutating-webhook-configuration"
-	validatingwebhook     = "validating-webhook-configuration"
-)
-
 func appendWebhookConfiguration(mutatingWebhooks []runtime.Object, validatingWebhooks []runtime.Object, configyamlFile []byte, tag string) ([]runtime.Object, []runtime.Object, error) {
 
 	objs, err := utilyaml.ToUnstructured(configyamlFile)
@@ -229,35 +228,32 @@ func initializeWebhookInEnvironment() {
 	root := path.Join(path.Dir(filename), "..", "..")
 	configyamlFile, err := ioutil.ReadFile(filepath.Join(root, "config", "webhook", "manifests.yaml"))
 	if err != nil {
-		klog.Fatalf("yamlFile.Get err   #%v ", err)
+		klog.Fatalf("Failed to read core webhook configuration file: %v ", err)
 	}
-	if err != nil {
-		klog.Fatalf("failed to parse yaml")
-	}
-	//mutate the name of object if manifest file
+
 	mutatingWebhooks, validatingWebhooks, err = appendWebhookConfiguration(mutatingWebhooks, validatingWebhooks, configyamlFile, "config")
 	if err != nil {
-		klog.Fatalf(" Failed to append core controller webhook config   #%v ", err)
+		klog.Fatalf("Failed to append core controller webhook config: %v ", err)
 	}
 
 	bootstrapyamlFile, err := ioutil.ReadFile(filepath.Join(root, "bootstrap", "kubeadm", "config", "webhook", "manifests.yaml"))
 	if err != nil {
-		klog.Fatalf(" Failed to get bootstrap yaml file err   #%v ", err)
+		klog.Fatalf("Failed to read bootstrap webhook configuration file: %v", err)
 	}
-	//mutate the name of object if manifest file
+
 	mutatingWebhooks, validatingWebhooks, err = appendWebhookConfiguration(mutatingWebhooks, validatingWebhooks, bootstrapyamlFile, "bootstrap")
 
 	if err != nil {
-		klog.Fatalf(" Failed to append bootstrap controller webhook config   #%v ", err)
+		klog.Fatalf("Failed to append bootstrap controller webhook config: %v", err)
 	}
 	controlplaneyamlFile, err := ioutil.ReadFile(filepath.Join(root, "controlplane", "kubeadm", "config", "webhook", "manifests.yaml"))
 	if err != nil {
-		klog.Fatalf(" Failed to get controlplane yaml file err   #%v ", err)
+		klog.Fatalf("Failed to read KCP webhook configuration: %v", err)
 	}
-	//mutate the name of object if manifest file
+
 	mutatingWebhooks, validatingWebhooks, err = appendWebhookConfiguration(mutatingWebhooks, validatingWebhooks, controlplaneyamlFile, "cp")
 	if err != nil {
-		klog.Fatalf(" Failed to append cocontrolplane controller webhook config   #%v ", err)
+		klog.Fatalf("Failed to append KCP webhook configuration: %v", err)
 	}
 	env.WebhookInstallOptions = envtest.WebhookInstallOptions{
 		MaxTime:            20 * time.Second,
@@ -273,17 +269,17 @@ func (t *TestEnvironment) StartManager() error {
 
 func (t *TestEnvironment) WaitForWebhooks() {
 	port := t.Options.Port
-	klog.Infof("Waiting for port %d to be open", port)
+	klog.V(2).Infof("Waiting for webhook port %d to be open prior to running tests", port)
 	timeout := time.Second
 	notOpen := true
 	for notOpen {
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), timeout)
 		if err != nil {
-			klog.Info("Connecting error", "error", err)
+			klog.V(2).Infof("Webhook port is not ready, will retry in 1s: %s", err)
 			time.Sleep(time.Second)
 		}
 		if err == nil && conn != nil {
-			klog.Info("Port is open")
+			klog.V(2).Info("Webhook port is now open. Continuing with tests...")
 			defer conn.Close()
 			notOpen = false
 		}

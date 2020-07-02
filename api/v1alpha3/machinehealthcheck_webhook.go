@@ -35,7 +35,8 @@ var (
 	// spec if required for particular provider.
 	// 10 minutes should allow the instance to start and the node to join the
 	// cluster on most providers.
-	defaultNodeStartupTimeout = metav1.Duration{Duration: 10 * time.Minute}
+	defaultNodeStartupTimeout        = metav1.Duration{Duration: 10 * time.Minute}
+	disableMinimumNodeStartupTimeout = false
 )
 
 func (m *MachineHealthCheck) SetupWebhookWithManager(mgr ctrl.Manager) error {
@@ -119,7 +120,7 @@ func (m *MachineHealthCheck) validate(old *MachineHealthCheck) error {
 		)
 	}
 
-	if m.Spec.NodeStartupTimeout != nil && m.Spec.NodeStartupTimeout.Seconds() < 30 {
+	if m.Spec.NodeStartupTimeout != nil && m.Spec.NodeStartupTimeout.Seconds() < 30 && !disableMinimumNodeStartupTimeout {
 		allErrs = append(
 			allErrs,
 			field.Invalid(field.NewPath("spec", "nodeStartupTimeout"), m.Spec.NodeStartupTimeout, "must be at least 30s"),
@@ -147,4 +148,8 @@ func (m *MachineHealthCheck) validate(old *MachineHealthCheck) error {
 	}
 
 	return apierrors.NewInvalid(GroupVersion.WithKind("MachineHealthCheck").GroupKind(), m.Name, allErrs)
+}
+
+func DisableMinimumNodeStartupTimeout() {
+	disableMinimumNodeStartupTimeout = true
 }
