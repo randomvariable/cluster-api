@@ -114,6 +114,7 @@ var _ = BeforeSuite(func(done Done) {
 		Expect(testEnv.StartManager()).To(Succeed())
 	}()
 
+	testEnv.WaitForWebhooks()
 	close(done)
 }, 60)
 

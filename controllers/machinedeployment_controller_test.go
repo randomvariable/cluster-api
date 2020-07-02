@@ -196,7 +196,7 @@ var _ = Describe("MachineDeployment Reconciler", func() {
 				return -1
 			}
 			return len(machines.Items)
-		}, timeout).Should(BeEquivalentTo(*deployment.Spec.Replicas))
+		}, timeout*20).Should(BeEquivalentTo(*deployment.Spec.Replicas))
 
 		// Verify that machines has MachineSetLabelName and MachineDeploymentLabelName labels
 		By("Verify machines have expected MachineSetLabelName and MachineDeploymentLabelName")

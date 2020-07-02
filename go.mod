@@ -13,7 +13,6 @@ require (
 	github.com/gogo/protobuf v1.3.1
 	github.com/google/go-cmp v0.4.1
 	github.com/google/go-github v17.0.0+incompatible
-	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/google/gofuzz v1.1.0
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1
@@ -37,6 +36,7 @@ require (
 	k8s.io/component-base v0.17.7
 	k8s.io/klog v1.0.0
 	k8s.io/utils v0.0.0-20200603063816-c1c6865ac451
+	sigs.k8s.io/cluster-api/test/infrastructure/docker v0.0.0-20200701215000-cc45432cd30d // indirect
 	sigs.k8s.io/controller-runtime v0.5.7
 	sigs.k8s.io/kind v0.7.1-0.20200303021537-981bd80d3802
 	sigs.k8s.io/yaml v1.2.0
