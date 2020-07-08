@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	. "github.com/onsi/ginkgo"
+	. "sigs.k8s.io/cluster-api/test/framework/ginkgoextensions"
 
 	"github.com/blang/semver"
 	"github.com/onsi/gomega/types"
@@ -41,10 +41,6 @@ const (
 	EtcdVersionUpgradeTo         = "ETCD_VERSION_UPGRADE_TO"
 	CoreDNSVersionUpgradeTo      = "COREDNS_VERSION_UPGRADE_TO"
 )
-
-func Byf(format string, a ...interface{}) {
-	By(fmt.Sprintf(format, a...))
-}
 
 func setupSpecNamespace(ctx context.Context, specName string, clusterProxy framework.ClusterProxy, artifactFolder string) (*corev1.Namespace, context.CancelFunc) {
 	Byf("Creating a namespace for hosting the %q test spec", specName)
