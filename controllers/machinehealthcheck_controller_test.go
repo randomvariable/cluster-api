@@ -272,11 +272,11 @@ var _ = Describe("MachineHealthCheck", func() {
 				Eventually(func() []metav1.OwnerReference {
 					err := testEnv.Get(ctx, util.ObjectKey(mhc), mhc)
 					if err != nil {
-						fmt.Printf("error for OwnerReference non nil \n")
+						fmt.Printf("error cannot retrieve mhc in ctx \n")
 						return nil
 					}
 					return mhc.GetOwnerReferences()
-				}).Should(And(
+				}, 3*timeout).Should(And(
 					ContainElement(ownerReferenceForCluster(ctx, cluster)),
 					HaveLen(1),
 				))
