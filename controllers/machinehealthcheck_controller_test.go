@@ -70,7 +70,8 @@ var _ = Describe("MachineHealthCheck", func() {
 					Spec: clusterv1.MachineSpec{
 						ClusterName: cluster.Name,
 						Bootstrap: clusterv1.Bootstrap{
-							Data: pointer.StringPtr("data"),
+							Data:           pointer.StringPtr("data"),
+							DataSecretName: pointer.StringPtr("data-secret-name"),
 						},
 					},
 					Status: clusterv1.MachineStatus{
@@ -178,6 +179,7 @@ var _ = Describe("MachineHealthCheck", func() {
 							"selector": string(uuid.NewUUID()),
 						},
 					},
+					NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
 					UnhealthyConditions: []clusterv1.UnhealthyCondition{
 						{
 							Type:    corev1.NodeReady,
@@ -187,9 +189,12 @@ var _ = Describe("MachineHealthCheck", func() {
 					},
 				},
 			}
-			mhc.Default()
+			// removed because to fix "when a Machine has no Node ref for less than the NodeStartupTimeout" issue
+			//mhc.Default()
 		})
 
+		// delete all the nodes and mhc in the cluster, if the dekete get issues, it does not step
+		// Need to wait for the delete
 		AfterEach(func() {
 			for _, node := range nodes {
 				if err := testEnv.Delete(ctx, node); !apierrors.IsNotFound(err) {
@@ -204,6 +209,7 @@ var _ = Describe("MachineHealthCheck", func() {
 		})
 
 		Context("it should ensure the correct cluster-name label", func() {
+			// to be Fixed
 			Specify("with no existing labels exist", func() {
 				mhc.Spec.ClusterName = cluster.Name
 				mhc.Labels = map[string]string{}
@@ -256,6 +262,7 @@ var _ = Describe("MachineHealthCheck", func() {
 			})
 		})
 
+		// fixed
 		Context("it should ensure an owner reference is present", func() {
 			Specify("when no existing ones exist", func() {
 				mhc.Spec.ClusterName = cluster.Name
@@ -265,6 +272,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				Eventually(func() []metav1.OwnerReference {
 					err := testEnv.Get(ctx, util.ObjectKey(mhc), mhc)
 					if err != nil {
+						fmt.Printf("error for OwnerReference non nil \n")
 						return nil
 					}
 					return mhc.GetOwnerReferences()
@@ -483,7 +491,7 @@ var _ = Describe("MachineHealthCheck", func() {
 
 		Specify("when a Machine has no Node ref for longer than the NodeStartupTimeout", func() {
 			mhc.Spec.ClusterName = cluster.Name
-			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
+			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 10 * time.Second}
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -745,7 +753,8 @@ var _ = Describe("MachineHealthCheck", func() {
 						Spec: clusterv1.MachineSpec{
 							ClusterName: cluster.Name,
 							Bootstrap: clusterv1.Bootstrap{
-								Data: pointer.StringPtr("test"),
+								Data:           pointer.StringPtr("test"),
+								DataSecretName: pointer.StringPtr("test-data-secret-name"),
 							},
 							InfrastructureRef: corev1.ObjectReference{
 								APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
@@ -933,7 +942,8 @@ func newTestMachineHealthCheck(name, namespace, cluster string, labels map[strin
 			Selector: metav1.LabelSelector{
 				MatchLabels: l,
 			},
-			ClusterName: cluster,
+			NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
+			ClusterName:        cluster,
 			UnhealthyConditions: []clusterv1.UnhealthyCondition{
 				{
 					Type:    corev1.NodeReady,
@@ -1303,7 +1313,8 @@ func TestIsAllowedRemediation(t *testing.T) {
 
 			mhc := &clusterv1.MachineHealthCheck{
 				Spec: clusterv1.MachineHealthCheckSpec{
-					MaxUnhealthy: tc.maxUnhealthy,
+					MaxUnhealthy:       tc.maxUnhealthy,
+					NodeStartupTimeout: &metav1.Duration{Duration: 1 * time.Millisecond},
 				},
 				Status: clusterv1.MachineHealthCheckStatus{
 					ExpectedMachines:   tc.expectedMachines,

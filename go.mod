@@ -12,6 +12,7 @@ require (
 	github.com/evanphx/json-patch v4.5.0+incompatible
 	github.com/go-logr/logr v0.1.0
 	github.com/gogo/protobuf v1.3.1
+	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e // indirect
 	github.com/google/go-cmp v0.4.1
 	github.com/google/go-github v17.0.0+incompatible
 	github.com/google/go-querystring v1.0.0 // indirect
@@ -26,19 +27,21 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.6.2
 	go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738
+	golang.org/x/crypto v0.0.0-20200302210943-78000ba7a073 // indirect
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
+	golang.org/x/time v0.0.0-20191024005414-555d28b269f0 // indirect
 	google.golang.org/appengine v1.6.6 // indirect
 	google.golang.org/grpc v1.26.0
-	k8s.io/api v0.17.7
-	k8s.io/apiextensions-apiserver v0.17.7
-	k8s.io/apimachinery v0.17.7
-	k8s.io/apiserver v0.17.7
-	k8s.io/client-go v0.17.7
-	k8s.io/cluster-bootstrap v0.17.7
-	k8s.io/component-base v0.17.7
+	k8s.io/api v0.17.8
+	k8s.io/apiextensions-apiserver v0.17.8
+	k8s.io/apimachinery v0.17.8
+	k8s.io/apiserver v0.17.8
+	k8s.io/client-go v0.17.8
+	k8s.io/cluster-bootstrap v0.17.8
+	k8s.io/component-base v0.17.8
 	k8s.io/klog v1.0.0
-	k8s.io/utils v0.0.0-20200603063816-c1c6865ac451
-	sigs.k8s.io/controller-runtime v0.5.7
+	k8s.io/utils v0.0.0-20200619165400-6e3d28b6ed19
+	sigs.k8s.io/controller-runtime v0.5.8
 	sigs.k8s.io/kind v0.7.1-0.20200303021537-981bd80d3802
 	sigs.k8s.io/yaml v1.2.0
 )

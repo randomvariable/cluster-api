@@ -18,9 +18,10 @@ package controllers
 
 import (
 	"fmt"
+	"time"
+
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

@@ -299,7 +299,7 @@ var _ = Describe("Cluster Reconciler", func() {
 				},
 			},
 		}
-
+		machine.Spec.Bootstrap.DataSecretName = pointer.StringPtr("test6-")
 		Expect(testEnv.Create(ctx, machine)).To(BeNil())
 		key = client.ObjectKey{Name: machine.Name, Namespace: machine.Namespace}
 		defer func() {
