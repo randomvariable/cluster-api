@@ -190,7 +190,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				},
 			}
 			// removed because to fix "when a Machine has no Node ref for less than the NodeStartupTimeout" issue
-			//mhc.Default()
+			mhc.Default()
 		})
 
 		// delete all the nodes and mhc in the cluster, if the dekete get issues, it does not step
@@ -276,7 +276,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return mhc.GetOwnerReferences()
-				}, 3*timeout).Should(And(
+				}).Should(And(
 					ContainElement(ownerReferenceForCluster(ctx, cluster)),
 					HaveLen(1),
 				))
