@@ -190,7 +190,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				},
 			}
 			// removed because to fix "when a Machine has no Node ref for less than the NodeStartupTimeout" issue
-			mhc.Default()
+			//mhc.Default()
 		})
 
 		// delete all the nodes and mhc in the cluster, if the dekete get issues, it does not step
@@ -262,7 +262,7 @@ var _ = Describe("MachineHealthCheck", func() {
 			})
 		})
 
-		// fixed
+		// to be fixed!!
 		Context("it should ensure an owner reference is present", func() {
 			Specify("when no existing ones exist", func() {
 				mhc.Spec.ClusterName = cluster.Name
@@ -491,7 +491,7 @@ var _ = Describe("MachineHealthCheck", func() {
 
 		Specify("when a Machine has no Node ref for longer than the NodeStartupTimeout", func() {
 			mhc.Spec.ClusterName = cluster.Name
-			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 10 * time.Second}
+			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
