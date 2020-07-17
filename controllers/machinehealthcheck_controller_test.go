@@ -111,7 +111,7 @@ func newInfraMachine(machine *clusterv1.Machine) (*unstructured.Unstructured, st
 	}, providerID
 }
 
-var _ = FDescribe("MachineHealthCheck", func() {
+var _ = Describe("MachineHealthCheck", func() {
 	Context("on reconciliation", func() {
 		var (
 			cluster *clusterv1.Cluster
@@ -531,7 +531,6 @@ var _ = FDescribe("MachineHealthCheck", func() {
 			// Make sure the status matches.
 			objectKey := util.ObjectKey(mhc)
 			Eventually(func() *clusterv1.MachineHealthCheckStatus {
-				fmt.Fprintln(GinkgoWriter, "hello")
 				err := testEnv.Get(ctx, objectKey, mhc)
 				if err != nil {
 					fmt.Fprintf(GinkgoWriter, "error retrieving mhc: %s", err)
