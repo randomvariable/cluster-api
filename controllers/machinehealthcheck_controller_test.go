@@ -46,7 +46,72 @@ import (
 
 const defaultNamespaceName = "default"
 
-var _ = Describe("MachineHealthCheck", func() {
+func newMachine(mhc *clusterv1.MachineHealthCheck, cluster *clusterv1.Cluster) clusterv1.Machine {
+	return clusterv1.Machine{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: clusterv1.GroupVersion.String(),
+			Kind:       "Machine",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-mhc-machine-",
+			Namespace:    mhc.Namespace,
+			Labels:       mhc.Spec.Selector.MatchLabels,
+		},
+		Spec: clusterv1.MachineSpec{
+			ClusterName: cluster.Name,
+			Bootstrap: clusterv1.Bootstrap{
+				Data:           pointer.StringPtr("data"),
+				DataSecretName: pointer.StringPtr("data-secret-name"),
+			},
+		},
+		Status: clusterv1.MachineStatus{
+			InfrastructureReady: true,
+			BootstrapReady:      true,
+			Phase:               string(clusterv1.MachinePhaseRunning),
+			ObservedGeneration:  1,
+		},
+	}
+}
+
+func newNode(healthy bool) corev1.Node {
+	node := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "test-mhc-node-",
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+	if !healthy {
+		node.Status.Conditions[0] = corev1.NodeCondition{
+			Type:               corev1.NodeReady,
+			Status:             corev1.ConditionUnknown,
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+		}
+	}
+	return node
+}
+
+func newInfraMachine(machine *clusterv1.Machine) (*unstructured.Unstructured, string) {
+	providerID := fmt.Sprintf("test:////%v", uuid.NewUUID())
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+			"kind":       "InfrastructureMachine",
+			"metadata": map[string]interface{}{
+				"generateName": "test-mhc-machine-infra-",
+				"namespace":    machine.Namespace,
+			},
+			"spec": map[string]interface{}{
+				"providerID": providerID,
+			},
+		},
+	}, providerID
+}
+
+var _ = FDescribe("MachineHealthCheck", func() {
 	Context("on reconciliation", func() {
 		var (
 			cluster *clusterv1.Cluster
@@ -57,88 +122,35 @@ var _ = Describe("MachineHealthCheck", func() {
 			nodes             []*corev1.Node
 			machines          []*clusterv1.Machine
 			fakeNodesMachines = func(n int, healthy bool, nodeRef bool) {
-				machine := clusterv1.Machine{
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: clusterv1.GroupVersion.String(),
-						Kind:       "Machine",
-					},
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: "test-mhc-machine-",
-						Namespace:    mhc.Namespace,
-						Labels:       mhc.Spec.Selector.MatchLabels,
-					},
-					Spec: clusterv1.MachineSpec{
-						ClusterName: cluster.Name,
-						Bootstrap: clusterv1.Bootstrap{
-							Data:           pointer.StringPtr("data"),
-							DataSecretName: pointer.StringPtr("data-secret-name"),
-						},
-					},
-					Status: clusterv1.MachineStatus{
-						InfrastructureReady: true,
-						BootstrapReady:      true,
-						Phase:               string(clusterv1.MachinePhaseRunning),
-						ObservedGeneration:  1,
-					},
-				}
-
-				node := corev1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: "test-mhc-node-",
-					},
-					Status: corev1.NodeStatus{
-						Conditions: []corev1.NodeCondition{
-							{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						},
-					},
-				}
-				if !healthy {
-					node.Status.Conditions[0] = corev1.NodeCondition{
-						Type:               corev1.NodeReady,
-						Status:             corev1.ConditionUnknown,
-						LastTransitionTime: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
-					}
-				}
 
 				for i := 0; i < n; i++ {
-					providerID := fmt.Sprintf("test:////%v", uuid.NewUUID())
-
-					infraMachine := &unstructured.Unstructured{
-						Object: map[string]interface{}{
-							"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
-							"kind":       "InfrastructureMachine",
-							"metadata": map[string]interface{}{
-								"generateName": "test-mhc-machine-infra-",
-								"namespace":    machine.Namespace,
-							},
-							"spec": map[string]interface{}{
-								"providerID": providerID,
-							},
-						},
-					}
+					machine := newMachine(mhc, cluster)
+					infraMachine, providerID := newInfraMachine(&machine)
+					node := newNode(healthy)
 					Expect(testEnv.Create(ctx, infraMachine)).To(Succeed())
-					infraMachinePatch := client.MergeFrom(infraMachine.DeepCopy())
-					Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
-					Expect(testEnv.Status().Patch(ctx, infraMachine, infraMachinePatch)).To(Succeed())
-
-					machine := machine.DeepCopy()
+					fmt.Fprintf(GinkgoWriter, "inframachine created: %s\n", infraMachine.GetName())
 					machine.Spec.InfrastructureRef = corev1.ObjectReference{
 						APIVersion: infraMachine.GetAPIVersion(),
 						Kind:       infraMachine.GetKind(),
 						Name:       infraMachine.GetName(),
 					}
+					infraMachinePatch := client.MergeFrom(infraMachine.DeepCopy())
+					Expect(unstructured.SetNestedField(infraMachine.Object, true, "status", "ready")).To(Succeed())
+					Expect(testEnv.Status().Patch(ctx, infraMachine, infraMachinePatch)).To(Succeed())
+
 					machineStatus := machine.Status
-					Expect(testEnv.Create(ctx, machine)).To(Succeed())
+					Expect(testEnv.Create(ctx, &machine)).To(Succeed())
+					fmt.Fprintf(GinkgoWriter, "machine created: %s\n", machine.GetName())
 
 					if nodeRef {
-						node := node.DeepCopy()
 						node.Spec.ProviderID = providerID
 						nodeStatus := node.Status
-						Expect(testEnv.Create(ctx, node)).To(Succeed())
-						nodePatch := client.MergeFrom(node.DeepCopy())
+						Expect(testEnv.Create(ctx, &node)).To(Succeed())
+						fmt.Fprintf(GinkgoWriter, "node created: %s\n", node.GetName())
+						nodePatch := client.MergeFrom(&node)
 						node.Status = nodeStatus
-						Expect(testEnv.Status().Patch(ctx, node, nodePatch)).To(Succeed())
-						nodes = append(nodes, node)
+						Expect(testEnv.Status().Patch(ctx, &node, nodePatch)).To(Succeed())
+						nodes = append(nodes, &node)
 
 						machinePatch := client.MergeFrom(machine.DeepCopy())
 						machine.Status = machineStatus
@@ -148,10 +160,10 @@ var _ = Describe("MachineHealthCheck", func() {
 
 						now := metav1.NewTime(time.Now())
 						machine.Status.LastUpdated = &now
-						Expect(testEnv.Status().Patch(ctx, machine, machinePatch)).To(Succeed())
+						Expect(testEnv.Status().Patch(ctx, &machine, machinePatch)).To(Succeed())
 					}
 
-					machines = append(machines, machine)
+					machines = append(machines, &machine)
 				}
 			}
 		)
@@ -196,6 +208,7 @@ var _ = Describe("MachineHealthCheck", func() {
 		// delete all the nodes and mhc in the cluster, if the dekete get issues, it does not step
 		// Need to wait for the delete
 		AfterEach(func() {
+			fmt.Fprintln(GinkgoWriter, "Tearing down test")
 			for _, node := range nodes {
 				if err := testEnv.Delete(ctx, node); !apierrors.IsNotFound(err) {
 					Expect(err).NotTo(HaveOccurred())
@@ -213,6 +226,7 @@ var _ = Describe("MachineHealthCheck", func() {
 			Specify("with no existing labels exist", func() {
 				mhc.Spec.ClusterName = cluster.Name
 				mhc.Labels = map[string]string{}
+				mhc.SetGenerateName("correct-cluster-name-label-with-no-existing-labels-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				Eventually(func() map[string]string {
@@ -229,6 +243,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				mhc.Labels = map[string]string{
 					clusterv1.ClusterLabelName: "wrong-cluster",
 				}
+				mhc.SetGenerateName("correct-cluster-name-label-when-has-wrong-cluster-label-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				Eventually(func() map[string]string {
@@ -245,6 +260,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				mhc.Labels = map[string]string{
 					"extra-label": "1",
 				}
+				mhc.SetGenerateName("correct-cluster-name-label-when-other-labels-present-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				Eventually(func() map[string]string {
@@ -267,16 +283,17 @@ var _ = Describe("MachineHealthCheck", func() {
 			Specify("when no existing ones exist", func() {
 				mhc.Spec.ClusterName = cluster.Name
 				mhc.OwnerReferences = nil
+				mhc.SetGenerateName("owner-reference-when-no-existing-ones-exist-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
-
+				objectKey := util.ObjectKey(mhc)
 				Eventually(func() []metav1.OwnerReference {
-					err := testEnv.Get(ctx, util.ObjectKey(mhc), mhc)
+					err := testEnv.Get(ctx, objectKey, mhc)
 					if err != nil {
-						fmt.Printf("error cannot retrieve mhc in ctx \n")
+						fmt.Fprintf(GinkgoWriter, "error cannot retrieve mhc in ctx: %s\n", err)
 						return nil
 					}
 					return mhc.GetOwnerReferences()
-				}).Should(And(
+				}, timeout, time.Second).Should(And(
 					ContainElement(ownerReferenceForCluster(ctx, cluster)),
 					HaveLen(1),
 				))
@@ -287,6 +304,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				mhc.OwnerReferences = []metav1.OwnerReference{
 					{Kind: "Foo", APIVersion: "foo.bar.baz/v1", Name: "Bar", UID: "12345"},
 				}
+				mhc.SetGenerateName("owner-reference-when-modifying-existing-ones-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				Eventually(func() []metav1.OwnerReference {
@@ -295,7 +313,7 @@ var _ = Describe("MachineHealthCheck", func() {
 						return nil
 					}
 					return mhc.GetOwnerReferences()
-				}).Should(And(
+				}, timeout, time.Second).Should(And(
 					ContainElements(
 						metav1.OwnerReference{Kind: "Foo", APIVersion: "foo.bar.baz/v1", Name: "Bar", UID: "12345"},
 						ownerReferenceForCluster(ctx, cluster)),
@@ -307,6 +325,7 @@ var _ = Describe("MachineHealthCheck", func() {
 		Context("it marks unhealthy machines for remediation", func() {
 			Specify("when all Machines are healthy", func() {
 				mhc.Spec.ClusterName = cluster.Name
+				mhc.SetGenerateName("all-machines-healthy-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				// Healthy nodes and machines.
@@ -332,6 +351,7 @@ var _ = Describe("MachineHealthCheck", func() {
 
 			Specify("when there is one unhealthy Machine", func() {
 				mhc.Spec.ClusterName = cluster.Name
+				mhc.SetGenerateName("one-unhealthy-machine-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				// Healthy nodes and machines.
@@ -362,6 +382,7 @@ var _ = Describe("MachineHealthCheck", func() {
 				mhc.Spec.ClusterName = cluster.Name
 				maxUnhealthy := intstr.Parse("40%")
 				mhc.Spec.MaxUnhealthy = &maxUnhealthy
+				mhc.SetGenerateName("unhealthy-machines-exceed-maxunhealthy-")
 				Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 				// Healthy nodes and machines.
@@ -427,6 +448,8 @@ var _ = Describe("MachineHealthCheck", func() {
 
 		Specify("when a Machine has no Node ref for less than the NodeStartupTimeout", func() {
 			mhc.Spec.ClusterName = cluster.Name
+			mhc.SetGenerateName("no-noderef-for-less-than-the-nodestartuptimeout-")
+			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Hour}
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -439,8 +462,9 @@ var _ = Describe("MachineHealthCheck", func() {
 			}
 
 			// Make sure the status matches.
+			objectKey := util.ObjectKey(mhc)
 			Eventually(func() *clusterv1.MachineHealthCheckStatus {
-				err := testEnv.Get(ctx, util.ObjectKey(mhc), mhc)
+				err := testEnv.Get(ctx, objectKey, mhc)
 				if err != nil {
 					return nil
 				}
@@ -491,7 +515,8 @@ var _ = Describe("MachineHealthCheck", func() {
 
 		Specify("when a Machine has no Node ref for longer than the NodeStartupTimeout", func() {
 			mhc.Spec.ClusterName = cluster.Name
-			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 5 * time.Second}
+			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: time.Second}
+			mhc.SetGenerateName("no-noderef-for-longer-than-the-nodestartuptimeout-")
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -504,13 +529,16 @@ var _ = Describe("MachineHealthCheck", func() {
 			}
 
 			// Make sure the status matches.
+			objectKey := util.ObjectKey(mhc)
 			Eventually(func() *clusterv1.MachineHealthCheckStatus {
-				err := testEnv.Get(ctx, util.ObjectKey(mhc), mhc)
+				fmt.Fprintln(GinkgoWriter, "hello")
+				err := testEnv.Get(ctx, objectKey, mhc)
 				if err != nil {
+					fmt.Fprintf(GinkgoWriter, "error retrieving mhc: %s", err)
 					return nil
 				}
 				return &mhc.Status
-			}).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
+			}, timeout).Should(MatchMachineHealthCheckStatus(&clusterv1.MachineHealthCheckStatus{
 				ExpectedMachines:   3,
 				CurrentHealthy:     2,
 				ObservedGeneration: 1,
@@ -533,7 +561,7 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}).Should(Equal(1))
+			}, timeout, time.Second).Should(Equal(1))
 
 			// Calculate how many Machines have been remediated.
 			Eventually(func() (remediated int) {
@@ -551,11 +579,12 @@ var _ = Describe("MachineHealthCheck", func() {
 					}
 				}
 				return
-			}).Should(Equal(1))
+			}, timeout, time.Second).Should(Equal(1))
 		})
 
 		Specify("when a Machine's Node has gone away", func() {
 			mhc.Spec.ClusterName = cluster.Name
+			mhc.SetGenerateName("node-gone-away-")
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -627,6 +656,7 @@ var _ = Describe("MachineHealthCheck", func() {
 
 		Specify("should react when a Node transitions to unhealthy", func() {
 			mhc.Spec.ClusterName = cluster.Name
+			mhc.SetGenerateName("reach-node-transition-unhealthy-")
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Healthy nodes and machines.
@@ -733,7 +763,7 @@ var _ = Describe("MachineHealthCheck", func() {
 			}
 			infraTmpl.SetKind("InfrastructureMachineTemplate")
 			infraTmpl.SetAPIVersion("infrastructure.cluster.x-k8s.io/v1alpha3")
-			infraTmpl.SetGenerateName("mhc-ms-template-")
+			infraTmpl.SetGenerateName("mhc-ms-template--")
 			infraTmpl.SetNamespace(mhc.Namespace)
 			Expect(testEnv.Create(ctx, infraTmpl)).To(Succeed())
 
@@ -783,6 +813,7 @@ var _ = Describe("MachineHealthCheck", func() {
 			// Create the MachineHealthCheck instance.
 			mhc.Spec.ClusterName = cluster.Name
 			mhc.Spec.NodeStartupTimeout = &metav1.Duration{Duration: 1 * time.Second}
+			mhc.SetGenerateName("unhealthy-machines-deleted-")
 			Expect(testEnv.Create(ctx, mhc)).To(Succeed())
 
 			// Pause the MachineSet reconciler.

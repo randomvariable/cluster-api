@@ -112,13 +112,14 @@ func (r *MachineHealthCheckReconciler) SetupWithManager(mgr ctrl.Manager, option
 func (r *MachineHealthCheckReconciler) Reconcile(req ctrl.Request) (_ ctrl.Result, reterr error) {
 	ctx := context.Background()
 	logger := r.Log.WithValues("machinehealthcheck", req.Name, "namespace", req.Namespace)
-
+	logger.Info("Reconciling")
 	// Fetch the MachineHealthCheck instance
 	m := &clusterv1.MachineHealthCheck{}
 	if err := r.Client.Get(ctx, req.NamespacedName, m); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Object not found, return.  Created objects are automatically garbage collected.
 			// For additional cleanup logic use finalizers.
+			logger.Info("machine healthcheck not found")
 			return ctrl.Result{}, nil
 		}
 
@@ -127,11 +128,12 @@ func (r *MachineHealthCheckReconciler) Reconcile(req ctrl.Request) (_ ctrl.Resul
 		return ctrl.Result{}, err
 	}
 
+	logger = logger.WithValues("cluster", m.Spec.ClusterName)
 	cluster, err := util.GetClusterByName(ctx, r.Client, m.Namespace, m.Spec.ClusterName)
+
 	if err != nil {
 		logger.Error(err, "Failed to fetch Cluster for MachineHealthCheck")
-		return ctrl.Result{}, errors.Wrapf(err, "failed to get Cluster %q for MachineHealthCheck %q in namespace %q",
-			m.Spec.ClusterName, m.Name, m.Namespace)
+		return ctrl.Result{}, err
 	}
 
 	logger = r.Log.WithValues("cluster", cluster.Name)
@@ -191,18 +193,21 @@ func (r *MachineHealthCheckReconciler) reconcile(ctx context.Context, logger log
 	// Get the remote cluster cache to use as a client.Reader.
 	remoteClient, err := r.Tracker.GetClient(ctx, util.ObjectKey(cluster))
 	if err != nil {
+		logger.Error(err, "error creating remote cluster cache")
 		return ctrl.Result{}, err
 	}
 
 	if err := r.watchClusterNodes(ctx, cluster); err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "Error watching nodes on target cluster")
+		logger.Error(err, "error watching nodes on target cluster")
+		return ctrl.Result{}, err
 	}
 
 	// fetch all targets
 	logger.V(3).Info("Finding targets")
 	targets, err := r.getTargetsFromMHC(remoteClient, m)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "Failed to fetch targets from MachineHealthCheck")
+		logger.Error(err, "Failed to fetch targets from MachineHealthCheck")
+		return ctrl.Result{}, err
 	}
 	totalTargets := len(targets)
 	m.Status.ExpectedMachines = int32(totalTargets)
@@ -254,7 +259,8 @@ func (r *MachineHealthCheckReconciler) reconcile(ctx context.Context, logger log
 
 		conditions.MarkFalse(t.Machine, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediation, clusterv1.ConditionSeverityWarning, "MachineHealthCheck failed")
 		if err := t.patchHelper.Patch(ctx, t.Machine); err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "Failed to patch unhealthy machine status for machine %q", t.Machine.Name)
+			logger.Error(err, "failed to patch unhealthy machine status for machine", "machine", t.Machine)
+			return ctrl.Result{}, err
 		}
 		r.recorder.Eventf(
 			t.Machine,
@@ -267,7 +273,8 @@ func (r *MachineHealthCheckReconciler) reconcile(ctx context.Context, logger log
 	for _, t := range healthy {
 		logger.V(3).Info("patching machine", "machine", t.Machine.GetName())
 		if err := t.patchHelper.Patch(ctx, t.Machine); err != nil {
-			return ctrl.Result{}, errors.Wrapf(err, "Failed to patch healthy machine status for machine %q", t.Machine.Name)
+			logger.Error(err, "failed to patch healthy machine status for machine", "machine", t.Machine.GetName())
+			return reconcile.Result{}, err
 		}
 	}
 

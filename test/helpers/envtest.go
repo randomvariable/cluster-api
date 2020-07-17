@@ -129,6 +129,9 @@ func NewTestEnvironment() *TestEnvironment {
 		panic(err)
 	}
 
+	env.Config.QPS = 1000
+	env.Config.Burst = 10000
+
 	options := manager.Options{
 		Scheme:             scheme.Scheme,
 		MetricsBindAddress: "0",
