@@ -114,7 +114,8 @@ help:  ## Display this help
 
 .PHONY: test
 test: $(GINKGO) ## Run tests. Specify number of nodes with GINKGO_NODES= (default 1) 
-	source ./scripts/fetch_ext_bins.sh; fetch_tools; setup_envs; $(GINKGO) -skipPackage e2e,infrastructure/docker -failFast -progress -race -stream -nodes $(GINKGO_NODES) test -v ./... $(TEST_ARGS)
+	source ./scripts/fetch_ext_bins.sh; fetch_tools; setup_envs; go test -v ./... $(TEST_ARGS)
+	#source ./scripts/fetch_ext_bins.sh; fetch_tools; setup_envs; $(GINKGO) -skipPackage e2e,infrastructure/docker -failFast -progress -race -stream -nodes $(GINKGO_NODES) test -v ./... $(TEST_ARGS)=-p=1 
    
 
 .PHONY: docker-build-e2e
