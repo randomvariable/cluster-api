@@ -183,6 +183,8 @@ it usually contains Custom Resource Definitions (CRDs), Deployments (to run the 
 
 Existing Cluster API implementations consist of generic and infrastructure provider-specific logic. The [infrastructure provider](#infrastructure-provider)-specific logic is currently maintained in infrastructure provider repositories.
 
+### PKI (Public Key Infrastructure)
+
 # S
 ---
 
@@ -198,6 +200,15 @@ is running as a static pod.
 ### Server
 
 The infrastructure that backs a [Machine Resource](#user-content-machine), typically either a cloud instance, virtual machine, or physical host.
+
+# T
+---
+
+### TPM
+
+Trusted Platform Module (TPM) is a specification defined by the Trusted Computing Group (TCG) that allows hosts to attest to their identity
+via [PKI](#pki-public-key-infrastructure) and a secure crypto-processor which may either be a separate chip, built into the CPU or a
+virtual device provided by the hypervisor. Cluster API will support the use of TPM of provide node attestation.
 
 # W
 ---

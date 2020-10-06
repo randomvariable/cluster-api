@@ -1,0 +1,34 @@
+@startuml kops-bootstrap
+note right of "NodeAuthorizerClient"
+Instance Identity document
+is retrievable by instance
+metadata, and is a document
+signed by publicly available
+AWS certificates and
+assures the instance identity.
+endnote
+NodeAuthorizerClient -> "NodeAuthorizerServer": InstanceIdentityDocument
+note right of NodeAuthorizerClient
+The client connects to a
+known URL:
+`_node-authorizer-internal.dns_zone_:10443`,
+which is a daemonset running on
+the control plane. kops uses a Route53
+zone exclusive for the cluster.
+end note
+"NodeAuthorizerServer" -> "AWS EC2 API": DescribeInstance
+"AWS EC2 API" -> "NodeAuthorizerServer": DescribeInstanceResult
+note right of "NodeAuthorizerServer"
+Node authorizer verifies
+following:
+* instance is running
+* instance profile
+* ip address doesn't clash
+
+
+endnote
+"NodeAuthorizerServer" -> "NodeAuthorizerClient": Bootstrap Token
+"NodeAuthorizerClient" -> "Kubelet": Bootstrap Token
+"Kubelet" -> "API Server": Create node request
+"API Server" -> Kubelet: Response
+@enduml
