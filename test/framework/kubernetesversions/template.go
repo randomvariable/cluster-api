@@ -23,14 +23,52 @@ import (
 	"os/exec"
 	"path"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	cabpkv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
 	kcpv1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/yaml"
 )
 
-const yamlSeparator = "\n---\n"
+type jsonPatchOperation string
+
+const (
+	jsonPatchOperationAdd                jsonPatchOperation = "add"
+	jsonPatchOperationReplace            jsonPatchOperation = "replace"
+	yamlSeparator                                           = "\n---\n"
+	renderedConformanceTemplateName                         = "cluster-template-conformance-ci-artifacts.yaml"
+	renderedKubeadmConfigPatchName                          = "kubeadmConfig-patch.yaml"
+	renderedKubeadmControlPlanePatchName                    = "kubeadmControlPlane-patch.yaml"
+	sourceTemplateName                                      = "ci-artifacts-source-template.yaml"
+	platformSMPName                                         = "platform-kustomization.yaml"
+	kustomizationFileName                                   = "kustomization.yaml"
+)
+
+type simplifiedPatchOp struct {
+	Operation jsonPatchOperation `json:"op"`
+	Path      string             `json:"path"`
+	Value     interface{}        `json:"value"`
+}
+
+type kustomizeTarget struct {
+	Group   string `json:"group"`
+	Version string `json:"version"`
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+}
+
+type patchJSON6902 struct {
+	Target kustomizeTarget `json:"target"`
+	Path   string          `json:"path"`
+}
+
+type simplifiedKustomization struct {
+	APIVersion            string          `json:"apiVersion"`
+	Kind                  string          `json:"kind"`
+	Namespace             string          `json:"namespace"`
+	Resources             []string        `json:"resources"`
+	PatchesStrategicMerge []string        `json:"patchesStrategicMerge,omitempty"`
+	PatchesJSON6902       []patchJSON6902 `json:"patchesJson6902,omitempty"`
+}
 
 type GenerateCIArtifactsInjectedTemplateForDebianInput struct {
 	// ArtifactsDirectory is where conformance suite output will go. Defaults to _artifacts
@@ -77,31 +115,78 @@ func GenerateCIArtifactsInjectedTemplateForDebian(input GenerateCIArtifactsInjec
 		return "", err
 	}
 
-	kustomizedTemplate := path.Join(templateDir, "cluster-template-conformance-ci-artifacts.yaml")
+	kustomizedTemplate := path.Join(templateDir, renderedConformanceTemplateName)
 
-	kustomization, err := dataKustomizationYamlBytes()
+	kubeadmConfigPatch, err := kubeadmConfigInjectionPatch()
+	if err != nil {
+		return "", err
+	}
+	if err := ioutil.WriteFile(path.Join(overlayDir, renderedKubeadmConfigPatchName), kubeadmConfigPatch, 0o600); err != nil {
+		return "", err
+	}
+
+	kubeadmControlPlanePatch, err := kubeadmControlPlaneInjectionPatch()
+	if err != nil {
+		return "", err
+	}
+	if err := ioutil.WriteFile(path.Join(overlayDir, renderedKubeadmControlPlanePatchName), kubeadmControlPlanePatch, 0o600); err != nil {
+		return "", err
+	}
+
+	if err := ioutil.WriteFile(path.Join(overlayDir, sourceTemplateName), input.SourceTemplate, 0o600); err != nil {
+		return "", err
+	}
+
+	if err := ioutil.WriteFile(path.Join(overlayDir, platformSMPName), input.PlatformKustomization, 0o600); err != nil {
+		return "", err
+	}
+
+	kustomization := newSimplifiedKustomization()
+	kustomization.Resources = []string{sourceTemplateName}
+	kustomization.PatchesStrategicMerge = []string{platformSMPName}
+	kustomization.PatchesJSON6902 = []patchJSON6902{
+		{
+			Target: kustomizeTarget{
+				Group:   cabpkv1.GroupVersion.Group,
+				Version: cabpkv1.GroupVersion.Version,
+				Kind:    "KubeadmConfigTemplate",
+				Name:    input.KubeadmConfigTemplateName,
+			},
+			Path: renderedKubeadmConfigPatchName,
+		},
+		{
+			Target: kustomizeTarget{
+				Group:   kcpv1.GroupVersion.Group,
+				Version: kcpv1.GroupVersion.Version,
+				Kind:    "KubeadmControlPlane",
+				Name:    input.KubeadmControlPlaneName,
+			},
+			Path: renderedKubeadmControlPlanePatchName,
+		},
+	}
+
+	if input.KubeadmConfigName != "" {
+		kustomization.PatchesJSON6902 = append(
+			kustomization.PatchesJSON6902,
+			patchJSON6902{
+				Target: kustomizeTarget{
+					Group:   cabpkv1.GroupVersion.Group,
+					Version: cabpkv1.GroupVersion.Version,
+					Kind:    "KubeadmConfig",
+					Name:    input.KubeadmConfigName,
+				},
+				Path: renderedKubeadmConfigPatchName,
+			},
+		)
+	}
+
+	kustomizationYaml, err := yaml.Marshal(kustomization)
 	if err != nil {
 		return "", err
 	}
 
-	if err := ioutil.WriteFile(path.Join(overlayDir, "kustomization.yaml"), kustomization, 0o600); err != nil {
-		return "", err
-	}
+	ioutil.WriteFile(path.Join(overlayDir, kustomizationFileName), kustomizationYaml, 0o600)
 
-	kustomizeVersions, err := generateKustomizeVersionsYaml(input.KubeadmControlPlaneName, input.KubeadmConfigTemplateName, input.KubeadmConfigName)
-	if err != nil {
-		return "", err
-	}
-
-	if err := ioutil.WriteFile(path.Join(overlayDir, "kustomizeversions.yaml"), kustomizeVersions, 0o600); err != nil {
-		return "", err
-	}
-	if err := ioutil.WriteFile(path.Join(overlayDir, "ci-artifacts-source-template.yaml"), input.SourceTemplate, 0o600); err != nil {
-		return "", err
-	}
-	if err := ioutil.WriteFile(path.Join(overlayDir, "platform-kustomization.yaml"), input.PlatformKustomization, 0o600); err != nil {
-		return "", err
-	}
 	cmd := exec.Command("kustomize", "build", overlayDir)
 	data, err := cmd.CombinedOutput()
 	if err != nil {
@@ -111,116 +196,75 @@ func GenerateCIArtifactsInjectedTemplateForDebian(input GenerateCIArtifactsInjec
 		return "", err
 	}
 	return kustomizedTemplate, nil
+
 }
 
-func generateKustomizeVersionsYaml(kcpName, kubeadmTemplateName, kubeadmConfigName string) ([]byte, error) {
-	kcp, err := generateKubeadmControlPlane(kcpName)
-	if err != nil {
-		return nil, err
+func newSimplifiedKustomization() simplifiedKustomization {
+	return simplifiedKustomization{
+		APIVersion: "kustomize.config.k8s.io/v1beta1",
+		Kind:       "Kustomization",
+		Namespace:  "default",
 	}
-	kubeadm, err := generateKubeadmConfigTemplate(kubeadmTemplateName)
-	if err != nil {
-		return nil, err
-	}
-	kcpYaml, err := yaml.Marshal(kcp)
-	if err != nil {
-		return nil, err
-	}
-	kubeadmYaml, err := yaml.Marshal(kubeadm)
-	if err != nil {
-		return nil, err
-	}
-	fileStr := string(kcpYaml) + yamlSeparator + string(kubeadmYaml)
-	if kubeadmConfigName == "" {
-		return []byte(fileStr), nil
-	}
-
-	kubeadmConfig, err := generateKubeadmConfig(kubeadmConfigName)
-	if err != nil {
-		return nil, err
-	}
-
-	kubeadmConfigYaml, err := yaml.Marshal(kubeadmConfig)
-	if err != nil {
-		return nil, err
-	}
-	fileStr = fileStr + yamlSeparator + string(kubeadmConfigYaml)
-
-	return []byte(fileStr), nil
 }
 
-func generateKubeadmConfigTemplate(name string) (*cabpkv1.KubeadmConfigTemplate, error) {
-	kubeadmSpec, err := generateKubeadmConfigSpec()
-	if err != nil {
-		return nil, err
-	}
-	return &cabpkv1.KubeadmConfigTemplate{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmConfigTemplate",
-			APIVersion: cabpkv1.GroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: cabpkv1.KubeadmConfigTemplateSpec{
-			Template: cabpkv1.KubeadmConfigTemplateResource{
-				Spec: *kubeadmSpec,
-			},
-		},
-	}, nil
-}
-
-func generateKubeadmConfig(name string) (*cabpkv1.KubeadmConfig, error) {
-	kubeadmSpec, err := generateKubeadmConfigSpec()
-	if err != nil {
-		return nil, err
-	}
-	return &cabpkv1.KubeadmConfig{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmConfig",
-			APIVersion: kcpv1.GroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: *kubeadmSpec,
-	}, nil
-}
-
-func generateKubeadmControlPlane(name string) (*kcpv1.KubeadmControlPlane, error) {
-	kubeadmSpec, err := generateKubeadmConfigSpec()
-	if err != nil {
-		return nil, err
-	}
-	return &kcpv1.KubeadmControlPlane{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "KubeadmControlPlane",
-			APIVersion: kcpv1.GroupVersion.String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: kcpv1.KubeadmControlPlaneSpec{
-			KubeadmConfigSpec: *kubeadmSpec,
-			Version:           "${KUBERNETES_VERSION}",
-		},
-	}, nil
-}
-
-func generateKubeadmConfigSpec() (*cabpkv1.KubeadmConfigSpec, error) {
+func kubeadmConfigInjectionPatch() ([]byte, error) {
 	data, err := dataDebian_injection_scriptEnvsubstShBytes()
 	if err != nil {
 		return nil, err
 	}
-	return &cabpkv1.KubeadmConfigSpec{
-		Files: []cabpkv1.File{
-			{
-				Path:        "/usr/local/bin/ci-artifacts.sh",
-				Content:     string(data),
-				Owner:       "root:root",
-				Permissions: "0750",
-			},
+	file := cabpkv1.File{
+		Path:        "/usr/local/bin/ci-artifacts.sh",
+		Content:     string(data),
+		Owner:       "root:root",
+		Permissions: "0750",
+	}
+
+	patches := []simplifiedPatchOp{
+		{
+			Operation: jsonPatchOperationAdd,
+			Path:      "/spec/files",
+			Value:     file,
 		},
-		PreKubeadmCommands: []string{"/usr/local/bin/ci-artifacts.sh"},
-	}, nil
+		{
+			Operation: jsonPatchOperationAdd,
+			Path:      "/spec/preKubeadmCommands",
+			Value:     "/usr/local/bin/ci-artifacts.sh",
+		},
+	}
+
+	return yaml.Marshal(patches)
+
+}
+
+func kubeadmControlPlaneInjectionPatch() ([]byte, error) {
+	data, err := dataDebian_injection_scriptEnvsubstShBytes()
+	if err != nil {
+		return nil, err
+	}
+	file := cabpkv1.File{
+		Path:        "/usr/local/bin/ci-artifacts.sh",
+		Content:     string(data),
+		Owner:       "root:root",
+		Permissions: "0750",
+	}
+
+	patches := []simplifiedPatchOp{
+		{
+			Operation: jsonPatchOperationAdd,
+			Path:      "/spec/kubeadmConfigSpec/files",
+			Value:     file,
+		},
+		{
+			Operation: jsonPatchOperationAdd,
+			Path:      "/spec/kubeadmConfigSpec/preKubeadmCommands",
+			Value:     "/usr/local/bin/ci-artifacts.sh",
+		},
+		{
+			Operation: jsonPatchOperationReplace,
+			Path:      "/spec/version",
+			Value:     "${KUBERNETES_VERSION}",
+		},
+	}
+
+	return yaml.Marshal(patches)
 }
