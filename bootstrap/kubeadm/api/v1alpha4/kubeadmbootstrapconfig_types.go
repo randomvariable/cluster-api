@@ -83,6 +83,15 @@ type KubeadmConfigSpec struct {
 	// +optional
 	Verbosity *int32 `json:"verbosity,omitempty"`
 
+	// Proxy specifies the proxy configuration
+	// +optional
+	Proxy *Proxy `json:"proxy,omitempty"`
+
+	// PKI specifies the set of CA and keys that a user
+	// can predefine
+	// +optional
+	PKI *PKI `json:"pki,omitempty"`
+
 	// UseExperimentalRetryJoin replaces a basic kubeadm command with a shell
 	// script with retries for joins.
 	//
@@ -95,6 +104,45 @@ type KubeadmConfigSpec struct {
 	// For more information, refer to https://github.com/kubernetes-sigs/cluster-api/pull/2763#discussion_r397306055.
 	// +optional
 	UseExperimentalRetryJoin bool `json:"useExperimentalRetryJoin,omitempty"`
+}
+
+// Proxy defines the http proxy settings used by container runtime during bootstrap
+type Proxy struct {
+	// HTTPProxy specifies the proxy url for http traffic
+	HTTPProxy string `json:"httpProxy"`
+	// HTTPSProxy specifies the proxy url for https traffic
+	HTTPSProxy string `json:"httpsProxy"`
+	// NoProxy specifies the list of no proxies
+	// +optional
+	NoProxy []string `json:"noProxy,omitempty"`
+	// HTTPProxyCredentials specifies the secret name to store HTTP Proxy
+	// credentials
+	// +optional
+	HTTPProxySecretName *string `json:"httpProxyAuth,omitempty"`
+	// HTTPSProxyCredentials specifies the secret name to store HTTPS Proxy
+	// credentials
+	// +optional
+	HTTPSProxySecretName *string `json:"httpsProxyAuth,omitempty"`
+}
+
+// PKI Defines the API to bring your own set of CAs and keys
+type PKI struct {
+
+	// EtcdCASecretName is the name of the secret that contains
+	// the etcd CA crt and key
+	EtcdCASecretName string `json:"etcdCASecretName,omitempty"`
+
+	// CASecretName specifies the secret name for the apiserver CA key and cert
+	// +optional
+	KubernetesCASecretName *string `json:"caSecretName,omitempty"`
+
+	// ServiceAccountSecretName specifies the secret name of the service account key
+	// +optional
+	ServiceAccountSecretName *string `json:"serviceAccountSecretName,omitempty"`
+
+	// FrontProxyCASecretName specifies the secret name for the for the front proxy
+	// CA key and cert
+	FrontProxyCASecretName *string `json:"frontProxyCASecretName,omitempty"`
 }
 
 // KubeadmConfigStatus defines the observed state of KubeadmConfig
