@@ -1,0 +1,37 @@
+@startuml eks-bootstrap
+Kubelet -> "AWS IAM Authenticator (node)": Request token
+note left of "AWS IAM Authenticator (node)"
+Generates AWSv4 signature for
+a "STS::GetCallerIdentity request"
+using instance metadata credentials.
+It additionally sets SessionName to the
+instance ID.
+
+Assumption is that the role being assumed
+is one that the EC2 instance is allowed to,
+using a condition to match on the
+IAM variable ec2:SourceInstanceARN
+endnote
+"AWS IAM Authenticator (node)" -> Kubelet: Token
+Kubelet -> "API Server": RegisterNode
+"API Server" -> "AWS IAM Authenticator (webhook)": AuthenticateRequest
+note left of "AWS IAM Authenticator (webhook)"
+Sends the presigned request
+endnote
+"AWS IAM Authenticator (webhook)" -> "AWS STS API": GetCallerIdentity
+"AWS STS API" -> "AWS IAM Authenticator (webhook)": GetCallerIdentityResult
+"AWS IAM Authenticator (webhook)" -> "AWS EC2 API": DescribeInstance
+note left of "AWS IAM Authenticator (webhook)"
+Filters for EC2 instances where
+instance ID matches token
+session name.
+endnote
+"AWS EC2 API" -> "AWS IAM Authenticator (webhook)": DescribeInstancesResult
+note left of "AWS IAM Authenticator (webhook)"
+Returns authentication
+result as a node matching
+the EC2 PrivateDNSName
+endnote
+"AWS IAM Authenticator (webhook)" -> "API Server": AuthenticateRequestResult
+"API Server" -> "Kubelet": Response
+@enduml

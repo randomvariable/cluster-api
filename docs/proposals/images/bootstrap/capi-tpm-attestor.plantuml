@@ -1,0 +1,41 @@
+@startuml capi-tpm-authenticator
+
+(*) --> if "Certificate File exists" then
+  -->[true] "Verify Certificate" as vc
+  else
+  -->[false] "Begin kubelet client CSR process" as csr
+endif
+
+
+vc --> if "certificate expires in less than 10 days" then
+  -->[true] "Begin kubelet client CSR process" as csr
+else
+ -> [false] Return existing certificate pair
+ -> (*)
+endif
+
+csr --> Lock certificate file
+--> Load AIK from nvram into TPM
+--> "Get keypair" as kp
+
+kp --> if "private key file exists" then
+  -> [true] "Load private key"
+  -> "Create attestation" as ca
+  else
+  --> [false] "Generate new private key"
+  -> "Create attestation" as ca
+endif
+
+ca --> Load private key into TPM
+--> Request attestation of private key using AIK
+--> Create new CSR
+--> Encode AIK certificate as Attestation Certificate block
+--> Encode VM ID as  VM Identity block
+--> Encode attestation as Attestation Data block
+--> Add key usages
+--> Send CSR to Kubernetes API server
+--> Wait for signed certificate
+--> Persist key pair
+--> Return certificate data to kubelet
+--> (*)
+@enduml

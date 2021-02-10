@@ -1,0 +1,31 @@
+@startuml kops-bootstrap
+participant NodeUp
+participant KopsControllerServer
+participant "STS API"
+participant "AWS EC2 API"
+participant Kubelet
+participant "API Server"
+activate NodeUp
+activate "KopsControllerServer"
+activate "STS API"
+activate "AWS EC2 API"
+activate "API Server"
+NodeUp -> "KopsControllerServer": Signed STS::GetCallerIdentity + PrivateKey
+note right of NodeUp
+The client connects to a
+known URL:
+which is a daemonset running on
+the control plane. kops uses a Route53
+zone exclusive for the cluster.
+end note
+"KopsControllerServer" -> "STS API": GetCallerIdentity
+"STS API" -> KopsControllerServer: GetCallerIdentityResult
+"KopsControllerServer" -> "AWS EC2 API": DescribeInstance
+"AWS EC2 API" -> "KopsControllerServer": DescribeInstanceResult
+"KopsControllerServer" -> "NodeUp": Certificate with node as CN
+"NodeUp" -> Kubelet: Start
+deactivate NodeUp
+activate Kubelet
+"Kubelet" -> "API Server": Create node request
+"API Server" -> Kubelet: Response
+@enduml

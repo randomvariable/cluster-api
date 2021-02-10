@@ -1,0 +1,40 @@
+@startuml capi-azure-authenticator
+
+(*) --> if "Certificate File exists" then
+  -->[true] "Verify Certificate" as vc
+  else
+  -->[false] "Begin kubelet client CSR process" as csr
+endif
+
+
+vc --> if "certificate expires in less than 10 days" then
+  -->[true] "Begin kubelet client CSR process" as csr
+else
+ -> [false] Return existing certificate pair
+ -> (*)
+endif
+
+csr --> Lock certificate file
+--> Retrieve instance identity document
+--> "Get keypair" as kp
+
+kp --> if "private key file exists" then
+  -> [true] "Load private key"
+  -> "Create attestation" as ca
+  else
+  --> [false] "Generate new private key"
+  -> "Create attestation" as ca
+endif
+
+ca --> Create new CSR
+--> Fetch Instance Attestation Data
+--> Encode Instance Attestation as Cloud Provider Public Attestation block
+--> Encode instance identity document as  VM Identity block
+--> Encode attestation as Attestation Data block
+--> Add key usages
+--> Send CSR to Kubernetes API server
+--> Wait for signed certificate
+--> Persist key pair
+--> Return certificate data to kubelet
+--> (*)
+@enduml
