@@ -1,0 +1,9 @@
+#cloud-config
+write_files:
+- encoding: b64
+  content:  {{nodeadm_config}}.
+  owner: root:root
+  path: /tmp/nodeadm_config.yaml
+  permissions: '0644'
+runcmd:
+  - /usr/bin/nodeadm --bootstrap --path /tmp/nodeadm_config.yaml

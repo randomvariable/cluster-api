@@ -212,19 +212,19 @@ func (m *MachineStatus) GetTypedPhase() MachinePhase {
 
 // Bootstrap capsulates fields to configure the Machine’s bootstrapping mechanism.
 type Bootstrap struct {
-	// KubernetesConfigRef is a reference to a kubernetes bootstrap provider-specific resource
+	// ConfigRef is a reference to a kubernetes bootstrap provider-specific resource
 	// that holds configuration details. The reference is optional to
 	// allow users/operators to specify Bootstrap.DataSecretName without
 	// the need of a controller.
 	// +optional
-	KubernetesConfigRef *corev1.ObjectReference `json:"kubernetesConfigRef,omitempty"`
+	ConfigRef *corev1.ObjectReference `json:"kubernetesConfigRef,omitempty"`
 
-	// NodeConfigRef is a reference to a node bootstrap provider-specific resource
+	// NodeConfigName is the name of the NodeConfig resource
 	// that holds configuration details. The reference is optional to
 	// allow users/operators to specify Bootstrap.DataSecretName without
 	// the need of a controller.
 	// +optional
-	NodeConfigRef *corev1.TypedLocalObjectReference `json:"nodeConfigRef,omitempty"`
+	NodeConfigName string `json:"nodeConfigName,omitempty"`
 
 	// DataSecretName is the name of the secret that stores the bootstrap data script.
 	// If nil, the Machine should remain in the Pending state.

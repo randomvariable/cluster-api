@@ -1,0 +1,127 @@
+@startuml
+title User creates a Cluster with NodeadmBootstrapTemplate
+actor User
+
+' -- GROUPS START ---
+
+box #lightgreen
+participant "API Server"
+end box
+
+box #lightslategray
+participant "Cluster API Machine Controller"
+end box
+
+
+box #lightslategray
+participant "Cluster API Nodeadm Bootstrap Controller"
+end box
+
+box #lightslategray
+participant "Cluster API Infrastructure Provider"
+end box
+
+box #lightslategray
+participant "Cluster API Nodeadm CLI"
+end box
+
+box #lightslategray
+participant "IaaS API"
+end box
+
+' -- GROUPS END ---
+
+User->"API Server":kubectl apply -f cluster.yaml
+"API Server"-->>"Cluster API Machine Controller": New MachineSet
+
+"Cluster API Machine Controller"-> "Cluster API Machine Controller":MachineSet Controller Reconcile
+activate "Cluster API Machine Controller"
+
+"Cluster API Machine Controller"-> "API Server": Create Machine and NodeadmBootstrap resources
+
+deactivate "Cluster API Machine Controller"
+
+"API Server"-->>"Cluster API Nodeadm Bootstrap Controller": New NodeadmBootstrap
+
+"Cluster API Nodeadm Bootstrap Controller"-> "Cluster API Nodeadm Bootstrap Controller": NodeadmBootstrap Reconcile
+activate "Cluster API Nodeadm Bootstrap Controller"
+
+opt Status.Serialized is false
+
+  "Cluster API Nodeadm Bootstrap Controller"-> "API Server": Fetch Spec.Files and other data to be serialised
+
+  "API Server" -> "Cluster API Nodeadm Bootstrap Controller": ConfigMaps and Secrets
+
+  "Cluster API Nodeadm Bootstrap Controller"-> "API Server": Create secret with name + "-nodeconfig" with data = serialized NodeConfig
+
+  "Cluster API Nodeadm Bootstrap Controller" -> "Cluster API Nodeadm Bootstrap Controller": Set Status.Serialized = true
+
+end
+
+opt Spec.InfraStorage.Ref resource ! exist
+  "Cluster API Nodeadm Bootstrap Controller"-> "API Server": Create NodeConfigInfra resource = spec.InfraStorageRef.Kind minus Template suffix
+end
+
+"API Server"-->>"Cluster API Infrastructure Provider": New NodeConfigInfra resource
+"Cluster API Infrastructure Provider"-> "Cluster API Infrastructure Provider":NodeConfigInfra Controller Reconcile
+activate "Cluster API Infrastructure Provider"
+
+opt Status.Ready == false
+
+"Cluster API Infrastructure Provider" -> "API Server": Fetch Spec.SourceSecret
+
+"API Server" -> "Cluster API Infrastructure Provider": Secret
+
+"Cluster API Infrastructure Provider" -> "IaaS API": Put Secret.Data
+
+"IaaS API" -> "Cluster API Infrastructure Provider": Storage Key
+
+"Cluster API Infrastructure Provider" -> "Cluster API Infrastructure Provider": Set Status.NodeadmStoragePluginKind, Status.NodeadmStoragePluginLocation, Status.Ready = true
+
+end
+
+"Cluster API Infrastructure Provider" -> "API Server": Update
+
+deactivate "Cluster API Infrastructure Provider"
+
+opt Spec.InfraStorage.Ref -> Status.Ready is true
+  "Cluster API Nodeadm Bootstrap Controller"-> "API Server": Fetch Spec.BootstrapTemplateConfigMapName
+  "Cluster API Nodeadm Bootstrap Controller"-> "API Server": Create machine secret
+  "Cluster API Nodeadm Bootstrap Controller"-> "Cluster API Nodeadm Bootstrap Controller": Status.Ready = true
+end
+
+"Cluster API Nodeadm Bootstrap Controller"-> "API Server": Update
+
+"Cluster API Machine Controller"-> "Cluster API Machine Controller":InfraMachine Controller Reconcile
+activate  "Cluster API Infrastructure Provider"
+
+ "Cluster API Infrastructure Provider"-> "IaaS API": Create Machine
+
+deactivate  "Cluster API Infrastructure Provider"
+
+activate "Cluster API Nodeadm CLI"
+
+"Cluster API Nodeadm CLI" -> "Cluster API Nodeadm CLI": Read nodeadm.yaml
+
+"Cluster API Nodeadm CLI" -> "Cluster API Nodeadm CLI Infra Plugin": InfraLocation
+activate "Cluster API Nodeadm CLI Infra Plugin"
+
+"Cluster API Nodeadm CLI Infra Plugin" -> "IaaS API": Fetch InfraLocation
+"IaaS API" -> "Cluster API Nodeadm CLI Infra Plugin": "nodeadm config"
+
+"Cluster API Nodeadm CLI Infra Plugin" ->  "Cluster API Nodeadm CLI"
+deactivate "Cluster API Nodeadm CLI Infra Plugin"
+
+"Cluster API Nodeadm CLI" -> "Cluster API Nodeadm CLI": "Configure Machine"
+"Cluster API Nodeadm CLI" -> "Cluster API Nodeadm CLI": "Execute Kubeadm"
+
+"Cluster API Nodeadm CLI" -> "Cluster API Nodeadm CLI Infra Plugin": Sentinel Location and Sentinel Data
+activate "Cluster API Nodeadm CLI Infra Plugin"
+
+deactivate "Cluster API Nodeadm CLI Infra Plugin"
+
+"Cluster API Nodeadm CLI Infra Plugin" -> "IaaS API": Put Sentinel Data
+deactivate "Cluster API Nodeadm CLI"
+
+hide footbox
+@enduml

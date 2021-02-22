@@ -1,15 +1,19 @@
 package v1alpha4
 
+//
 type NodeConfig struct {
+	// BootstrapperTemplateConfigMapName is the name of the ConfigMap containing
+	// a bootstrapper template
+	BootstrapperTemplateConfigMapName
 	// Files specifies files to be created on the host filesystem
 	Files []FileConfig `json:"files,omitempty"`
 	// Images will pre-load images into the container runtime for use by
 	// the cluster
 	Images []Image `json:"images,omitempty"`
 	// LinuxConfiguration controls Linux specific configuration options
-	*LinuxConfiguration `json:"linuxConfiguration,omitempty"`
+	LinuxConfiguration *LinuxConfiguration `json:"linuxConfiguration,omitempty"`
 	// WindowsConfiguration controls Windows specific configuration options
-	*WindowsConfiguration `json:"windowsConfiguration,omitempty"`
+	WindowsConfiguration *WindowsConfiguration `json:"windowsConfiguration,omitempty"`
 	// Commands lists executable commands that should be run at different phases
 	Commands Commands
 	// AttestationPlugin specifies which attestation plugin to use for the node
@@ -17,6 +21,33 @@ type NodeConfig struct {
 	// ContainerRuntime configures the container runtime. ContainerD is supported
 	// at the present time.
 	ContainerRuntime ContainerRuntime `json:"containerRuntime"`
+	// SystemTrust defines certificate authorities to inject into the host system
+	// trust store
+	SystemTrustCertificateAuthorities []string
+	// SystemProxies configures proxies for kubelet, container runtime and the host
+	SystemProxies []SystemProxyConfig
+}
+
+
+// SerialisedNodeConfig is the fully serialised format of the node config
+// containing no external references to Kubernetes resources
+type SerialisedNodeConfig struct {
+	// Files specifies files to be created on the host filesystem
+	Files []SerialisedFile `json:"files,omitempty"`
+	// Images will pre-load images into the container runtime for use by
+	// the cluster
+	Images []Image `json:"images,omitempty"`
+	// LinuxConfiguration controls Linux specific configuration options
+	LinuxConfiguration *LinuxConfiguration `json:"linuxConfiguration,omitempty"`
+	// WindowsConfiguration controls Windows specific configuration options
+	WindowsConfiguration *SerialisedWindowsConfiguration `json:"windowsConfiguration,omitempty"`
+	// Commands lists executable commands that should be run at different phases
+	Commands Commands
+	// AttestationPlugin specifies which attestation plugin to use for the node
+	AttestationPlugin string `json:"attestationPlugin"`
+	// ContainerRuntime configures the container runtime. ContainerD is supported
+	// at the present time.
+	ContainerRuntime ContainerRuntime ContainerRuntime `json:"containerRuntime"`
 	// SystemTrust defines certificate authorities to inject into the host system
 	// trust store
 	SystemTrustCertificateAuthorities []string
@@ -47,14 +78,13 @@ type SystemProxy struct {
 	Protocol string
 	// Endpoint is the target endpoint of the proxy
 	Endpoint string
-	// AuthSecretRef is a reference to a secret containing credentials for
-	// the proxy
-	AuthSecretRef SecretRef
 }
 
 type SystemProxyConfig struct {
 	SystemProxy
-	AuthSecretRef SecretRef
+	// AuthSecretName is the name of the secret containing credentials for
+	// the proxy
+	AuthSecretName string
 }
 
 type SystemProxyData struct {
@@ -79,11 +109,20 @@ type LinuxConfiguration struct {
 
 type WindowsConfiguration struct {
 	// Services defines Windows Services to be created
-	Services []WindowsService `json:"services,omitempty"`
+	Services []WindowsServiceConfig `json:"services,omitempty"`
 
 	// DomainJoin will instruct nodeadm to join the computer to Active Directory
 	// before Kubernetes bootstrap.
 	DomainJoin DomainJoin `json:"domainJoin,omitempty"`
+}
+
+type SerialisedWindowsConfiguration struct {
+	// Services defines Windows Services to be created
+	Services []SerialisedWindowsService `json:"services,omitempty"`
+
+	// DomainJoin will instruct nodeadm to join the computer to Active Directory
+	// before Kubernetes bootstrap.
+	DomainJoin SerialisedDomainJoin `json:"domainJoin,omitempty"`
 }
 
 // WindowsService defines a Windows Service to be created by sc.exe
@@ -134,11 +173,6 @@ type WindowsService struct {
 	// +kubebuilder:default:=LocalSystem
 	RunAs string `json:"runAs"`
 
-	// Specifies a password. This is required if an account other than the
-	// LocalSystem account is used.
-	// +optional
-	PasswordSecretRef secretRef `json:"passwordSecretRef,omitempty"`
-
 	// Specifies a friendly name for identifying the service in user interface programs.
 	// For example, the subkey name of one particular
 	// service is wuauserv, which has a more friendly display name of Automatic Updates.
@@ -153,7 +187,22 @@ type WindowsService struct {
 	SkipStartError bool `json:"skipStartError,omitempty"`
 }
 
-type Commands struct {
+type WindowsServiceConfig {
+	WindowsService
+
+	// Specifies a password. This is required if an account other than the
+	// LocalSystem account is used.
+	// +optional
+	PasswordSecretName string `json:"passwordSecretName,omitempty"`
+}
+
+type SerialisedWindowsService
+	WindowsService
+
+	// Specifies a password. This is required if an account other than the
+	// LocalSystem account is used.
+	// +optional
+	Password string `json:"passwordSecret,omitempty"`
 }
 
 type Image struct {
@@ -191,25 +240,16 @@ type FileConfig struct {
 	ContentRef LocalContentReference `json:"contentRef,omitempty"`
 }
 
-type FileData struct {
+type SerialisedFile struct {
 	File
 	// Content is the raw content of the file. Can only be used with type=file
 	Content string `json:"content,omitempty"`
 }
 
-// +kubebuilder:validation:Required
-type LocalContentReference struct {
-	// Kind is the type of resource being referenced
-	// +kubebuilder:validation:Enum:=secret,configMap
-	Kind LocalContentReferenceKind `json:"kind"`
-	// Name is the name of resource being referenced
-	Name string `json:"name"`
-}
-
 type DomainJoin struct {
-	// CredentialsSecretRef is a reference to a secret containing credentials
+	// CredentialsSecretName is a reference to a secret containing credentials
 	// to join the Active Directory domain.
-	CredentialsSecretRef secretRef
+	CredentialsSecretName string
 
 	// JoinGroups specifies security groups the node should attempt to join
 	// with the administrative credentials.
@@ -221,9 +261,6 @@ type WindowsServiceStart string
 type LocalContentReferenceKind string
 
 const (
-	LocalContentReferenceKindSecret    = LocalContentReferenceKind("secret")
-	LocalContentReferenceKindConfigMap = LocalContentReferenceKind("configMap")
-
 	WindowsServiceTypeOwn          = WindowsServiceType("own")
 	WindowsServiceTypeShare        = WindowsServiceType("share")
 	WindowsServiceTypeKernel       = WindowsServiceType("kernel")

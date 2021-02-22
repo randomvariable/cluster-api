@@ -1,0 +1,91 @@
+kind: MachineDeployment
+Spec:
+  InfrastructureBootstrapStorageRef:
+    Kind: AWSBootstrapStorageS3Template
+    Name: tanzu-test
+  BootstrapRef:
+    Kind: NodeadmBootstrapTemplate
+    Name: tanzu-test
+  InfrastructureRef:
+    Kind: VSphereMachine
+    Name: tanzu-test
+---
+kind: AWSBootstrapStorageS3Template
+metadata:
+  name: tanzu-test
+Spec:
+  URI: s3://eu-west-1.tanzu.sandp.global.mhc.mhf
+  PrincipalRef:
+    Kind: AWSIAMRolePrincipal
+    Name: Tanzu
+Status:
+  Ready: false
+  BootstrapLocation: s3://eu-west-1.tanzu.sandp.global.mhc.mhf/machine/frjsdfjsdjfdsj/nodeadm.yaml
+  SentinelLocation: s3://eu-west-1.tanzu.sandp.global.mhc.mhf/machine/frjsdfjsdjfdsj/sentinel.yaml
+
+Whole new AWS homogenous
+---
+kind: AWSCluster
+spec:
+  PrincipalRef:
+    Kind: AWSIAMRolePrincipal
+    Name: Tanzu
+  BootstrapStorage:
+    Type: S3
+    URI: s3://eu-west-1.tanzu.sandp.global.mhc.mhf
+---
+kind: MachineDeployment
+Spec:
+  ClusterName: tanzu-aws-test
+  InfrastructureBootstrapStorageRef:
+    Kind: AWSBootstrapStorageS3Template
+    Name: tanzu-test
+  BootstrapRef:
+    Kind: NodeadmBootstrapTemplate
+    Name: tanzu-test
+  InfrastructureRef:
+    Kind: VSphereMachine
+    Name: tanzu-test
+---
+kind: AWSBootstrapStorage
+metadata:
+  name: tanzu-test
+spec:
+  PrincipalRef:
+    Kind: AWSIAMRolePrincipal
+    Name: Tanzu
+  BootstrapStorage:
+    Type: S3
+    URI: s3://eu-west-1.tanzu.sandp.global.mhc.mhf
+Status:
+  Ready: true
+  BootstrapLocation: s3://eu-west-1.tanzu.sandp.global.mhc.mhf/machine/frjsdfjsdjfdsj/nodeadm.yaml
+  SentinelLocation: s3://eu-west-1.tanzu.sandp.global.mhc.mhf/machine/frjsdfjsdjfdsj/sentinel.yaml
+
+
+
+---
+kind KubeadmcControlPlane
+Spec:
+  LoadBalancerRef: AWSNLB (ref format)
+---
+kind: AWSCluster
+spec:
+  PrincipalRef:
+    Kind: AWSIAMRolePrincipal
+    Name: Tanzu
+  BootstrapStorage:
+    Type: S3
+    URI: s3://eu-west-1.tanzu.sandp.global.mhc.mhf
+---
+
+---
+kind: AWSNetworkLoadBalancerTemplate
+metadata:
+  name: tanzu-test
+spec:
+  PrincipalRef:
+    Kind: AWSIAMRolePrincipal
+    Name: Tanzu
+
+

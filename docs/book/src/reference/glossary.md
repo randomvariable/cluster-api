@@ -70,6 +70,12 @@ Or __Cluster API project__
 
 The Cluster API sub-project of the SIG-cluster-lifecycle. It is also used to refer to the software components, APIs, and community that produce them.
 
+### Cluster API Bootstrap Provider Kubeadm
+
+Or __CABPK__
+
+The bootstrap controller that exists from v1alpha2 onwards and generates cloud-init bootstrap data to execute kubeadm for a machine provisioned by Cluster API
+
 ### Control plane
 
 The set of Kubernetes services that form the basis of a cluster. See also https://kubernetes.io/docs/concepts/#kubernetes-control-plane There are two variants:
@@ -134,6 +140,11 @@ The Custom Resource for Kubernetes that represents a request to have a place to 
 
 See also: [Server](#server)
 
+### Machineadm
+
+Is a binary CLI that is executed on machines to perform Kubernetes
+Cluster API bootstrap.
+
 ### Manage a cluster
 
 Perform create, scale, upgrade, or destroy operations on the cluster.
@@ -167,6 +178,10 @@ A node pool is a group of nodes within a cluster that all have the same configur
 Or __OS__
 
 A generically understood combination of a kernel and system-level userspace interface, such as Linux or Windows, as opposed to a particular distribution.
+
+### Operating System Distribution
+
+An OS Distribution refers to a packaged version of an Operating System, in order to primarily distinguish between different Linux distributions such as CentOS vs. Ubuntu vs. Talos, as opposed to differences between Operating Systems as a whole (e.g. Linux and Windows).
 
 # P
 ---
