@@ -1,23 +1,20 @@
 package v1alpha4
 
 //
-type NodeConfig struct {
-	// BootstrapperTemplateConfigMapName is the name of the ConfigMap containing
-	// a bootstrapper template
-	BootstrapperTemplateConfigMapName
-	// Files specifies files to be created on the host filesystem
-	Files []FileConfig `json:"files,omitempty"`
+type MachineConfig struct {
 	// Images will pre-load images into the container runtime for use by
 	// the cluster
 	Images []Image `json:"images,omitempty"`
+	// NOTE: Webhook will explicitly prohibit configuring both a Linux and Windows
+	// configuration
 	// LinuxConfiguration controls Linux specific configuration options
 	LinuxConfiguration *LinuxConfiguration `json:"linuxConfiguration,omitempty"`
 	// WindowsConfiguration controls Windows specific configuration options
 	WindowsConfiguration *WindowsConfiguration `json:"windowsConfiguration,omitempty"`
 	// Commands lists executable commands that should be run at different phases
-	Commands Commands
-	// AttestationPlugin specifies which attestation plugin to use for the node
-	AttestationPlugin string `json:"attestationPlugin"`
+	Commands Commands `json:"commands,omitempty"`
+	// Kubelet specifies specific configuration for the
+	Kubelet string `json:"kubelet,omitempty"`
 	// ContainerRuntime configures the container runtime. ContainerD is supported
 	// at the present time.
 	ContainerRuntime ContainerRuntime `json:"containerRuntime"`
@@ -39,6 +36,7 @@ type SerialisedNodeConfig struct {
 	Images []Image `json:"images,omitempty"`
 	// LinuxConfiguration controls Linux specific configuration options
 	LinuxConfiguration *LinuxConfiguration `json:"linuxConfiguration,omitempty"`
+
 	// WindowsConfiguration controls Windows specific configuration options
 	WindowsConfiguration *SerialisedWindowsConfiguration `json:"windowsConfiguration,omitempty"`
 	// Commands lists executable commands that should be run at different phases
@@ -55,52 +53,74 @@ type SerialisedNodeConfig struct {
 	SystemProxies []SystemProxyConfig
 }
 
+type Kubelet struct {
+
+}
+
 type ContainerRuntime struct {
-	// Registries configures settings for each registry.
-	Registries []Registry
+	// Provider is the provider plugin which will be used to configure
+	// the runtime. This must be present on the host as
+	// machineadm-plugin-container-runtime-x
+	// +kubebuilder:default:=containerd
+	// +kubebuilder:validation:Required
+	Provider string `json:"provider"`
+	// Registries configures settings for each container registry.
+	Registries []Registry `json:"registries"`
 }
 
 type Registry struct {
 	// Host is the top-level hostname of the registry
-	Host string
+	Host string `json:"host"`
 	// MirrorEndpoints specifies mirrors to be used as alternative endpoints
 	// for the registry
-	MirrorEndpoints []string
+	MirrorEndpoints []string `json:"mirrorEndpoints"`
 	// InsecureSkipTLSVerify specifies  that the TLS certificate should not be
 	// validated
-	InsecureSkipTLSVerify bool
+	InsecureSkipTLSVerify bool `json:"insecureSkipVerify"`
 	// CACertificates is a PEM formatted document containing CA certificates
-	CACertificates string
+	CACertificates []string `json:"caCertificates"`
 }
 
 type SystemProxy struct {
+	// Provider is the provider plugin which will be used to configure
+	// the system proxy. This must be present on the host as
+	// machineadm-plugin-system-proxy-x
+	// +kubebuilder:default:=systemd
+	// +kubebuilder:validation:Required
+	Provider string `json:"provider"`
 	// Protocol that is supported by the proxy
-	Protocol string
+	Protocol string `json:"protocol"`
 	// Endpoint is the target endpoint of the proxy
-	Endpoint string
+	Endpoint string `json:"endpoint"`
 }
 
 type SystemProxyConfig struct {
 	SystemProxy
 	// AuthSecretName is the name of the secret containing credentials for
 	// the proxy
-	AuthSecretName string
+	AuthSecretName string `json:"authSecretName"`
 }
 
 type SystemProxyData struct {
 	SystemProxy
 	// Username is the username for the http proxy
-	Username string
+	Username string `json:"username"`
 	// Password is the proxy password
-	Password string
+	Password string `json:"password"`
 }
 
 type Commands struct {
-	PreKubernetesBootstrap  []string
-	PostKubernetesBootstrap []string
+	PreKubernetesBootstrap  []string `json:"preKubernetesBootstrap"`
+	PostKubernetesBootstrap []string `json:"postKubernetesBootstrap"`
 }
 
 type LinuxConfiguration struct {
+	// Provider is the provider plugin which will be used to configure
+	// the system proxy. This must be present on the host as
+	// machineadm-plugin-linux-configuration-x
+	// +kubebuilder:default:=systemd
+	// +kubebuilder:validation:Required
+	Provider string `json:"provider"`
 	// SysctlParameters will configure kernel parameters using sysctl(8). When
 	// specified, each parameter must follow the form variable=value, the way
 	// it would appear in sysctl.conf.
@@ -226,7 +246,7 @@ type File struct {
 	// +kubebuilder:validation:Required
 	Owner string `json:"owner,omitempty"`
 	// ACLs are any additional ACLs to be applied to the file. Will be applied
-	// using setfacl on Linux, and DACLs on Windows.
+	// using setfacl on Linux, and dacls on Windows.
 	ACLs []string `json:"acls,omitempty"`
 }
 
@@ -255,30 +275,3 @@ type DomainJoin struct {
 	// with the administrative credentials.
 	JoinGroups []string
 }
-
-type WindowsServiceType string
-type WindowsServiceStart string
-type LocalContentReferenceKind string
-
-const (
-	WindowsServiceTypeOwn          = WindowsServiceType("own")
-	WindowsServiceTypeShare        = WindowsServiceType("share")
-	WindowsServiceTypeKernel       = WindowsServiceType("kernel")
-	WindowsServiceTypeFileSys      = WindowsServiceType("filesys")
-	WindowsServiceTypeFileRec      = WindowsServiceType("rec")
-	WindowsServiceTypeFileInteract = WindowsServiceType("interact")
-
-	WindowsServiceStartBoot        = WindowsServiceStart("boot")
-	WindowsServiceStartSystem      = WindowsServiceStart("system")
-	WindowsServiceStartAuto        = WindowsServiceStart("auto")
-	WindowsServiceStartDemand      = WindowsServiceStart("demand")
-	WindowsServiceStartDisabled    = WindowsServiceStart("disabled")
-	WindowsServiceStartDelayedAuto = WindowsServiceStart("delayed-auto")
-)
-
-const (
-	WindowsServiceErrorNormal   = WindowsServiceError("normal")
-	WindowsServiceErrorSevere   = WindowsServiceError("severe")
-	WindowsServiceErrorCritical = WindowsServiceError("critical")
-	WindowsServiceErrorIgnore   = WindowsServiceError("ignore")
-)

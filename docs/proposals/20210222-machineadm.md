@@ -13,34 +13,11 @@ see-also:
   - "/docs/proposals/2021022-artifacts-management.md"
 ---
 
-# Title
-- Keep it simple and descriptive.
-- A good title can help communicate what the proposal is and should be considered as part of any review.
-
-<!-- BEGIN Remove before PR -->
-To get started with this template:
-1. **Make a copy of this template.**
-  Copy this template into `docs/enhacements` and name it `YYYYMMDD-my-title.md`, where `YYYYMMDD` is the date the proposal was first drafted.
-1. **Fill out the required sections.**
-1. **Create a PR.**
-  Aim for single topic PRs to keep discussions focused.
-  If you disagree with what is already in a document, open a new PR with suggested changes.
-
-The canonical place for the latest set of instructions (and the likely source of this file) is [here](/docs/proposals/YYYYMMDD-template.md).
-
-The `Metadata` section above is intended to support the creation of tooling around the proposal process.
-This will be a YAML section that is fenced as a code block.
-See the proposal process for details on each of these items.
-
-<!-- END Remove before PR -->
+# Cluster API Machine Bootstrapper
 
 ## Table of Contents
 
-A table of contents is helpful for quickly jumping to sections of a proposal and for highlighting
-any additional information provided beyond the standard proposal template.
-[Tools for generating](https://github.com/ekalinin/github-markdown-toc) a table of contents from markdown are available.
-
-- [Title](#title)
+- [Cluster API Machine Bootstrapper](#cluster-api-machine-bootstrapper)
   - [Table of Contents](#table-of-contents)
   - [Glossary](#glossary)
   - [Summary](#summary)
@@ -50,8 +27,21 @@ any additional information provided beyond the standard proposal template.
   - [Proposal](#proposal)
     - [User Stories](#user-stories)
     - [Requirements Specification](#requirements-specification)
-    - [Implementation Details/Notes/Constraints](#implementation-detailsnotesconstraints)
+    - [Implementation details](#implementation-details)
+      - [Deployment Model](#deployment-model)
+    - [Phased development](#phased-development)
+    - [Plugin architecture](#plugin-architecture)
     - [Security Model](#security-model)
+      - [Userdata storage](#userdata-storage)
+    - [Types](#types)
+      - [Additions to core Bootstrap type used in Machine* types](#additions-to-core-bootstrap-type-used-in-machine-types)
+      - [Bootstrap template ConfigMap/Secret format:](#bootstrap-template-configmapsecret-format)
+        - [Variables](#variables)
+        - [Custom supported functions](#custom-supported-functions)
+      - [MachineConfig types](#machineconfig-types)
+        - [Common types](#common-types)
+      - [Serialized data format](#serialized-data-format)
+        - [Encrypted data](#encrypted-data)
     - [Risks and Mitigations](#risks-and-mitigations)
   - [Alternatives](#alternatives)
   - [Upgrade Strategy](#upgrade-strategy)
@@ -360,23 +350,258 @@ The node agent MUST publish a documented contract for operating system maintaine
 
 
 
-### Implementation Details/Notes/Constraints
+### Implementation details
 
-- What are some important details that didn't come across above.
-- What are the caveats to the implementation?
-- Go in to as much detail as necessary here.
-- Talk about core concepts and how they releate.
+#### Deployment Model
+
+<table>
+<thead>
+<tr><th>Component</th><th>Location</th><th>Description</th>
+</thead>
+<tbody>
+
+<tr>
+<td>machineadm-bootstrap-controller</td><td>cluster-api repo</td>
+<td>
+The core machine bootstrapper contains the controllerst hat reconciles MachineConfig to produce machineadm yaml
+</td>
+
+<tr>
+<td>machineadm-bootstrap-controller</td><td>cluster-api repo</td>
+<td>
+The core machine bootstrapper contains the controllerst hat reconciles MachineConfig to produce machineadm yaml
+</td>
+</tr>
+
+<tr>
+<td>machineadm cli</td><td>cluster-api repo</td>
+<td>
+The core CLI that reads machineadm.yaml and orchestrates the bootstrapping workflow
+</td>
+</tr>
+
+<tr>
+<td>machineadm core plugins</td><td>cluster-api repo</td>
+<td>
+A controller that ships with the infrastructure provider that can reconcile the storage of machineadm configurations with infrastructure APIs (e.g. Amazon S3/Minio, GCS, custom server etc...).
+</td>
+</tr>
+
+<tr>
+<td>machineadm infrastructure plugin</td><td>infrastructure provider repo</td>
+<td>
+An infrastructure plugin for the node bootstrapper will be created within infrastructure providers that would be responsible for infrastructure-specific logic to pull files machineadm files from a given location and upload
+bootstrap data.
+</td>
+</tr>
+
+<tr>
+<td>machineadm infrastructure controller</td><td>infrastructure provider repo</td>
+<td>
+A controller that ships with the infrastructure provider that can reconcile the storage of machineadm configurations with infrastructure APIs (e.g. Amazon S3/Minio, GCS, custom server etc...).
+</td>
+</tr>
+
+</tbody>
+</table>
+
+### Phased development
+
+With reference to the modalities described in the requirements specification, we propose 3 phases of development:
+
+| Phase             | What gets implemented           |
+| ----------------- | ------------------------------- |
+| Phase 1 - Alpha 1 | Provisioning Modality           |
+| Phase 2 - Alpha 2 | Preparation and Post Modalities |
+| Phase 3 & GA      | API Stabilisation               |
+
+### Plugin architecture
+
+Machineadm will use the [go-plugin][go-plugin] architecture used by Hashicorp.
 
 ### Security Model
 
-Document the intended security model for the proposal, including implications
-on the Kubernetes RBAC model. Questions you may want to answer include:
+#### Userdata storage
 
-* Does this proposal implement security controls or require the need to do so?
-  * If so, consider describing the different roles and permissions with tables.
-* Are their adequate security warnings where appropriate (see https://adam.shostack.org/ReederEtAl_NEATatMicrosoft.pdf for guidance).
-* Are regex expressions going to be used, and are their appropriate defenses against DOS.
-* Is any sensitive data being stored in a secret, and only exists for as long as necessary?
+Machineadm's security model is intended such that secrets associated with machine configuration are stored on the
+management Kubernetes cluster and are secured to the level that the backing API server and etcd are secured.
+
+For machine bootstrapping, secrets are intended to be delivered by an infrastructure provider to a suitable secure
+location, and to also provide a mechanism for the machine to report back status. Examples include:
+
+* Amazon S3 or S3-compatible API such as Minio
+* AWS Secrets Manager and AWS Systems Manager Parameter Store
+
+When using external storage, we assume security is configured appropriately (e.g. Amazon Identity and Access Management),
+and is outside of the system boundary of machineadm bootstrap controller.
+
+In addition, some providers may only support the encryption of machine configuration without storage, i.e., almost data
+is stored within the infrastructure's "userdata" mechanism. In this case we still want to support protection against
+reads, so we will additionally support a data block for in-band binary data (see [#encrypted-data type](#encrypted-data)) that can be decrypted with a key derivation
+algorithm and a passphrase from an external source. By default we will support SHA-512 PBKDF2-HMAC key derivations of a
+AES-256-CBC key hashed to 50,000 rounds. This provides FIPS compliance with a suitable level of encryption given the
+resultant data will be applied as plain text to the machine configuration.
+
+In terms of why we provide support for both external data and in-band data with encryption is that some infrastructure
+APIs have limited userdata storage: AWS is limited to 64-bytes, and Azure to 54-bytes. When users want to configure
+things such as system certificates, these are generally incompressible and may exceed the capacity of that
+infrastructure. In these scenarios, external data stores are required to allow custom configuration.
+
+
+### Types
+
+#### Additions to core Bootstrap type used in Machine* types
+
+```go
+// Bootstrap capsulates fields to configure the Machine’s bootstrapping mechanism.
+type Bootstrap struct {
+	// NOTE: NO CHANGES TO EXISTING FIELDS
+
+	// NEW FIELD:
+	// InfrastructureRef is a reference to an infrastructure provide specific resource
+	// that holds details of how to store and retrieve bootstrap data securely,
+	// and how a bootstrapper can report status.
+	InfrastructureRef *corev1.ObjectReference `json:"infrastructureRef,omitempty"`
+}
+```
+#### Bootstrap template ConfigMap/Secret format:
+
+Bootstrap templates will be simple go template strings that will form the final
+user data block. For the purposes of machineadm, the OS bootstrapper must write
+the file to disk somewhere, and execute machineadm with administrative credentials
+against the provided file.
+
+The following variables and functions are supported:
+
+##### Variables
+
+* `machine_config`: The contents of the final infrastructure customized
+  bootstrap configuration document.
+
+##### Custom supported functions
+* `base64`: Base64 encodes the input.
+* `gzip`: Gzip compresses the input.
+
+An example using cloud-init is presented below:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-init-machineadm-bootstrap-template
+data:
+  template: |
+    #cloud-config
+    write_files:
+    - encoding: gz+b64
+      content:  {{machine_config | gzip | base64}}.
+      owner: root:root
+      path: /tmp/machineadm_config.yaml
+      permissions: '0644'
+    runcmd:
+      - /usr/bin/machineadm --bootstrap --path /tmp/machineadm_config.yaml
+```
+#### MachineConfig types
+
+It is important to note that we have in effect two representations of the MachineConfig: First, we have the
+MachineBootstrap Kubernetes resource that may reference other Kubernetes resources such as secrets for inclusion
+in the machine configuration. Secondly, we have the "serialized" MachineConfiguration which is the "fully realized"
+configuration, that inlines all of the referenced data and is stored as its own Kubernetes secret for handoff to
+the infrastructure provider for secure storage.
+
+##### Common types
+
+```go
+type MachineConfig struct {
+// BootstrapperTemplateConfigMapName is the name of the ConfigMap containing
+ // a bootstrapper template
+ BootstrapperTemplateConfigMapName
+ // Files specifies files to be created on the host filesystem
+ Files []FileConfig `json:"files,omitempty"`
+ // Images will pre-load images into the container runtime for use by
+ // the cluster
+ Images []Image `json:"images,omitempty"`
+ // LinuxConfiguration controls Linux specific configuration options
+ LinuxConfiguration *LinuxConfiguration `json:"linuxConfiguration,omitempty"`
+ // NOTE: Webhook will explicitly prohibit configuring both
+ //
+ // WindowsConfiguration controls Windows specific configuration options
+ WindowsConfiguration *WindowsConfiguration `json:"windowsConfiguration,omitempty"`
+ // Commands lists executable commands that should be run at different phases
+ Commands Commands
+ // AttestationPlugin specifies which attestation plugin to use for the node
+ AttestationPlugin string `json:"attestationPlugin"`
+ // ContainerRuntime configures the container runtime. ContainerD is supported
+ // at the present time.
+ ContainerRuntime ContainerRuntime `json:"containerRuntime"`
+ // SystemTrust defines certificate authorities to inject into the host system
+ // trust store
+ SystemTrustCertificateAuthorities []string
+ // SystemProxies configures proxies for kubelet, container runtime and the host
+ SystemProxies []SystemProxyConfig
+}
+
+```
+
+#### Serialized data format
+
+`machineadm_config.yaml` will be a multi-part YAML docment supporting multiple
+data types.
+
+##### Encrypted data
+
+In-line serialized encrypted data for machineadm is a fully versioned type.
+The reason for this is to allow changes due to security reviews, support
+for different types of encryption, such that we are not locked in to
+a particular implementation, as is currently the case with Kubernetes API Server
+KMS encryption providers.
+
+
+```go
+// EncryptedData is a resource representing in-line encrypted
+// data that can be decrypted with an infrastructure plugin
+type EncryptedData struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec EncryptedDataSpec `json:"spec,omitempty"`
+}
+
+// EncryptedDataSpec stores an encrypted block of data as Ciphertext decryptable with a given key derivation algorithm
+// and passphrase.
+type EncryptedDataSpec struct {
+	// Provider is the infrastructure provider plugin that fetches the passphrase. This must be present on the host as
+	// machineadm-plugin-encryption-provider-x
+	// +kubebuilder:default:=null
+	// +kubebuilder:validation:Required
+	Provider string `json:"provider"`
+	// Ciphertext is the base64 encoded encrypted ciphertext
+	Ciphertext string `json:"ciphertext"`
+	// +kubebuilder:validation:Required
+	// Salt is base64 encoded random data added to the hashing algorithm to safeguard the
+	// passphrase
+	Salt string `json:"salt"`
+	// IV, or Initialization Vector is the base64 encoded fixed-size input to a cryptographic algorithm
+	// providing the random seed that was used for encryption.
+	IV string `json:"iv"`
+	// CipherAlgorithm is the encryption algorithm used for the ciphertext
+	// +kubebuilder:validation:Required
+	// +kubebuilder:default:=aes-256-cbc
+	CipherAlgorithm string `json:"cipherAlgorithm"`
+	// DigestAlgorithm is the digest algorithm used for key derivation.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:default:=sha-512
+	DigestAlgorithm string `json:"digestAlgorithm"`
+	// Iterations is the number of hashing iterations that was used for key derivation.
+	// +kubebuilder:default:=50000
+	Iterations string `json:"iterations"`
+	// KeyDerivationAlgorithm states the key derivation algorithm used to derive the encryption key
+	// from the passphrase
+	// +kubebuilder:validation:Required
+	// +kubebuilder:default:=pbkdf2
+	KeyDerivationAlgorithm string `json:"keyDerivationAlgorithm"`
+}
+
+```
 
 ### Risks and Mitigations
 
@@ -455,3 +680,4 @@ Consider the following in developing a version skew strategy for this enhancemen
 
 <!-- Links -->
 [community meeting]: https://docs.google.com/document/d/1Ys-DOR5UsgbMEeciuG0HOgDQc8kZsaWIWJeKJ1-UfbY
+[go-plugin]: https://github.com/hashicorp/go-plugin
