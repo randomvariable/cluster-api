@@ -67,7 +67,7 @@ any additional information provided beyond the standard proposal template.
 ## Summary
 
 This proposal outlines a method to secure node registration within Cluster API, to solve 3 primary problems:
-- Solving a class of attacks involving node impersonation allowing an attacker to access secrets and volumes they shouldn’t by using hardware attestation of node identity.
+- Solve a class of attacks involving node impersonation allowing an attacker to access secrets and volumes they shouldn’t by using hardware attestation of node identity.
 - Prevent token reuse in MachinePools where the token cannot be easily rotated.
 
 
@@ -77,7 +77,7 @@ Cluster API default core components are largely reliant on kubeadm for cluster b
 Because kubeadm is platform-independent and is intended to provide an “easy path” to cluster bootstrapping,  there are a number of inherent design decisions that limit the overall security of the provisioned cluster:
 - Kubeadm uses TLS bootstrapping for node registration, however the default workflow used by Cluster API uses bootstrap token which allow registration as arbitrary node names.
     - When used in this mode, Kubeadm essentially does “client-side validation” to prevent node hijacking, but this does not mean the token cannot be reused by an attacker within the lifetime of the token to perform a hijack.
-    - Cluster API cannot scope a token down  to a specific node, because bootstrap providers, nor most infrastructure providers know the identity of the node ahead of time.
+    - Cluster API cannot scope a token down to a specific node, because bootstrap providers, nor most infrastructure providers know the identity of the node ahead of time.
 - Kubeadm sets node labels during bootstrapping, and Cluster API does not do reconciliation of node labels post node deployment.
     - This is helpful because it means the kubelet starts with the labels applied straightaway, preventing a race condition when the Kubernetes schedule may misplace a pod due to a temporarily missing node label.
     - However, again, this allows for potential hijacking, for example, using the kubelet’s credentials to apply a label intended for workloads not using the kubernetes.io/node-restriction-* labels.
@@ -85,29 +85,23 @@ Because kubeadm is platform-independent and is intended to provide an “easy pa
 
 ### Goals
 
-- Provide a bootstrap mechanism that assures node secure node registration
+- Provide a bootstrap mechanism that assures secure node registration
 - The node registration 
 
 
 ### Non-Goals/Future Work
 
 - Not to change assumptions around management cluster to workload cluster connectivity
-- Not to solve the protection of initial cluster bootstrap secrets for the control plane nodes (see Node Bootstrapper)
+- Solve the protection of initial cluster bootstrap secrets for the control plane nodes (see Node Bootstrapper)
 
 ## Proposal
-
-
-
 | Component | Location | Description |
 | --------- | -------- | ----------- |
-| node-attestation-controller     | Part of Cluster API repository, under bootstrap/node/attestation, and imported by Cluster API infra providers for implementation. A generic challenge-response implementation will be included for providers / bare metal without an attestation mechanism.     |   A controller to verify and sign the CSR. this would be typically an importable controller where the infrastructure provider implements the interface with specific code for CSR approval + Start the controller as part of its main.go or through an independent binary.   |
+| node-attestation-controller     | Part of Cluster API repository, under bootstrap/node/attestation, and imported by Cluster API infra providers for implementation. A generic challenge-response implementation will be included for providers / bare metal without an attestation mechanism.     |   A controller to verify and sign the CSR. This would be typically an importable controller where the infrastructure provider implements the interface with specific code for CSR <expand this> approval and start the controller as part of its main.go or through an independent binary.   |
 
 #### Kubelet authentication plugin
 
 ![sequence diagram](images/kubelet-authentication/bootstrap-flow.png)
-
-
-
 The following sequence diagram shows at a high level how a nodeConfig enables bootstrapping a kubernetes node. This sequence diagram is independent of API definition and alternatives and is relevant in all cases.
 
 We propose a kubelet authentication plugin to be present on the instances, (how the nodeadm CLI made available is out of scope for this proposal), which will be responsible for node registration, as well as certificate rotation. The agent will be made up of two parts:
@@ -125,19 +119,18 @@ The behaviour of the authentication plugin will be as follows:
 #### Node Attestation
 
 As for the node-attestation-controller, the following interface needs to be implemented by the infrastructure providers:
-```go=
+```go
 type ClusterAPISigner interface {
      VerifyClientAttestationData (csr *certificatesv1beta1.CertificateSigningRequest) err
      VerifyServingAttestationData (csr *certificatesv1beta1.CertificateSigningRequest) err
 }
 ```
 
+This enables infrastructure providers to perform infrastructure-specific validation of node attestations (TPM, appended tags by the provider, etc.)
 
-This will enable infrastructure providers to perform infrastructure-specific validation of node attestations (TPM, appended tags by the provider etc…)
+Cluster API is responsible for partially verifying node identity with the following conditions:
 
-Cluster API will be responsible for partially verifying node identity through verifying that:
-
-- a corresponding machine object exist for the `.spec.Username` ( `system:nodes:<nodename>`)
+- A corresponding machine object exist for the `.spec.Username` (`system:nodes:<nodename>`)
 - The Machine state is provisioning
 - The kubernetes CSR spec has the needed groups
 - The kubernetes CSR spec is limited to needed usages (e.g. client auth)
@@ -146,13 +139,11 @@ Cluster API will be responsible for partially verifying node identity through ve
 - Parse the CSR and verify that the Organization is the same as .spec.Groups
 - Parse the CSR and ensure that no SANs are appended for kubelet client certificates
 
-
 #### CSR format used by nodeadm
-We propose the introduction of X.509 extension attributes based on those reserved for the Kubernetes GCP cloud provider within Google’s organization ID allocation.
+We propose the introduction of X.509 extension attributes based 
+on those reserved for the Kubernetes GCP cloud provider within Google’s organization ID allocation.
 
 We will request via SIG Architecture or CNCF to apply for an IANA OID registration block for the Kubernetes project.
-
-
 
 |  OID Suffix |  Name |  Description |
 | -------- | -------- | -------- |
@@ -181,23 +172,23 @@ The format of the attestation block is left to the provider. The Appendix sectio
 
 #### Kubelet serving certificate rotation daemon
 
-The kubelet serving certificate rotation daemon will run as a systemd or windows service manager service on the node. It will check for the existence of the serving certificate files, and either check their validity and that they are not self signed, or request a new serving certificate. Once the new serving certificate is written, kubelet can be restarted.
+The kubelet serving certificate rotation daemon runs as a systemd or windows service manager service on the node. It checks for the existence of the serving certificate files, their validity (e.g. not self signed), or request a new serving certificate. Once the new serving certificate is written, kubelet can be restarted.
 
 #### Core Specification
 - Core Cluster API MUST provide the following implementations of CSRs and signers:
-    - cluster.x-k8s.io/kube-apiserver-client-kubelet-insecure which implement an “Always Allow” type signer that provides equivalent security to Cluster API v1alpha3. This is only to be used for providers where no secure mechanism exists.
-    - cluster.x-k8s.io/kube-apiserver-client-kubelet-tpm and cluster-x-k8s-io/kubelet-serving-tpm
+    - `cluster.x-k8s.io/kube-apiserver-client-kubelet-insecure` which implement an “Always Allow” type signer that provides equivalent security to Cluster API v1alpha3. This is only to be used for providers where no secure mechanism exists.
+    - `cluster.x-k8s.io/kube-apiserver-client-kubelet-tpm` and `cluster-x-k8s-io/kubelet-serving-tpm`
         - Will implement TPM-based certificate signers and requesters based on the cloud-provider-gcp implementation.
         - However, since the mechanism for retrieving endorsement keys varies across platforms, the TPM signer will additionally require a provider specific mechanism to provide the TPM Endorsement Key.
 
 #### Provider Specification
 
 #### All providers
-- All providers must insert a ProviderID within the KubernetesNodeProviderIdentifierOID extension attribute of the CSR
-- All signer names must be filled in by the provider’s controller in InfraCluster.Status.KubeletClientCertificateSigner and InfraCluster.Status.KubeletServingCertificateSigner
+- All providers MUST insert a ProviderID within the KubernetesNodeProviderIdentifierOID extension attribute of the CSR
+- All signer names MUST be filled in by the provider’s controller in InfraCluster.Status.KubeletClientCertificateSigner and InfraCluster.Status.KubeletServingCertificateSigner
 
 #### Insecure providers
-- An insecure provider MUST not implement certificate rotation or kubelet serving certificate signing
+- An insecure provider CANNOT implement certificate rotation or kubelet serving certificate signing
 - InfraCluster.Status.KubeletClientCertificateSigner MUST be set to cluster.x-k8s.io/kube-apiserver-client-kubelet-insecure
 - An insecure provider MUST use the cluster.x-k8s.io/kube-apiserver-client-kubelet-insecure signer/v1alpha4
 
@@ -230,11 +221,7 @@ The authenticator will be responsible for both updating the kubelet client and s
 
 ![kubelet auth](images/kubelet-authentication/kubelet-auth.png)
 
-
-
 ### User Stories
-
-
 
 #### Story 1: machine attestation
 
@@ -244,13 +231,8 @@ A cluster operator has been asked to ensure compliance with NIST SP 800-190 Appl
 
 The node bootstrapper MUST be able to attest the identity of the machine against a chain of trust provided by the hardware or cloud provider.
 
-
 ### Implementation Details/Notes/Constraints
 
-- What are some important details that didn't come across above.
-- What are the caveats to the implementation?
-- Go in to as much detail as necessary here.
-- Talk about core concepts and how they releate.
 
 ### Security Model
 
@@ -259,8 +241,8 @@ on the Kubernetes RBAC model. Questions you may want to answer include:
 
 * Does this proposal implement security controls or require the need to do so?
   * If so, consider describing the different roles and permissions with tables.
-* Are their adequate security warnings where appropriate (see https://adam.shostack.org/ReederEtAl_NEATatMicrosoft.pdf for guidance).
-* Are regex expressions going to be used, and are their appropriate defenses against DOS.
+* Are there adequate security warnings where appropriate (see https://adam.shostack.org/ReederEtAl_NEATatMicrosoft.pdf for guidance)?
+* Are regex expressions going to be used, and are their appropriate defenses against DOS?
 * Is any sensitive data being stored in a secret, and only exists for as long as necessary?
 
 ### Risks and Mitigations
@@ -270,7 +252,7 @@ There may be additional security risks being introduced in this design. In order
 ## Alternatives
 
 #### Implement within the cloud providers instead of Cluster API
-Given that there is an extant implementation in cloud-provider-gcp, this could be extended to all of the cloud providers. However, there are some advantages to making Cluster API responsible for kubelet registration:
+Given that there is an existent implementation in cloud-provider-gcp, this could be extended to all of the cloud providers. However, there are some advantages to making Cluster API responsible for kubelet registration:
 - Cluster API can create the node resource as part of the CSR approval process and apply the relevant taints, labels and roles up front. The Kubernetes Cloud Provider contract has no understanding of the desired state of a node.
 - No changes to the assumptions around connectivity between management and workload clusters are required, neither does the signer need to be included as a static pod during control plane instantiation.
 
@@ -280,7 +262,7 @@ If attestation was implemented as an authentication webhook, it would be in the 
 
 ## Upgrade Strategy
 
-for the upgrade strategy please refer to the cluster API node bootstrapper proposal
+for the upgrade strategy please refer to the Cluster API node bootstrapper proposal.
 
 ## Additional Details
 
@@ -295,6 +277,7 @@ Upgrade tests from latest minor release to latest main branch of Kubernetes
 
 #### Graduation to beta
 - E2E tests testing upgrades to latest main branch of Kubernetes are required such that Cluster API can make appropriate changes to node registration if kubelet or kubeadm behaviour changes.
+
 - Security review by SIG Auth and SIG Security
 #### Graduation to GA
 - Beta for 2 releases
@@ -303,7 +286,7 @@ Upgrade tests from latest minor release to latest main branch of Kubernetes
 
 ### Version Skew Strategy [optional]
 
-There shouldn’t be any version skew issues between nodeadm  and the bootstrapper, As the only interaction between the two is through the CSR API.
+There shouldn’t be any version skew issues between nodeadm  and the bootstrapper, as the only interaction between the two is through the CSR API.
 Any changes to the attestation data should be handled in a backward compatible manner by the infrastructure provider when implementing the interface used by the node-attestation-controller, by making sure it's able to convert an older attestation format to a newer one.
 
 
