@@ -103,6 +103,8 @@ func InitWithBinary(_ context.Context, binary string, input InitInput) {
 		"--kubeconfig", input.KubeconfigPath,
 	)
 
+	cmd.Env = os.Environ()
+
 	out, err := cmd.CombinedOutput()
 	_ = ioutil.WriteFile(filepath.Join(input.LogFolder, "clusterctl-init.log"), out, 0644) //nolint:gosec // this is a log file to be shared via prow artifacts
 	Expect(err).ToNot(HaveOccurred(), "failed to run clusterctl init")
@@ -213,6 +215,8 @@ func ConfigClusterWithBinary(_ context.Context, clusterctlBinaryPath string, inp
 		"--config", input.ClusterctlConfigPath,
 		"--kubeconfig", input.KubeconfigPath,
 	)
+
+	cmd.Env = os.Environ()
 
 	out, err := cmd.Output()
 	_ = ioutil.WriteFile(filepath.Join(input.LogFolder, fmt.Sprintf("%s-cluster-template.yaml", input.ClusterName)), out, 0644) //nolint:gosec // this is a log file to be shared via prow artifacts
