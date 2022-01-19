@@ -1,0 +1,28 @@
+@startuml
+
+node "Bootstrap Node Boundary" {
+  [CAPI Core]
+  [AWS Controller]
+  [Kubeadm Bootstrap Controller]
+  [K8s API] -  [Kubernetes API Server]
+  [etcd API] -  [etcd]
+  [Kubernetes API Server] --> [etcd API] : use
+  [CAPI Core] --> [K8s API] : use
+  [Cluster API AWS Controller] --> [K8s API] : use
+  [Kubeadm Controlplane Controller] --> [K8s API] : use
+  [Kubeadm Bootstrap Controller] --> [K8s API] : use
+}
+
+cloud "AWS Boundary" {
+  [AWS Secrets Manager API] - [AWS Secrets Manager]
+  [Cluster API AWS Controller] --> [AWS Secrets Manager API] : use
+  [AWS EC2 API] - [AWS EC2]
+  [Cluster API AWS Controller] --> [AWS EC2 API] : use
+  [AWS ELB API] - [AWS ELB]
+  note right of [AWS ELB API]
+    2. CAPA creates LB for workload API server
+  end note
+  [Cluster API AWS Controller] --> [AWS ELB API] : use
+}
+
+@enduml
