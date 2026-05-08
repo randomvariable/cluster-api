@@ -210,6 +210,14 @@ module Lifecycle {
   // and etcd's own auto-compaction loop.
   var etcdCompactionInProgress: bool
 
+  // -- FM-31 — Custom Node conditions surfacing -----------------
+  // Operators write custom Node conditions (e.g. via Node Problem
+  // Detector) and want them to surface on Machine.status.conditions
+  // without triggering MHC remediation. Refines upstream
+  // cluster-api#11826. The model holds a set of condition keys per
+  // Machine.
+  var customCondition: MachineId -> Set[str]
+
   // -- containerd ↔ CRI lifecycle of static pods ----------------
   // The kubelet brings up control-plane static pods (apiserver,
   // controller-manager, scheduler, local etcd if stacked) via the
@@ -309,6 +317,7 @@ module Lifecycle {
     // Network
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -355,6 +364,7 @@ module Lifecycle {
     observation' = Map(1 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true),
+    customCondition'  = Map(1 -> Set()),
     criRuntimeReady'  = Map(1 -> true),
     criImagesPulled'  = Map(1 -> true),
     criPodSandboxRunning'  = Map(1 -> true),
@@ -406,6 +416,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4, 5).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
@@ -544,6 +555,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action AdvanceTerm: bool = all {
@@ -577,6 +589,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action AddLearner(id: MachineId): bool = all {
@@ -613,6 +626,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action ObserveLearnerProgress(id: MachineId, p: LearnerProgress): bool = all {
@@ -652,6 +666,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action PromoteLearner(id: MachineId): bool = all {
@@ -689,6 +704,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action RemoveMember(id: MachineId): bool = all {
@@ -727,6 +743,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // LeaderStepDown — the current leader steps down because its
@@ -775,6 +792,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // TransferLeadership — KCP's pre-scale-down optimisation. Refines
@@ -828,6 +846,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // MemberHealthChange — KCP refreshes its memberHealth view by
@@ -888,6 +907,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // Fault action — exogenous.
@@ -924,6 +944,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -962,6 +983,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action PreflightPass(m: MachineId): bool = all {
@@ -996,6 +1018,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // DownloadCertsSucceeded — control-plane-prepare phase succeeded.
@@ -1035,6 +1058,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EnterEtcdHealthCheck — kubeadm-join enters check-etcd phase.
@@ -1071,6 +1095,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // CheckEtcdHealth — check-etcd phase succeeded; existing etcd
@@ -1108,6 +1133,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // KubeletStarted — kubelet-start/start: kubeadm has written kubelet
@@ -1149,6 +1175,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // KubeletTLSBootstrap — kubelet-start/wait-bootstrap: kubelet has
@@ -1191,6 +1218,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // RegisterLocalNode — kubelet performs local Node registration
@@ -1235,6 +1263,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EnterEtcdAddLearner — kubeadm enters the etcd-add-learner phase
@@ -1274,6 +1303,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EtcdAddLearnerSucceeded reaches into EtcdMembership to actually
@@ -1318,6 +1348,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EtcdQuorumReady fires after PromoteLearner — kubeadm-join
@@ -1359,6 +1390,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // MarkAsControlPlane — control-plane-join/mark-control-plane:
@@ -1398,6 +1430,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // UploadKubeadmConfig — control-plane-join/uploadconfig: kubeadm
@@ -1436,6 +1469,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action MarkReady(m: MachineId): bool = all {
@@ -1470,6 +1504,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action JoinFailedAt(m: MachineId, r: JoinFailureReason): bool = all {
@@ -1506,6 +1541,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -1553,6 +1589,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action ResolveNodeRef(m: MachineId): bool = all {
@@ -1598,6 +1635,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action MachineHealthChange(m: MachineId, h: MachineHealth): bool = all {
@@ -1630,6 +1668,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action RequestRemediation(m: MachineId): bool = all {
@@ -1666,6 +1705,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EvaluateCanSafelyRemediate mirrors KCP's
@@ -1728,6 +1768,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // CompleteRemediation is the success path: the failed machine is
@@ -1780,6 +1821,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -1844,6 +1886,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   action LoseEtcdMember(m: MachineId): bool = all {
@@ -1878,6 +1921,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -1917,6 +1961,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ScaleUpControlPlane: KCP creates a Machine because actual
@@ -1968,6 +2013,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ScaleDownControlPlane: KCP gracefully removes a healthy Machine
@@ -2015,6 +2061,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // InitiateUpgrade: the operator updates KCP's spec.template
@@ -2051,6 +2098,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -2091,6 +2139,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EtcdJoinTimeout — the etcd Add Learner gRPC call timed out
@@ -2129,6 +2178,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // LbBroken — the apiserver LB proxy fails. KCP reaches the
@@ -2168,6 +2218,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // NodeNeverJoins — the kubelet started, but the Node never
@@ -2206,6 +2257,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -2251,6 +2303,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // RestoreClusterFromSnapshot — the operator's disaster-recovery
@@ -2317,6 +2370,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // RestoreNodeReachability — the workload-cluster apiserver
@@ -2351,6 +2405,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
 
@@ -2394,6 +2449,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // DeleteFailedMachine: KCP detects a JoinFailed Machine and
@@ -2433,6 +2489,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // HealEtcdReachability: an UnreachableTimeout / UnreachableNoRoute
@@ -2473,6 +2530,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ============================================================
@@ -2522,6 +2580,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // DrainTimeout — `nodeDrainTimeout` elapses, KCP force-deletes
@@ -2564,6 +2623,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ============================================================
@@ -2609,6 +2669,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ApiserverEtcdDisconnect — fault: apiserver's etcd connection
@@ -2651,6 +2712,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ApiserverReadinessOk — kube-apiserver's readiness probe passes.
@@ -2689,6 +2751,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EtcdCompactionStart — etcd auto-compaction begins. Holds the
@@ -2726,6 +2789,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ============================================================
@@ -2768,6 +2832,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ContainerdCrash — fault: containerd process exits or its CRI
@@ -2806,6 +2871,7 @@ module Lifecycle {
     drainBlocked' = drainBlocked,
     pdbViolatedFor' = pdbViolatedFor,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    customCondition' = customCondition,
   }
 
   // PullStaticPodImages — kubelet calls CRI's PullImage for the
@@ -2847,6 +2913,7 @@ module Lifecycle {
     criRuntimeReady' = criRuntimeReady,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ImagePullFailed — fault: containerd cannot pull a static-pod
@@ -2891,6 +2958,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // CreatePodSandbox — kubelet calls CRI's RunPodSandbox to create
@@ -2931,6 +2999,7 @@ module Lifecycle {
     criRuntimeReady' = criRuntimeReady,
     criImagesPulled' = criImagesPulled,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // StartStaticPodContainers — kubelet calls CRI's CreateContainer
@@ -2971,6 +3040,55 @@ module Lifecycle {
     criRuntimeReady' = criRuntimeReady,
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
+    customCondition' = customCondition,
+  }
+
+  // ============================================================
+  // FM-31 — Custom Node conditions surfacing
+  // ============================================================
+
+  // CustomConditionObserved — operator's NPD or similar agent has
+  // written a custom Node condition (e.g. "DiskPressure",
+  // "MemoryPressure"). The operator wants this condition surfaced
+  // on Machine.status without triggering MHC remediation. Refines
+  // upstream cluster-api#11826: a "MachineSelfHealing without
+  // remediation" capability that doesn't yet exist.
+  // The model captures the observation by adding the key to
+  // customCondition[m]; the v1beta2 condition projection is
+  // expected to preserve every key (FM-31 obligation).
+  action CustomConditionObserved(m: MachineId, key: str): bool = all {
+    machines.contains(m),
+    customCondition.keys().contains(m),
+    not(customCondition.get(m).contains(key)),
+    customCondition' = customCondition.put(m, customCondition.get(m).union(Set(key))),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ObservationRefresh — MHC's next reconcile picks up a fresh
@@ -3022,6 +3140,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // EtcdCompactionDone — auto-compaction completes; latency
@@ -3056,6 +3175,7 @@ module Lifecycle {
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
   }
 
   // ===============================================================
@@ -3151,6 +3271,9 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); RestoreNodeReachability(m),
     nondet m = MACHINES.oneOf(); RestoreClusterFromSnapshot(m),
     nondet m = MACHINES.oneOf(); ObservationRefresh(m),
+    nondet m = MACHINES.oneOf();
+      nondet k = Set("DiskPressure", "MemoryPressure", "NPDFault").oneOf();
+      CustomConditionObserved(m, k),
   }
 
   // stepNoRecovery — same as step but with the three recovery
@@ -3492,6 +3615,7 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'   = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'   = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'   = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'   = Set(1, 2, 3).mapBy(_ => true),
@@ -3546,6 +3670,7 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'   = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'   = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3592,6 +3717,7 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'   = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'   = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3675,6 +3801,7 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    customCondition'  = Map(1 -> Set(), 2 -> Set()),
     criRuntimeReady'  = Map(1 -> true, 2 -> true),
     criImagesPulled'  = Map(1 -> true, 2 -> true),
     criPodSandboxRunning'  = Map(1 -> true, 2 -> true),
@@ -3767,6 +3894,7 @@ module Lifecycle {
                        4 -> NoCorrespondingMember),
     lbHealthy'      = true,    // the LB itself is fine
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -3907,6 +4035,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3954,6 +4083,7 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3998,6 +4128,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4043,6 +4174,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -4091,6 +4223,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -4138,6 +4271,7 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false),
+    customCondition'  = Map(1 -> Set()),
     criRuntimeReady'  = Map(1 -> false),
     criImagesPulled'  = Map(1 -> false),
     criPodSandboxRunning'  = Map(1 -> false),
@@ -4183,6 +4317,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
@@ -4243,6 +4378,7 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -4288,6 +4424,7 @@ module Lifecycle {
     observation' = Map(1 -> ReachableUnhealthy, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4335,6 +4472,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4384,6 +4522,7 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -4432,6 +4571,7 @@ module Lifecycle {
                        4 -> UnreachableTimeout, 5 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3, 4, 5).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
@@ -4476,6 +4616,7 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    customCondition'  = Map(1 -> Set(), 2 -> Set()),
     criRuntimeReady'  = Map(1 -> true, 2 -> true),
     criImagesPulled'  = Map(1 -> true, 2 -> true),
     criPodSandboxRunning'  = Map(1 -> true, 2 -> true),
@@ -4524,6 +4665,7 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false, 2 -> true, 3 -> true),
+    customCondition'  = Map(1 -> Set(), 2 -> Set(), 3 -> Set()),
     criRuntimeReady'  = Map(1 -> false, 2 -> true, 3 -> true),
     criImagesPulled'  = Map(1 -> false, 2 -> true, 3 -> true),
     criPodSandboxRunning'  = Map(1 -> false, 2 -> true, 3 -> true),
@@ -4570,6 +4712,7 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4630,6 +4773,7 @@ module Lifecycle {
                       .put(1, UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition'  = Set(1, 2, 3).mapBy(_ => Set()),
     criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
     criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
     criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4639,6 +4783,53 @@ module Lifecycle {
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
+  }
+
+  // FM-31 — Custom Node conditions surfacing.
+  // 3-CP cluster healthy; Machine 1 carries a custom Node condition
+  // ("DiskPressure") written by an operator's NPD agent. KCP MUST
+  // surface this condition on Machine.status without triggering MHC
+  // remediation. Refines upstream cluster-api#11826.
+  action customConditionInit = all {
+    members'      = Set(1, 2, 3),
+    learners'     = Set(),
+    leaderAt'     = Map(1 -> 1),
+    currentTerm'  = 1,
+    progress'     = Map(),
+    memberHealth' = Set(1, 2, 3).mapBy(_ => Healthy),
+    phase'                = Set(1, 2, 3).mapBy(_ => JoinComplete),
+    failureReason'        = Map(),
+    etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
+    kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'      = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady' = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'= Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten' = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane' = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'= Set(1, 2, 3).mapBy(_ => true),
+    machines'    = Set(1, 2, 3),
+    nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
+    machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine),
+    decision'    = Set(1, 2, 3).mapBy(_ => NoRemediationNeeded),
+    blockReason' = Map(),
+    preflightBlocked' = false,
+    desiredReplicas' = 3,
+    template'        = Set(1, 2, 3).mapBy(_ => 1),
+    desiredTemplate' = 1,
+    observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy),
+    lbHealthy'      = true,
+    nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition' = Set(1, 2, 3).mapBy(_ => Set())
+                         .put(1, Set("DiskPressure")),
+    criRuntimeReady' = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled' = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning' = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning' = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked' = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor' = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable' = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady' = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress' = false,
   }
 
   // -------------------------------------------------------------
@@ -4684,7 +4875,8 @@ module Lifecycle {
                 criRuntimeReady' = criRuntimeReady,
                 criImagesPulled' = criImagesPulled,
                 criPodSandboxRunning' = criPodSandboxRunning,
-                criContainersRunning' = criContainersRunning })
+                criContainersRunning' = criContainersRunning,
+                customCondition' = customCondition })
 
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,
