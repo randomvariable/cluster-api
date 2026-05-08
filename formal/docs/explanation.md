@@ -165,9 +165,22 @@ execution exists. Whether *all* fair executions converge is a
 question TLC can't answer at this formula size.
 
 Two paths forward:
-1. **Apalache** — SMT-based, handles larger formulas. Slower but
-   doesn't overflow on tableau size. Deferred to a future round.
-2. **Lean 4** — manual proof against the parametric carrier in
+1. ~~**Apalache** — SMT-based, handles larger formulas.~~
+   **Ruled out**: Apalache 0.56.1's experimental temporal-property
+   pass returns `error: Handling fairness is not supported yet!`
+   for any property using `weakFair` / `strongFair`. We can use
+   Apalache for non-fair temporal properties (`eventually(P)`,
+   `always(P)`) but those inherit the stuttering counterexample
+   TLC already finds without fairness.
+2. **Reduced fairness scope** — TLC's tableau handles small
+   fairness sets (the 1-conjunct `ConvergenceMinimalFair` produced
+   a 1-branch tableau and started state-space exploration). The
+   approach: identify a minimal sufficient set of strong-fair
+   actions (probably `ElectLeader`, `PromoteLearner`, `MarkReady`,
+   `ResolveNodeRef`, `MachineHealthChange`, `CompleteRemediation`,
+   `HealEtcdReachability`, `HealLb`) and prove convergence under
+   just those. This is the actionable next step.
+3. **Lean 4** — manual proof against the parametric carrier in
    `formal/proofs/ControlPlane/`. Produces a deductive verdict
    independent of model-checker capacity. Scaffolded; not yet
    discharged.

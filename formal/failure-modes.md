@@ -477,18 +477,27 @@ This proves the per-action fairness assumption is **satisfiable**
 ALL fair executions converge, which TLC cannot answer at this
 formula size.
 
-**Genuine verification path**: requires either
-1. **Apalache** with SMT-based temporal verification (slower but
-   handles larger formulas) — deferred.
+**Genuine verification path**: blocked at the tool layer.
+
+1. ~~**Apalache** with SMT-based temporal verification~~ —
+   **ruled out**. Apalache 0.56.1's experimental temporal-property
+   pass returns `error: Handling fairness is not supported yet!`
+   on any property containing `weakFair` / `strongFair`. The
+   non-fair forms (e.g. plain `eventually(P)`) work, but they
+   inherit the same stuttering counterexample TLC finds.
 2. **Reduced fairness scope**: strong-fair on a minimal sufficient
    set (probably `ElectLeader`, `PromoteLearner`, `MarkReady`,
    `ResolveNodeRef`, `MachineHealthChange`, `CompleteRemediation`,
    `HealEtcdReachability`, `HealLb`) and prove convergence under
-   that subset. The challenge is identifying the minimal set
-   without exhaustive proof.
+   that subset. TLC's tableau handles small fairness sets (1-conjunct
+   `ConvergenceMinimalFair` got a 1-branch tableau). The challenge
+   is identifying the minimal set without exhaustive proof. **This
+   is the next path forward.**
 3. **Manual proof** in Lean 4 against the parametric carrier
    already scaffolded in `formal/proofs/ControlPlane/` — would
-   produce a deductive verdict independent of TLC's capacity.
+   produce a deductive verdict independent of TLC's capacity. The
+   Lean carrier is set up but the temporal forms haven't been
+   stated.
 
 **Classification**: stays at **TLC-incomplete**: the temporal
 property exists, parses cleanly, has a verified satisfiable
