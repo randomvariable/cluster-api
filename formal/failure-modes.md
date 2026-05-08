@@ -1409,6 +1409,142 @@ across all deterministic runs and 200×30 random walks.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
+## FM-42 — In-place update admitted before CanUpdateMachineSet returns yes
+
+**Provenance.** **Modelling** (`InPlaceUpdate.qnt`). The
+contract is encoded in upstream code at
+`internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go:446-461`
+(the `if !canUpdateInPlace { continue }` short-circuit before
+the annotation set).
+
+**Trigger.** A misbehaving rollout planner could in principle
+stamp `MachineSetMoveMachinesToMachineSetAnnotation` on an oldMS
+without first checking `canUpdateMachineSetInPlace`. This would
+cause the MachineSet controller's `startMoveMachines` to flip
+ownership and fire the in-place flow even when no extension can
+handle the change — breaking the worker pod set without a
+recovery path.
+
+**Init / scenarios.** The model surface for FM-42 is the
+`FM42_PrematureInPlaceAdmission` invariant:
+
+```
+oldMsHasMoveAnnotation implies canUpdateInPlace(canUpdateVerdict)
+```
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| `rolloutPlanner.canUpdateMachineSetInPlace` | `internal/controllers/machinedeployment/machinedeployment_canupdatemachineset.go` | 53 |
+| `rolloutPlanner.canExtensionsUpdateMachineSet` | same | 120 |
+| `rolloutPlanner.reconcileInPlaceUpdateIntent` | `internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go` | 414 |
+| Move-annotation set on oldMS | same | 459 |
+| Receive-annotation set on newMS | same | 477 |
+| `MachineSetMoveMachinesToMachineSetAnnotation` constant | `api/core/v1beta2/machineset_types.go` | 43 |
+| `MachineSetReceiveMachinesFromMachineSetsAnnotation` constant | same | 51 |
+| `CanUpdateMachineSet` hook | `api/runtime/hooks/v1alpha1/inplaceupdate_types.go` | 165 |
+
+**Verdict.** `FM42_PrematureInPlaceAdmission` holds across all
+five demo runs and 2000×80 random walks.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
+## FM-43 — UpdateMachine hook idempotence
+
+**Provenance.** **Upstream** + **Modelling**. The idempotence
+obligation is documented in
+`api/runtime/hooks/v1alpha1/inplaceupdate_types.go:211-213`:
+*"This hook should be idempotent and can be called multiple
+times for the same machine until it reports Done or Failed."*
+
+**Trigger.** The Machine controller's
+`reconcileInPlaceUpdate` (`machine_controller_inplace_update.go:43`)
+calls `UpdateMachine` repeatedly while the response carries
+`RetryAfterSeconds > 0`. Each call must observe the same gate
+preconditions: feature gate on, `UpdateInProgressAnnotation` on
+Machine + InfraMachine + BootstrapConfig, `UpdateMachine` hook
+in the pending-hooks set. If any of these flip false between
+retries, the controller MUST take the cleanup branch
+(`machine_controller_inplace_update.go:54-66`) instead of
+calling the extension again with inconsistent state.
+
+**Init / scenarios.** `updateMachineRetryLoopRun` drives three
+`UpdateProgressing` responses followed by a `UpdateDone` and
+the cleanup. The model surface is
+`FM43_UpdateMachineIdempotenceGate`:
+
+```
+machinePhase[m] == InPlaceUpdating
+  implies (hookGateOpen(...) or not(machineInProgress[m]))
+```
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| `Reconciler.reconcileInPlaceUpdate` (entry) | `internal/controllers/machine/machine_controller_inplace_update.go` | 43 |
+| Cleanup branch (orphaned hook) | same | 54-66 |
+| Gate cascade | same | 74-99 |
+| `Reconciler.callUpdateMachineHook` | same | 142 |
+| RetryAfter > 0 → in progress | same | 185-189 |
+| RetryAfter = 0 → done | same | 192-193 |
+| `Reconciler.completeInPlaceUpdate` | same | 198 |
+| `UpdateMachine` hook | `api/runtime/hooks/v1alpha1/inplaceupdate_types.go` | 213 |
+| `UpdateInProgressAnnotation` constant | `api/core/v1beta2/machine_types.go` | 100 |
+| `MarkAsPending` / `IsPending` / `MarkAsDone` | `internal/hooks/tracking.go` | 36 / 86 / 98 |
+
+**Verdict.** `FM43_UpdateMachineIdempotenceGate` holds across
+all five demo runs and 2000×80 random walks.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
+## FM-44 — Multiple UpdateMachine extensions registered
+
+**Provenance.** **Upstream** — encoded in
+`internal/controllers/machine/machine_controller_inplace_update.go:155-156`.
+The current iteration of the in-place feature only supports a
+single extension; multiple extensions yield a fast-fail error
+with message "found multiple UpdateMachine hooks: only one hook
+is supported."
+
+**Trigger.** Operator registers a second `UpdateMachine`
+extension. The Machine controller's `callUpdateMachineHook`
+detects `len(extensions) > 1` at line 155 and returns an error,
+preventing any in-place update from progressing.
+
+**Init / scenarios.** `multiExtensionRejectRun` simulates the
+operator misconfiguration; the Machine flips to `InPlaceFailed`.
+Surface invariant `FM44_MultiExtensionBlocksProgress`:
+
+```
+updateMachineExtensionCount > 1
+  implies forall m: machinePhase[m] == InPlaceArmed
+                      implies lastUpdateOutcome[m] == UpdateProgressing
+```
+
+(Machines already at `InPlaceDone` from before the second
+extension was registered are unaffected — their state is durable.)
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| Multi-extension fast-fail | `internal/controllers/machine/machine_controller_inplace_update.go` | 155-156 |
+| Zero-extension fast-fail | same | 152-153 |
+| `RuntimeClient.GetAllExtensions` call | same | 148 |
+
+**Recovery.** Operator removes the duplicate extension; the
+next reconcile finds `len(extensions) == 1` and proceeds. The
+model has no fault-clearing action because the upstream code
+allows the operator's existing `kubectl delete extension`
+behaviour without controller involvement.
+
+**Verdict.** `FM44_MultiExtensionBlocksProgress` holds across
+all five demo runs and 2000×80 random walks.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
 ## FM-34 — MHC controller's stale cluster cache during apiserver restart
 
 **Provenance.** **Upstream cluster-api#12363** ("MachineHealthcheck
@@ -1497,6 +1633,9 @@ reason that the operator can read.
 | FM-39 | Multi-step upgrade hook ordering | MODELLING | n/a — invariant of upstream contract | Verified in `specs/Topology.qnt` (`FM39_BeforeClusterUpgradeIdempotent`) |
 | FM-40 | BeforeClusterUpgrade annotation must gate CP pickup | MODELLING | Operator removes annotation | Verified in `specs/Topology.qnt` (`FM40_AnnotationGatesCp`) |
 | FM-41 | AfterClusterUpgrade fires only at full quiescence | MODELLING | n/a — invariant of upstream contract | Verified in `specs/Topology.qnt` (`FM41_AfterClusterUpgradeAtSteadyState`) |
+| FM-42 | In-place admitted before CanUpdateMachineSet returns yes | MODELLING | n/a — invariant of upstream contract | Verified in `specs/InPlaceUpdate.qnt` (`FM42_PrematureInPlaceAdmission`) |
+| FM-43 | UpdateMachine hook idempotence | MODELLING | n/a — invariant of upstream contract | Verified in `specs/InPlaceUpdate.qnt` (`FM43_UpdateMachineIdempotenceGate`) |
+| FM-44 | Multiple UpdateMachine extensions registered | MODELLING | Operator removes duplicate extension | Verified in `specs/InPlaceUpdate.qnt` (`FM44_MultiExtensionBlocksProgress`) |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
@@ -1615,6 +1754,9 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 39 | Modelling (Topology spec) | — |
 | 40 | Upstream + Modelling | — |
 | 41 | Upstream | — |
+| 42 | Modelling (InPlaceUpdate spec) | — |
+| 43 | Upstream + Modelling | — |
+| 44 | Upstream | — |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |
 

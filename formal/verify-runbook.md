@@ -151,6 +151,48 @@ quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
 # Expected: [violation] (~217 ms, 4 steps).
 ```
 
+### In-place updates (deterministic + random-walk)
+
+```sh
+# Five demonstration runs cover the full move + UpdateMachine
+# choreography across MD, MS, and Machine controllers.
+
+quint run --main=InPlaceUpdate --init=happyInPlaceRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/InPlaceUpdate.qnt
+
+quint run --main=InPlaceUpdate --init=canUpdateNoFallbackRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/InPlaceUpdate.qnt
+
+quint run --main=InPlaceUpdate --init=multiExtensionRejectRun --step=step \
+          --invariant=FM44_MultiExtensionBlocksProgress --max-steps=0 \
+          formal/specs/InPlaceUpdate.qnt
+
+quint run --main=InPlaceUpdate --init=updateMachineRetryLoopRun --step=step \
+          --invariant=FM43_UpdateMachineIdempotenceGate --max-steps=0 \
+          formal/specs/InPlaceUpdate.qnt
+
+quint run --main=InPlaceUpdate --init=orphanedHookCleanupRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/InPlaceUpdate.qnt
+
+# Random walk each invariant for 2000 samples × 80 steps
+# (the user requested "unbounded time" — this is the
+# practical longest sweep before TLC capacity becomes
+# the bottleneck).
+for inv in AllSafetyInvariants FM42_PrematureInPlaceAdmission \
+           FM43_UpdateMachineIdempotenceGate \
+           FM44_MultiExtensionBlocksProgress \
+           TwoWayHandshakeAnnotations; do
+  quint run --main=InPlaceUpdate --invariant=$inv \
+            --max-samples=2000 --max-steps=80 \
+            formal/specs/InPlaceUpdate.qnt
+done
+```
+
+Or, from `formal/`: `make verify-inplace`.
+
 ### Topology + runtime extensions (deterministic + random-walk)
 
 ```sh

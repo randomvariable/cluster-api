@@ -58,6 +58,9 @@ Worthwhile but lower operational priority.
 | FM-39 | MODELLING (closed) | Multi-step upgrade hook ordering; verified in `specs/Topology.qnt` |
 | FM-40 | MODELLING (closed) | BeforeClusterUpgrade annotation gates CP pickup; verified in `specs/Topology.qnt` |
 | FM-41 | MODELLING (closed) | AfterClusterUpgrade fires only at full quiescence; verified in `specs/Topology.qnt` |
+| FM-42 | MODELLING (closed) | In-place admitted before CanUpdateMachineSet returns yes; verified in `specs/InPlaceUpdate.qnt` |
+| FM-43 | MODELLING (closed) | UpdateMachine hook idempotence (full retry-loop modelled); verified in `specs/InPlaceUpdate.qnt` |
+| FM-44 | MODELLING (closed) | Multi-extension fast-failure for in-place updates; verified in `specs/InPlaceUpdate.qnt` |
 | FM-37 | KCP-BUG (latent) | Lifecycle hook skipped when CP unavailable |
 
 ### Won't

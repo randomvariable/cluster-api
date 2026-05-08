@@ -53,6 +53,7 @@ LIFECYCLE_MC  := $(SPECS_DIR)/Lifecycle.multicluster.qnt
 SELFHOSTED    := $(SPECS_DIR)/SelfHosted.qnt
 MSPREFLIGHT   := $(SPECS_DIR)/MachineSetPreflight.qnt
 TOPOLOGY      := $(SPECS_DIR)/Topology.qnt
+INPLACE       := $(SPECS_DIR)/InPlaceUpdate.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -396,6 +397,62 @@ verify-topology-random:  ## Random-walk every Topology safety invariant
 
 .PHONY: verify-topology
 verify-topology: verify-topology-create verify-topology-upgrade verify-topology-multistep verify-topology-blocked verify-topology-delete verify-topology-random  ## Full Topology demo + random-walk suite
+
+## --------------------------------------
+## In-place updates (FM-42/43/44)
+## --------------------------------------
+
+##@ in-place-updates:
+
+.PHONY: verify-inplace-happy
+verify-inplace-happy:  ## Drive happyInPlaceRun through full move + UpdateMachine + complete
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=InPlaceUpdate --init=happyInPlaceRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(INPLACE)
+
+.PHONY: verify-inplace-fallback
+verify-inplace-fallback:  ## Drive canUpdateNoFallbackRun (extension says no, fall back to rolling)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=InPlaceUpdate --init=canUpdateNoFallbackRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(INPLACE)
+
+.PHONY: verify-inplace-multi-ext
+verify-inplace-multi-ext:  ## Drive multiExtensionRejectRun (FM-44)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=InPlaceUpdate --init=multiExtensionRejectRun --step=step \
+	             --invariant=FM44_MultiExtensionBlocksProgress --max-steps=0 \
+	             $(INPLACE)
+
+.PHONY: verify-inplace-retry
+verify-inplace-retry:  ## Drive updateMachineRetryLoopRun (FM-43 idempotence)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=InPlaceUpdate --init=updateMachineRetryLoopRun --step=step \
+	             --invariant=FM43_UpdateMachineIdempotenceGate --max-steps=0 \
+	             $(INPLACE)
+
+.PHONY: verify-inplace-cleanup
+verify-inplace-cleanup:  ## Drive orphanedHookCleanupRun (operator strips annotation)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=InPlaceUpdate --init=orphanedHookCleanupRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(INPLACE)
+
+.PHONY: verify-inplace-random
+verify-inplace-random:  ## Random-walk every InPlaceUpdate invariant (2000×80, "unbounded time")
+	@for inv in AllSafetyInvariants FM42_PrematureInPlaceAdmission \
+	            FM43_UpdateMachineIdempotenceGate \
+	            FM44_MultiExtensionBlocksProgress \
+	            TwoWayHandshakeAnnotations; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=InPlaceUpdate \
+	               --invariant=$$inv --max-samples=2000 --max-steps=80 \
+	               $(INPLACE) || exit 1; \
+	done
+
+.PHONY: verify-inplace
+verify-inplace: verify-inplace-happy verify-inplace-fallback verify-inplace-multi-ext verify-inplace-retry verify-inplace-cleanup verify-inplace-random  ## Full InPlaceUpdate suite
 
 ## --------------------------------------
 ## Meta

@@ -172,6 +172,33 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### InPlaceUpdate.qnt
+
+In-place machine update choreography across MachineDeployment,
+MachineSet, and Machine controllers (CAEP "in-place updates",
+feature gate `InPlaceUpdates`). Anchors recovered via gopls +
+grep on `feature/feature.go`,
+`api/runtime/hooks/v1alpha1/inplaceupdate_types.go`,
+`api/core/v1beta2/{machine,machineset}_types.go`,
+`internal/controllers/machinedeployment/`,
+`internal/controllers/machineset/`, and
+`internal/controllers/machine/machine_controller_inplace_update.go`.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| InPlaceUpdate | EvaluateCanUpdateMachineSet | internal/controllers/machinedeployment/machinedeployment_canupdatemachineset.go:53 (`rolloutPlanner.canUpdateMachineSetInPlace`); :120 (`canExtensionsUpdateMachineSet`); :88-99 (cache check); api/runtime/hooks/v1alpha1/inplaceupdate_types.go:165 (`CanUpdateMachineSet` hook). | Rollout planner consults the runtime extension to decide if MS spec changes can be patched in place; verdict is cached. Zero or >1 extensions ⇒ fall back to rolling. |
+| InPlaceUpdate | SetMoveAnnotations | internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go:455-477 (oldMS gets `MachineSetMoveMachinesToMachineSetAnnotation`; newMS gets `MachineSetReceiveMachinesFromMachineSetsAnnotation`); api/core/v1beta2/machineset_types.go:43, :51 (annotation constants). | Rollout planner stamps the two-way handshake annotations on oldMS and newMS so the MS controller can move Machines instead of deleting them. |
+| InPlaceUpdate | StartMoveMachine | internal/controllers/machineset/machineset_controller.go:806 (scale-down dispatch when `MoveMachinesTo` annotation set); :974 (`Reconciler.startMoveMachines`); :990-995 (validates target MS has `ReceiveMachinesFrom` listing source); :1046-1052 (OwnerRef flip); :1064 (label flip); :1070-1071 (sets `UpdateInProgressAnnotation` and `PendingAcknowledgeMoveAnnotation` on Machine); :1017 (skips Machines with `inplace.IsUpdateInProgress`). | Source MS performs the move: ownership + label flip, sets the per-Machine in-place markers. |
+| InPlaceUpdate | AcknowledgeMove | internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go:111-162 (`reconcileReplicasPendingAcknowledgeMove`); :162 (writes `AcknowledgedMoveAnnotation` on newMS); api/core/v1beta2/machineset_types.go:58 (annotation constant). | Rollout planner inspects newMS's machines; for each with `PendingAcknowledgeMoveAnnotation`, adds the name to `AcknowledgedMoveAnnotation` on newMS. |
+| InPlaceUpdate | CompleteMoveMachine | internal/controllers/machineset/machineset_controller.go:371-403 (newMS reconcile suffix); :381-386 (drop `PendingAcknowledgeMoveAnnotation` after newMS lists Machine in `AcknowledgedMoveAnnotation`); :397 (call `completeMoveMachine`); :429 (function definition); :458, :481 (writes `UpdateInProgressAnnotation` on InfraMachine and BootstrapConfig); :403 (`hooks.MarkObjectAsPending(UpdateMachine)`); internal/hooks/tracking.go:36 (MarkAsPending). | Target MS finalises the move: clears acknowledge bit, syncs InfraMachine/BootstrapConfig with desired state + UpdateInProgress annotation, marks UpdateMachine hook as pending on the Machine. |
+| InPlaceUpdate | CallUpdateMachineHook | internal/controllers/machine/machine_controller_inplace_update.go:43 (`Reconciler.reconcileInPlaceUpdate` entry); :74-99 (gate cascade — feature, UpdateInProgress on Machine + Infra + Bootstrap, infra provisioned, bootstrap secret, NodeRef); :142 (`callUpdateMachineHook`); :148 (`GetAllExtensions`); :152-156 (zero / multi-extension errors); :181 (`CallAllExtensions`); :185-189 (RetryAfter > 0 → in progress); :192-193 (RetryAfter = 0 → done); api/runtime/hooks/v1alpha1/inplaceupdate_types.go:213 (`UpdateMachine` hook); :198-207 (response status discriminator). | Machine controller calls the runtime extension; idempotent retry loop. |
+| InPlaceUpdate | CompleteInPlaceUpdate | internal/controllers/machine/machine_controller_inplace_update.go:198 (`completeInPlaceUpdate`); :201-203 (remove UpdateInProgress from Machine); :208-210 (remove from InfraMachine); :213-216 (remove from BootstrapConfig); :221 (`hooks.MarkAsDone(UpdateMachine)`); internal/hooks/tracking.go:98 (MarkAsDone). | Machine controller clears all three UpdateInProgress annotations and marks the UpdateMachine hook done; Machine version advances to newMS template. |
+| InPlaceUpdate | CleanupOrphanedHook | internal/controllers/machine/machine_controller_inplace_update.go:54-66 (cleanup branch); :60 (calls `completeInPlaceUpdate` to drop orphaned hook + annotations). | Defensive cleanup: when operator strips `UpdateInProgressAnnotation` mid-flight but the UpdateMachine hook is still pending, the controller cleans up the orphan. |
+| InPlaceUpdate | OperatorRegisterMultipleUpdateMachineExtensions | (operator-driven misconfiguration) — observed at `machine_controller_inplace_update.go:155-156` ("found multiple UpdateMachine hooks: only one hook is supported"). | Operator registers >1 extension; hook call fails with explicit error. |
+| InPlaceUpdate | OperatorRemoveUpdateInProgress | (operator-driven exogenous fault) — handled by the cleanup branch at `machine_controller_inplace_update.go:54-66`. | Operator strips the `UpdateInProgressAnnotation` from a Machine; the controller's cleanup branch handles it. |
+| InPlaceUpdate | canUpdateInPlace (helper) | internal/controllers/machinedeployment/machinedeployment_canupdatemachineset.go:53-115 (the `canUpdateMachineSetInPlace` function returning bool). | Pure predicate. |
+| InPlaceUpdate | hookGateOpen (helper) | internal/controllers/machine/machine_controller_inplace_update.go:74-99 (the precondition cascade for calling the UpdateMachine hook). | Pure predicate refining the upstream gate. |
+
 ### Topology.qnt
 
 ClusterTopology reconciler + Runtime SDK lifecycle hooks. Anchors
