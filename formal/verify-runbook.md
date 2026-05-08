@@ -151,6 +151,43 @@ quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
 # Expected: [violation] (~217 ms, 4 steps).
 ```
 
+### Topology + runtime extensions (deterministic + random-walk)
+
+```sh
+# Deterministic demo runs in Topology.qnt. All five must pass
+# AllSafetyInvariants (or the named invariant for blocked).
+
+quint run --main=Topology --init=happyCreateRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/Topology.qnt
+
+quint run --main=Topology --init=happyUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/Topology.qnt
+
+quint run --main=Topology --init=multiStepUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/Topology.qnt
+
+quint run --main=Topology --init=annotationBlockedUpgradeRun --step=step \
+          --invariant=FM40_AnnotationGatesCp --max-steps=0 \
+          formal/specs/Topology.qnt
+
+quint run --main=Topology --init=deleteRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/Topology.qnt
+
+# Random-walk every Topology invariant (200 samples × 30 steps).
+for inv in AllSafetyInvariants FM39_BeforeClusterUpgradeIdempotent \
+           FM40_AnnotationGatesCp FM41_AfterClusterUpgradeAtSteadyState; do
+  quint run --main=Topology --invariant=$inv \
+            --max-samples=200 --max-steps=30 \
+            formal/specs/Topology.qnt
+done
+```
+
+Or, from `formal/`: `make verify-topology` runs all of the above.
+
 ### FM-33 — Worker-MachineSet preflight (TLC reachability)
 
 ```sh

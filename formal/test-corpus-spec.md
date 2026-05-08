@@ -55,6 +55,9 @@ Worthwhile but lower operational priority.
 | FM-32 | TRANSIENT | Webhook rotation gap (cert-manager#10522) |
 | FM-33 | KCP-DESIGN-GAP (closed) | Worker MachineSet preflight gating; verified in `specs/MachineSetPreflight.qnt` (cluster-api#11117) |
 | FM-34 | KCP-BUG (latent) | Stale MHC cluster-cache during apiserver restart |
+| FM-39 | MODELLING (closed) | Multi-step upgrade hook ordering; verified in `specs/Topology.qnt` |
+| FM-40 | MODELLING (closed) | BeforeClusterUpgrade annotation gates CP pickup; verified in `specs/Topology.qnt` |
+| FM-41 | MODELLING (closed) | AfterClusterUpgrade fires only at full quiescence; verified in `specs/Topology.qnt` |
 | FM-37 | KCP-BUG (latent) | Lifecycle hook skipped when CP unavailable |
 
 ### Won't

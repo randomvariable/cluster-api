@@ -172,6 +172,42 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### Topology.qnt
+
+ClusterTopology reconciler + Runtime SDK lifecycle hooks. Anchors
+recovered via gopls `go_search` (`topology reconciler`,
+`BeforeClusterUpgrade`, `AfterClusterUpgrade hook`,
+`computeControlPlaneVersion`, `IsControlPlaneStable`) and `grep -nE`
+on the controller and lifecycle-hook files; line numbers refer to
+the working tree at HEAD of the `formality` branch.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| Topology | EvaluateHook | exp/topology/desiredstate/lifecycle_hooks.go (every `RuntimeClient.CallAllExtensions(...)` call: lines 100, 158, 218, 282, 348); `internal/controllers/topology/cluster/cluster_controller.go:468` (BeforeClusterCreate); :582 (BeforeClusterDelete); `reconcile_state.go:205, 274` (AfterControlPlaneInitialized, AfterClusterUpgrade). | Abstract step: the runtime extension server returns a HookOk / HookBlock / HookNotConfigured outcome. Records lastHookOutcome[h]. |
+| Topology | ReconcileBeforeClusterCreate | internal/controllers/topology/cluster/cluster_controller.go:441 (`Reconciler.callBeforeClusterCreateHook`); precondition `!Spec.InfrastructureRef.IsDefined() && !Spec.ControlPlaneRef.IsDefined()` at line 446. | Topology controller calls BeforeClusterCreate; on unblock, marks AfterControlPlaneInitialized pending and proceeds to provision. |
+| Topology | ControlPlaneProvisioned | (observable) `internal/controllers/topology/cluster/reconcile_state.go:218` (`isControlPlaneInitialized` checks `ClusterControlPlaneInitializedCondition == True`). | KCP completes initial CP provision; sets cpVersion to topologyVersion and seeds workers at the same version. |
+| Topology | FireAfterControlPlaneInitialized | internal/controllers/topology/cluster/reconcile_state.go:188 (`Reconciler.callAfterControlPlaneInitialized`); fires the hook once when CP reaches Initialized=True (line 199); `MarkAsDone` at line 209. | Closes the AfterControlPlaneInitialized intent; transitions cluster to Stable. |
+| Topology | OperatorBumpTopologyVersion | (operator-driven) `Cluster.spec.topology.version` field. The next reconcile observes the mismatch in `computeControlPlaneVersion` (`exp/topology/desiredstate/desired_state.go:535`) and `ComputeUpgradePlan` (`upgrade_plan.go:48`). | Operator triggers an upgrade by editing the topology version. |
+| Topology | OperatorAddBeforeUpgradeAnnotation | (operator-driven) annotation key with prefix `before-upgrade.hook.cluster.cluster.x-k8s.io/` (`api/core/v1beta2/common_types.go:219`); observed at `lifecycle_hooks.go:44-48`. | Operator sets a hook annotation that blocks BeforeClusterUpgrade. |
+| Topology | OperatorRemoveBeforeUpgradeAnnotation | (operator-driven) removes the annotation; the next reconcile observes the empty hookAnnotations list at `lifecycle_hooks.go:49`. | Operator clears their hold. |
+| Topology | ComputeUpgradePlanOneMinor | exp/topology/desiredstate/upgrade_plan.go:48 (`ComputeUpgradePlan`); :334 (`GetUpgradePlanOneMinor`); :360 (`GetUpgradePlanFromClusterClassVersions`). | Computes the per-step CP and worker upgrade plans. The model uses one-minor steps; an extension-driven plan is equivalent in shape. |
+| Topology | ReconcileBeforeClusterUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:39 (`generator.callBeforeClusterUpgradeHook`); precondition at line 42 (`!IsPending(AfterClusterUpgrade)`); annotation check at lines 44-72; `MarkAsPending(AfterClusterUpgrade)` at `desired_state.go:676`. | Sequence-start hook; on unblock, marks AfterClusterUpgrade pending and transitions to first CP step. Honoured-by-annotation branch. |
+| Topology | ReconcileBeforeControlPlaneUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:128 (`generator.callBeforeControlPlaneUpgradeHook`); call site `desired_state.go:692`; pending-marking cascade at lines 706-715. | Per-step CP gate; on unblock, picks up next CP version and marks AfterCP/Workers hooks pending as appropriate. |
+| Topology | ControlPlaneStepCompletes | (observable) `desired_state.go:574` — `ControlPlane.IsUpgrading()` flips from true to false; `s.UpgradeTracker.ControlPlane.IsUpgrading = true` becomes false on the next reconcile. | KCP finishes the rolling upgrade for one step. |
+| Topology | ReconcileAfterControlPlaneUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:184 (`generator.callAfterControlPlaneUpgradeHook`); precondition at line 189 (`IsPending(AfterControlPlaneUpgrade)`); call site `desired_state.go:591`; `MarkAsDone` at line 232. | Closes the AfterCPUpgrade intent; gates worker progression. |
+| Topology | ReconcileBeforeWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:248 (`generator.callBeforeWorkersUpgradeHook`); precondition at line 253 (`IsPending(BeforeWorkersUpgrade)`); call site `desired_state.go:604`; `MarkAsDone` at line 297. | Per-step worker gate; on unblock, marks MDs as upgrading. |
+| Topology | MachineDeploymentStepCompletes | (observable) `s.UpgradeTracker.MachineDeployments.UpgradingNames()` shrinks; refines the upgrading-set transition in `exp/topology/scope/upgradetracker.go:242`. | One MD finishes its rolling update; clears its name from the upgrading set. |
+| Topology | ReconcileAfterWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:314 (`generator.callAfterWorkersUpgradeHook`); call site `desired_state.go:644`; `MarkAsDone` at line 362. | Closes the AfterWorkersUpgrade intent; pops the upgrade-plan head. |
+| Topology | FinishStepNoWorkers | (model-only) — covers the case where workers don't share this step (CP-only step). The Go counterpart is the falsy branch of `desired_state.go:707-711` (workers not at this nextVersion). | Pops the CP plan head without firing worker hooks. |
+| Topology | ReconcileAfterClusterUpgrade | internal/controllers/topology/cluster/reconcile_state.go:229 (`Reconciler.callAfterClusterUpgrade`); precondition cascade at lines 235-250; `MarkAsDone` at line 286. | Closes the upgrade sequence; transitions cluster from Upgrading to Stable. |
+| Topology | OperatorRequestDelete | (operator-driven) `kubectl delete cluster`; the next reconcile observes `DeletionTimestamp != nil` at `cluster_controller.go:319`. | Operator initiates cluster deletion. |
+| Topology | ReconcileBeforeClusterDelete | internal/controllers/topology/cluster/cluster_controller.go:550 (`Reconciler.reconcileDelete`); precondition at line 557 (`!hooks.IsOkToDelete(cluster)`); `MarkAsOkToDelete` at line 595 (refines `internal/hooks/tracking.go:142`). | Delete-sequence-start hook; on unblock, stamps the OkToDelete annotation. |
+| Topology | FinaliseDelete | (observable) `cluster_controller.go:601` returns; the cluster object is then garbage-collected by Kubernetes. | Cluster reaches Deleted phase. |
+| Topology | controlPlaneIsStable (helper) | exp/topology/scope/upgradetracker.go:188 (`ControlPlaneUpgradeTracker.IsControlPlaneStable`). | Pure predicate refining the upstream stability check. |
+| Topology | anyMdUpgrading (helper) | exp/topology/scope/upgradetracker.go:256 (`WorkerUpgradeTracker.IsAnyUpgrading`). | Pure predicate. |
+| Topology | upgradeConcurrencyReached (helper) | exp/topology/scope/upgradetracker.go:261 (`WorkerUpgradeTracker.UpgradeConcurrencyReached`). | Pure predicate; default concurrency is 1. |
+| Topology | hookFires (helper) | exp/topology/desiredstate/lifecycle_hooks.go (every `GetAllExtensions(...)` call returning `len == 0`); the BeforeClusterUpgrade-annotation branch at lines 44-72. | Pure predicate refining the hook-firing condition. |
+
 ### MachineSetPreflight.qnt
 
 FM-33 — worker-MachineSet preflight gating. Anchors discovered

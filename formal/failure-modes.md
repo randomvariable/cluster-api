@@ -1280,6 +1280,127 @@ gate is an implemented feature behind the
 verifies the gate's behaviour is correct in the reasonable
 domain of inputs.
 
+## FM-39 — Multi-step upgrade hook ordering
+
+**Provenance.** **Modelling** (Topology + runtime-extensions
+spec). The contract is encoded in upstream code at
+`exp/topology/desiredstate/lifecycle_hooks.go:36-122` (the
+`callBeforeClusterUpgradeHook` doc-comment makes the obligation
+explicit) but is not surfaced as an enforced invariant in any
+existing test.
+
+**Trigger.** During a multi-minor upgrade (e.g. v1.36 → v1.39),
+the topology controller MUST fire `BeforeClusterUpgrade` exactly
+once (at the START of the sequence) and `AfterClusterUpgrade`
+exactly once (at the END). Per intermediate version, the hook
+cascade `BeforeControlPlaneUpgrade → AfterControlPlaneUpgrade →
+BeforeWorkersUpgrade → AfterWorkersUpgrade` must fire in order;
+the next CP-step pickup is gated on the previous step's
+`AfterControlPlaneUpgrade` and (when applicable)
+`AfterWorkersUpgrade` having unblocked.
+
+**Init / scenarios.** Three scenarios in `Topology.qnt`:
+
+| Init | Scenario | Expected verdict |
+|---|---|---|
+| `happyUpgradeRun` | Single-step upgrade 36→37 | All hooks fire in order; AllSafetyInvariants holds |
+| `multiStepUpgradeRun` | Three-step upgrade 36→39 | BeforeClusterUpgrade fires once (gated by `!IsPending(AfterClusterUpgrade)`); per-step hooks fire as expected |
+| `annotationBlockedUpgradeRun` | Operator sets `before-upgrade.hook.cluster.cluster.x-k8s.io/*` annotation | BeforeClusterUpgrade gate stays blocked; FM40 holds |
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| `Reconciler.Reconcile` | `internal/controllers/topology/cluster/cluster_controller.go` | 263 |
+| `Reconciler.reconcile` (normal loop) | same | 328 |
+| `Reconciler.callBeforeClusterCreateHook` | same | 441 |
+| `Reconciler.reconcileDelete` | same | 550 |
+| `Reconciler.callAfterHooks` | `internal/controllers/topology/cluster/reconcile_state.go` | 180 |
+| `Reconciler.callAfterControlPlaneInitialized` | same | 188 |
+| `Reconciler.callAfterClusterUpgrade` | same | 229 |
+| `generator.Generate` | `exp/topology/desiredstate/desired_state.go` | 103 |
+| `generator.computeControlPlaneVersion` | same | 535 |
+| `generator.computeMachineDeploymentVersion` | same | 1089 |
+| `generator.callBeforeClusterUpgradeHook` | `exp/topology/desiredstate/lifecycle_hooks.go` | 39 |
+| `generator.callBeforeControlPlaneUpgradeHook` | same | 128 |
+| `generator.callAfterControlPlaneUpgradeHook` | same | 184 |
+| `generator.callBeforeWorkersUpgradeHook` | same | 248 |
+| `generator.callAfterWorkersUpgradeHook` | same | 314 |
+| `ComputeUpgradePlan` | `exp/topology/desiredstate/upgrade_plan.go` | 48 |
+| `GetUpgradePlanOneMinor` | same | 334 |
+| `MarkAsPending` | `internal/hooks/tracking.go` | 36 |
+| `IsPending` | same | 86 |
+| `MarkAsDone` | same | 98 |
+| `ControlPlaneUpgradeTracker.IsControlPlaneStable` | `exp/topology/scope/upgradetracker.go` | 188 |
+| `WorkerUpgradeTracker.IsAnyUpgrading` | same | 256 |
+| `WorkerUpgradeTracker.UpgradeConcurrencyReached` | same | 261 |
+| `PendingHooksAnnotation` constant | `api/runtime/v1beta2/extensionconfig_types.go` | 317 |
+| `OkToDeleteAnnotation` constant | same | 321 |
+| `BeforeClusterUpgradeHookAnnotationPrefix` | `api/core/v1beta2/common_types.go` | 219 |
+
+**Recovery / fix.** No "fix" required — the upstream code
+already implements the obligation; the model verifies the
+implementation is consistent. The model surfaces it as
+`FM39_BeforeClusterUpgradeIdempotent`: while
+`AfterClusterUpgrade` is pending, `BeforeClusterUpgrade` cannot
+be re-fired (refines `lifecycle_hooks.go:42`).
+
+**Verdict.** Five demonstration runs verified (TLC-equivalent
+deterministic). Random walk (200 samples × 30 steps) holds
+`AllSafetyInvariants`, `FM39_BeforeClusterUpgradeIdempotent`,
+`FM40_AnnotationGatesCp`, `FM41_AfterClusterUpgradeAtSteadyState`.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
+## FM-40 — BeforeClusterUpgrade annotation must gate CP version pickup
+
+**Provenance.** **Upstream** + **Modelling**. The annotation
+mechanism is documented in
+`api/core/v1beta2/common_types.go:214-219` and implemented in
+`exp/topology/desiredstate/lifecycle_hooks.go:44-72`. Operators
+rely on this to hold an upgrade pending an external readiness
+check.
+
+**Trigger.** Operator sets an annotation with prefix
+`before-upgrade.hook.cluster.cluster.x-k8s.io/` on a Cluster
+that is at the start of an upgrade sequence (no
+`AfterClusterUpgrade` pending yet). The topology controller
+MUST NOT advance `cpVersion` past `cpUpgradePlan[0]` until the
+annotation is removed.
+
+**Verdict.** `FM40_AnnotationGatesCp` holds across all
+deterministic runs and 200×30 random walks. The model
+demonstrates the gate is honoured: while the annotation is set
+AND `AfterClusterUpgrade` is not pending, `stepPhase` remains
+`StepIdle` (no CP version pickup occurred).
+
+**Classification.** **MODELLING** (verifies operator-facing
+contract).
+
+## FM-41 — AfterClusterUpgrade fires only at full quiescence
+
+**Provenance.** **Upstream** — encoded in
+`internal/controllers/topology/cluster/reconcile_state.go:235-250`.
+
+**Trigger.** The `AfterClusterUpgrade` hook is the closing
+hook of the upgrade sequence. It MUST fire only when:
+- CP at the desired version
+- No MachineDeployments / MachinePools are upgrading
+- No MDs / MPs are pending an upgrade
+- No MDs / MPs are pending create
+- `AfterControlPlaneUpgrade` and `AfterWorkersUpgrade` already
+  cleared
+
+The model verifies the obligation as a state invariant
+`FM41_AfterClusterUpgradeAtSteadyState`: while
+`AfterClusterUpgrade` is pending and the upgrade plan is
+empty, the cluster must be in the steady state.
+
+**Verdict.** `FM41_AfterClusterUpgradeAtSteadyState` holds
+across all deterministic runs and 200×30 random walks.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
 ## FM-34 — MHC controller's stale cluster cache during apiserver restart
 
 **Provenance.** **Upstream cluster-api#12363** ("MachineHealthcheck
@@ -1365,6 +1486,9 @@ reason that the operator can read.
 | FM-32 | Webhook rotation gap (cert-manager) | TRANSIENT | Rotation completes | Concept landed; cert-manager#10522 |
 | FM-33 | Worker MachineSet preflight gating | KCP-DESIGN-GAP (closed) | Preflight requeue + KCP upgrade completion | Verified in `specs/MachineSetPreflight.qnt`; cluster-api#11117 |
 | FM-34 | Stale MHC cluster-cache during apiserver restart | KCP-BUG (latent) | Cache invalidation | Concept landed; cluster-api#12363 |
+| FM-39 | Multi-step upgrade hook ordering | MODELLING | n/a — invariant of upstream contract | Verified in `specs/Topology.qnt` (`FM39_BeforeClusterUpgradeIdempotent`) |
+| FM-40 | BeforeClusterUpgrade annotation must gate CP pickup | MODELLING | Operator removes annotation | Verified in `specs/Topology.qnt` (`FM40_AnnotationGatesCp`) |
+| FM-41 | AfterClusterUpgrade fires only at full quiescence | MODELLING | n/a — invariant of upstream contract | Verified in `specs/Topology.qnt` (`FM41_AfterClusterUpgradeAtSteadyState`) |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
@@ -1480,6 +1604,9 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 32 | Upstream + Modelling (Phase 11d cycle) | cert-manager#10522 |
 | 33 | Upstream | cluster-api#11117 |
 | 34 | Upstream | cluster-api#12363 |
+| 39 | Modelling (Topology spec) | — |
+| 40 | Upstream + Modelling | — |
+| 41 | Upstream | — |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |
 

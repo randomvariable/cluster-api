@@ -52,6 +52,7 @@ LIFECYCLE     := $(SPECS_DIR)/Lifecycle.qnt
 LIFECYCLE_MC  := $(SPECS_DIR)/Lifecycle.multicluster.qnt
 SELFHOSTED    := $(SPECS_DIR)/SelfHosted.qnt
 MSPREFLIGHT   := $(SPECS_DIR)/MachineSetPreflight.qnt
+TOPOLOGY      := $(SPECS_DIR)/Topology.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -325,6 +326,76 @@ verify-fm33-versionskew:  ## Drive fm33VersionSkewBlockedRun; expect KubernetesV
 
 .PHONY: verify-fm33
 verify-fm33: verify-fm33-blocked verify-fm33-admitted-after-upgrade verify-fm33-versionskew  ## All three FM-33 demonstration runs
+
+## --------------------------------------
+## Topology + runtime extensions
+## --------------------------------------
+
+##@ topology:
+
+.PHONY: verify-topology-create
+verify-topology-create:  ## Drive happyCreateRun; expect AllSafetyInvariants
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology --init=happyCreateRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-upgrade
+verify-topology-upgrade:  ## Drive happyUpgradeRun (single-step CP+workers)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology --init=happyUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-multistep
+verify-topology-multistep:  ## Drive multiStepUpgradeRun (3 minor steps 36→39)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology --init=multiStepUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-blocked
+verify-topology-blocked:  ## Drive annotationBlockedUpgradeRun; expect FM40 holds
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology --init=annotationBlockedUpgradeRun --step=step \
+	             --invariant=FM40_AnnotationGatesCp --max-steps=0 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-delete
+verify-topology-delete:  ## Drive deleteRun; expect AllSafetyInvariants
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology --init=deleteRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-fm39
+verify-topology-fm39:  ## Random-walk FM39 (BeforeClusterUpgrade idempotent)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology \
+	             --invariant=FM39_BeforeClusterUpgradeIdempotent \
+	             --max-samples=200 --max-steps=30 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-fm41
+verify-topology-fm41:  ## Random-walk FM41 (AfterClusterUpgrade steady-state)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=Topology \
+	             --invariant=FM41_AfterClusterUpgradeAtSteadyState \
+	             --max-samples=200 --max-steps=30 \
+	             $(TOPOLOGY)
+
+.PHONY: verify-topology-random
+verify-topology-random:  ## Random-walk every Topology safety invariant
+	@for inv in AllSafetyInvariants FM39_BeforeClusterUpgradeIdempotent \
+	            FM40_AnnotationGatesCp FM41_AfterClusterUpgradeAtSteadyState; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=Topology \
+	               --invariant=$$inv --max-samples=200 --max-steps=30 \
+	               $(TOPOLOGY) || exit 1; \
+	done
+
+.PHONY: verify-topology
+verify-topology: verify-topology-create verify-topology-upgrade verify-topology-multistep verify-topology-blocked verify-topology-delete verify-topology-random  ## Full Topology demo + random-walk suite
 
 ## --------------------------------------
 ## Meta

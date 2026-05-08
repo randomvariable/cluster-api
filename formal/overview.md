@@ -27,7 +27,8 @@ For a code reviewer:
 9. [`verify-runbook.md`](./verify-runbook.md) — copy-paste commands to reproduce every TLC / Apalache verdict.
 10. [`abstraction-mapping.md`](./abstraction-mapping.md) — per-action refinement-mapping table.
 11. [`counterexample-log.md`](./counterexample-log.md) — append-only ledger for spec violations.
-12. [`specs/Lifecycle.qnt`](./specs/Lifecycle.qnt) — the model.
+12. [`specs/Lifecycle.qnt`](./specs/Lifecycle.qnt) — the KCP/etcd model.
+13. [`specs/Topology.qnt`](./specs/Topology.qnt) — the ClusterTopology + runtime-extension model.
 
 For a contributor adding a new failure mode:
 
@@ -69,6 +70,7 @@ For a contributor adding a new failure mode:
 | FM-23 | `drainStuckInit` | Drain timeout + force-delete | 11.9K states (1.3 s) | **AllSafetyInvariants holds** (Apalache, ~278 s) | blueprint |
 | FM-24 | `etcdDefragPauseInit` | Defrag finishes | 12.5K states (1.0 s) | — | blueprint |
 | FM-33 | `fm33ScaleUpDuringCpUpgradeInit` / `fm33VersionSkewInit` / `fm33RemediationDuringUpgradeInit` (`specs/MachineSetPreflight.qnt`) | KcpFinishUpgrade / OperatorBumpMsVersion + EvaluatePreflight | 3 demo runs (`fm33ScaleUpBlockedRun`, `fm33ScaleUpAdmittedAfterUpgradeRun`, `fm33VersionSkewBlockedRun`) | — | — |
+| FM-39/40/41 | `happyCreateRun` / `happyUpgradeRun` / `multiStepUpgradeRun` / `annotationBlockedUpgradeRun` / `deleteRun` (`specs/Topology.qnt`) | EvaluateHook + ReconcileBefore/After hooks + ComputeUpgradePlanOneMinor | 5 demo runs + 200×30 random walk on `SafetyInvariants` ∪ `FM39_BeforeClusterUpgradeIdempotent` ∪ `FM40_AnnotationGatesCp` ∪ `FM41_AfterClusterUpgradeAtSteadyState` | — | — |
 
 19 catalogued FMs have an init action and a TLC reachability
 verdict. **Six** carry exhaustive Apalache verdicts
