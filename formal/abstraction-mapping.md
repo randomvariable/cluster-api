@@ -172,6 +172,39 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### WorkerLifecycle.qnt
+
+Cross-spec composition of Topology + MachineSetPreflight +
+InPlaceUpdate. Surfaces multi-controller races no single
+Layer-1 spec catches. Anchors below are subsets of the
+constituent specs (full anchors live in their respective
+sections); only the cross-cutting cell-level joins are
+documented here.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| WorkerLifecycle | OperatorBumpTopologyVersion | (operator-driven; `Cluster.spec.topology.version` edit) | Triggers an upgrade sequence; pendingHooks gains BeforeClusterUpgrade only (FM-39 mutual exclusion preserved). |
+| WorkerLifecycle | OperatorRequestScaleUp | (operator-driven; `MachineSet.spec.replicas` increment) | Operator scales up an MS during the upgrade window. |
+| WorkerLifecycle | FireBeforeClusterUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:39. | On unblock, BeforeClusterUpgrade cleared + AfterClusterUpgrade marked pending; stepPhase → StepCpUpgrade. |
+| WorkerLifecycle | CpStepCompletes | (CP rolling abstracted) — refines `desired_state.go:706-715` pending-hooks cascade. | CP version atomically advances; AfterCP/BeforeWorkers/AfterWorkers marked pending. |
+| WorkerLifecycle | FireAfterControlPlaneUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:184. | Body (gated by reconcile semantics, abstracted here). |
+| WorkerLifecycle | FireBeforeWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:248. | Body. |
+| WorkerLifecycle | FireAfterWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:314. | Body; gated on all Machines reaching InPlaceDone. |
+| WorkerLifecycle | FireAfterClusterUpgrade | internal/controllers/topology/cluster/reconcile_state.go:229 (precondition cascade :235-250 — full quiescence). | Closes the upgrade sequence; gated on no Machine in flight + all at topologyVersion. |
+| WorkerLifecycle | EvaluatePreflight | internal/controllers/machineset/machineset_preflight.go:47, :149. | Per-MS preflight gate (CP stability check); demotes ActionInFlight to ActionBlocked when CP turns unstable. |
+| WorkerLifecycle | CompleteScaleUp | (post-preflight branch in machineset_controller.go:828). | MS reverts to NoActionNeeded after successful scale-up. |
+| WorkerLifecycle | EvaluateCanUpdateMachineSet | internal/controllers/machinedeployment/machinedeployment_canupdatemachineset.go:53. | Sets the cached CanUpdateMachineSet verdict. |
+| WorkerLifecycle | SetInPlaceMoveAnnotations | machinedeployment_rollout_rollingupdate.go:455-477. | Stamps the Move/Receive annotations on oldMS/newMS. |
+| WorkerLifecycle | StartMoveMachine | internal/controllers/machineset/machineset_controller.go:974. | Per-Machine move (OwnerRef flip + UpdateInProgress + PendingAcknowledgeMove). |
+| WorkerLifecycle | AcknowledgeMove | machinedeployment_rollout_rollingupdate.go:111-162. | MD planner adds Machine to AcknowledgedMoveAnnotation on newMS. |
+| WorkerLifecycle | CompleteMoveMachine | machineset_controller.go:371-403, :429. | newMS finalises the move; UpdateMachine pending. |
+| WorkerLifecycle | CallUpdateMachineHook | internal/controllers/machine/machine_controller_inplace_update.go:43-194. | UpdateMachine hook retry loop. |
+| WorkerLifecycle | CompleteInPlaceUpdate | internal/controllers/machine/machine_controller_inplace_update.go:198-227. | Completes the in-place update; Machine version flips. |
+| WorkerLifecycle | controlPlaneIsStable (helper) | machineset_preflight.go:149. | Pure predicate; refines the cp-stable check. |
+| WorkerLifecycle | hookFires (helper) | (model-only) — abstracts hook outcome. | Pure predicate. |
+| WorkerLifecycle | anyMachineInFlight (helper) | (model-only) — refines the implicit quiescence check at `reconcile_state.go:242-250` (`IsAnyUpgrading` etc.). | Pure predicate. |
+| WorkerLifecycle | allMachinesDone (helper) | (model-only). | Pure predicate. |
+
 ### ClusterE2E.qnt
 
 End-to-end cluster lifecycle: bring-up (InfraCluster → CP →

@@ -213,6 +213,33 @@ done
 
 Or, from `formal/`: `make verify-e2e`.
 
+### Cross-spec composition (FM-51, WorkerLifecycle.qnt)
+
+```sh
+# Two demonstration runs:
+quint run --main=WorkerLifecycle --init=happyInPlaceUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/WorkerLifecycle.qnt
+
+quint run --main=WorkerLifecycle --init=preflightBlockedDuringInPlaceRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/WorkerLifecycle.qnt
+
+# Random walk every joint invariant (1000×60 per issue #2 spec).
+for inv in AllSafetyInvariants FM39_BeforeClusterUpgradeIdempotent \
+           FM41_AfterClusterUpgradeAtSteadyState FM43_UpdateMachineIdempotence \
+           FM33_PreflightGate J1_NoMoveBeforeWorkersStep \
+           J2_AfterWorkersAtMachineQuiescence \
+           J3_InPlaceAdmissionAfterBeforeWorkersUpgrade \
+           J4_MachineVersionMonotone J5_NoInFlightAcrossStable; do
+  quint run --main=WorkerLifecycle --invariant=$inv \
+            --max-samples=1000 --max-steps=60 \
+            formal/specs/WorkerLifecycle.qnt
+done
+```
+
+Or, from `formal/`: `make verify-worker-lifecycle`.
+
 ### controller-runtime substrate (FM-45/46/47)
 
 ```sh

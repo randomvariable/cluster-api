@@ -59,6 +59,7 @@ TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 INPLACE_REFINED := $(SPECS_DIR)/InPlaceUpdateRefined.qnt
 MSPREFLIGHT_REFINED := $(SPECS_DIR)/MachineSetPreflightRefined.qnt
 E2E           := $(SPECS_DIR)/ClusterE2E.qnt
+WORKER_LIFE   := $(SPECS_DIR)/WorkerLifecycle.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -562,6 +563,43 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 
 .PHONY: verify-refinements
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
+
+## --------------------------------------
+## Worker-lifecycle cross-spec composition (Issue #2, FM-51)
+## --------------------------------------
+
+##@ worker-lifecycle:
+
+.PHONY: verify-worker-lifecycle-happy
+verify-worker-lifecycle-happy:  ## Drive happyInPlaceUpgradeRun (full upgrade with in-place)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WorkerLifecycle --init=happyInPlaceUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(WORKER_LIFE)
+
+.PHONY: verify-worker-lifecycle-preflight
+verify-worker-lifecycle-preflight:  ## Drive preflightBlockedDuringInPlaceRun (FM-51 race)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WorkerLifecycle --init=preflightBlockedDuringInPlaceRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(WORKER_LIFE)
+
+.PHONY: verify-worker-lifecycle-random
+verify-worker-lifecycle-random:  ## Random-walk every WorkerLifecycle invariant (1000x60 — issue #2 spec)
+	@for inv in AllSafetyInvariants FM39_BeforeClusterUpgradeIdempotent \
+	            FM41_AfterClusterUpgradeAtSteadyState FM43_UpdateMachineIdempotence \
+	            FM33_PreflightGate J1_NoMoveBeforeWorkersStep \
+	            J2_AfterWorkersAtMachineQuiescence \
+	            J3_InPlaceAdmissionAfterBeforeWorkersUpgrade \
+	            J4_MachineVersionMonotone J5_NoInFlightAcrossStable; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=WorkerLifecycle \
+	               --invariant=$$inv --max-samples=1000 --max-steps=60 \
+	               $(WORKER_LIFE) || exit 1; \
+	done
+
+.PHONY: verify-worker-lifecycle
+verify-worker-lifecycle: verify-worker-lifecycle-happy verify-worker-lifecycle-preflight verify-worker-lifecycle-random  ## Full WorkerLifecycle suite
 
 ## --------------------------------------
 ## Apalache hopelessness on the new specs (Issue #1)

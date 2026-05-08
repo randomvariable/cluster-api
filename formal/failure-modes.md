@@ -1437,6 +1437,55 @@ across all deterministic runs and 200×30 random walks.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
+## FM-51 — Cross-spec preflight-gate transient violation (level-triggered re-evaluation)
+
+**Provenance.** **Modelling** — surfaced by the cross-spec
+composition in `WorkerLifecycle.qnt` (issue #2). No Layer-1
+spec caught this because each verifies its own gate in
+isolation; the joint state machine reveals the race.
+
+**Trigger.** A MachineSet was admitted to `ActionInFlight` (e.g.
+operator scaled up newMS) while the cluster was Stable and CP
+was stable. The operator then bumped `Cluster.spec.topology.version`,
+causing the topology controller to fire BeforeClusterUpgrade →
+StepCpUpgrade. CP is now mid-upgrade, but the MS is still in
+`ActionInFlight` with the preflight gate (now closed)
+unrespected.
+
+This is harmless under upstream's level-triggered semantics:
+the MS controller calls `runPreflightChecks` on every
+scale-up reconcile (`internal/controllers/machineset/machineset_controller.go:828`),
+so the next reconcile demotes `ActionInFlight` back to
+`ActionBlocked`. But the state-invariant version of FM-33
+("ActionInFlight implies CP stable") fails *transiently*
+between the topology-bump and the next MS-controller reconcile.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `Reconciler.runPreflightChecks` (called every reconcile) | `internal/controllers/machineset/machineset_preflight.go` | 47 |
+| `controlPlaneStablePreflightCheck` | same | 149 |
+| Scale-up reconcile that calls preflight | `internal/controllers/machineset/machineset_controller.go` | 828 |
+| Topology BeforeClusterUpgrade unblocks | `exp/topology/desiredstate/lifecycle_hooks.go` | 39 |
+
+**Recovery / fix.** No upstream fix needed — the level-triggered
+re-evaluation is the design. The model documents the
+transient-window race as a known-harmless safety property.
+
+**Verdict.** `WorkerLifecycle.qnt` random walk (1000×60) holds
+all cross-cutting joint invariants (`J1_NoMoveBeforeWorkersStep`,
+`J2_AfterWorkersAtMachineQuiescence`,
+`J3_InPlaceAdmissionAfterBeforeWorkersUpgrade`,
+`J4_MachineVersionMonotone`, `J5_NoInFlightAcrossStable`)
+plus the per-spec invariants (FM-39, FM-41, FM-43) and the
+weakened FM-33 (`FM33_PreflightGate`).
+
+**Classification.** **MODELLING** (verifies upstream
+level-triggered semantics; no upstream bug — surfaces a
+modelling pattern that future cross-spec compositions must
+respect).
+
 ## FM-48 — KCP must not create CP Machines before InfraCluster is ready
 
 **Provenance.** **Upstream** — encoded in
@@ -1902,6 +1951,7 @@ reason that the operator can read.
 | FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM48_NoCpBeforeInfraReady`) |
 | FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM49_NoWorkersBeforeCpInit`) |
 | FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM50_EndpointMonotonic`) |
+| FM-51 | Cross-spec preflight-gate transient violation | MODELLING | Level-triggered re-evaluation by MS controller | Surfaced + verified in `specs/WorkerLifecycle.qnt`; weakened `FM33_PreflightGate` accordingly |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
@@ -2029,6 +2079,7 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 48 | Upstream (KCP entry-gate) | — |
 | 49 | Upstream (MD gate on CP-init) | — |
 | 50 | Upstream (by inspection) | — |
+| 51 | Modelling (WorkerLifecycle cross-spec composition) | — |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |
 

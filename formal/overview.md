@@ -64,6 +64,7 @@ For a code reviewer:
     - [`specs/SelfHosted.qnt`](./specs/SelfHosted.qnt) + [`Lifecycle.multicluster.qnt`](./specs/Lifecycle.multicluster.qnt) — FM-35 self-hosted topology.
 14. **Layer 2 refinements**: [`TopologyRefined.qnt`](./specs/TopologyRefined.qnt), [`InPlaceUpdateRefined.qnt`](./specs/InPlaceUpdateRefined.qnt), [`MachineSetPreflightRefined.qnt`](./specs/MachineSetPreflightRefined.qnt) — abstract specs composed onto the controller-runtime substrate.
 15. **Layer 3 E2E**: [`specs/ClusterE2E.qnt`](./specs/ClusterE2E.qnt) — end-to-end bring-up + topology hooks + rolling/in-place upgrades.
+16. **Cross-spec composition**: [`specs/WorkerLifecycle.qnt`](./specs/WorkerLifecycle.qnt) — Topology + MachineSetPreflight + InPlaceUpdate joint state machine (issue #2 + FM-51).
 
 For a contributor adding a new failure mode:
 
@@ -109,6 +110,7 @@ For a contributor adding a new failure mode:
 | ControllerRuntime.qnt | 6 | 500×60 | **7/7 invariants** at depth 4 (FM-45 also at depth 8) | — |
 | 3 refined modules | 6 | 300×40 each | — | — |
 | ClusterE2E.qnt | 3 | 300×60 | **11/11 invariants** at depth 4 | — |
+| WorkerLifecycle.qnt | 2 | 1000×60 | — (5 cross-cutting joint invariants verified) | — |
 
 Total: ~50 demo runs, ~3000 actions covered by random walks, 178
 abstraction-mapping rows under the drift check.
@@ -138,6 +140,7 @@ The corpus has progressed through several phases of expansion:
 | 16 | FM-45/46/47 controller-runtime substrate (`ControllerRuntime.qnt`) + 3 refinement modules |
 | 17 | FM-48/49/50 end-to-end cluster lifecycle (`ClusterE2E.qnt`) |
 | 18 | Apalache hopelessness on the four newer specs (issue #1): 37 invariants verified at depth 4. Refactor to `Topology.qnt` to replace dynamic `(cpV+1).to(tV)` with constant-bounded filter (Apalache parser limitation). Make targets `verify-{cr,topology,inplace,e2e}-apalache`. |
+| 19 | Cross-spec composition (issue #2): `WorkerLifecycle.qnt` joins Topology + MachineSetPreflight + InPlaceUpdate; surfaces FM-51 (level-triggered preflight re-evaluation race). 1000×60 random walk holds 9 cross-cutting joint invariants. |
 
 Plus apiserver↔etcd modelling (`apiserverEtcdReachable`,
 `apiserverReady`, `etcdCompactionInProgress`, etc.) and
