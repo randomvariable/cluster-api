@@ -1,0 +1,200 @@
+# Verification runbook — reproducing every TLC / Apalache verdict
+
+Concrete commands to reproduce every formal verdict in
+`failure-modes.md`. Each command is copy-pasteable and assumes
+the working directory is the repository root.
+
+## Prerequisites
+
+```sh
+# Quint
+npm install -g @informalsystems/quint   # >= 0.32.0
+
+# TLC + Apalache come bundled with quint when invoked via
+# `quint verify`.  Quint downloads them on first use.
+
+# Lake (for Lean proofs, optional)
+curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh
+```
+
+## Smoke tests — run first
+
+```sh
+make -C formal verify        # quint typecheck + lake build + tlc + go
+./scripts/verify-formal.sh   # CI gate
+```
+
+## Per-FM verification commands
+
+### TLC reachability — recovery available
+
+For every FM where the recovery path is in `step`, TLC should
+find a counterexample to `not(HealthyControlPlane)` (i.e. the
+healthy state IS reachable).
+
+```sh
+# FM-1 — incident invariants (max-steps=4 exhausts state space)
+quint verify --main=Lifecycle \
+             --init=incidentInit --step=stepRemediation \
+             --invariant=IncidentNeverInFlight \
+             --max-steps=4 --backend=tlc \
+             formal/specs/Lifecycle.qnt
+
+quint verify --main=Lifecycle \
+             --init=incidentInit --step=stepRemediation \
+             --invariant=IncidentBlockReasonCorrect \
+             --max-steps=4 --backend=tlc \
+             formal/specs/Lifecycle.qnt
+
+# FM-1 / FM-2 / FM-3 / FM-13 / FM-16 — reachability under recovery
+for init in stuckLearnerInit twoMachineBothUnhealthyInit \
+            partitionedClusterInit lbBrokenInit \
+            singleNodeLostVoterInit; do
+  quint verify --main=Lifecycle --init=$init --step=step \
+               --invariant='not(HealthyControlPlane)' \
+               --max-steps=8 --backend=tlc \
+               formal/specs/Lifecycle.qnt
+done
+
+# FM-11 / FM-12 / FM-14 / FM-15 / FM-17..FM-24
+for init in invalidKubeletInit slowStorageEtcdJoinInit \
+            nodeNeverJoinsInit upgradeInFlightInit \
+            kubeadmMisconfigInit concurrentScaleAndRemediateInit \
+            apiserverRestartInit upgradeRollbackMidFlightInit \
+            fiveNodeTwoFailuresInit singleNodeScaleUpFailureInit \
+            drainStuckInit etcdDefragPauseInit; do
+  quint verify --main=Lifecycle --init=$init --step=step \
+               --invariant='not(HealthyControlPlane)' \
+               --max-steps=8 --backend=tlc \
+               formal/specs/Lifecycle.qnt
+done
+```
+
+Expected verdicts: every command prints `[violation] Found an
+issue` (the negated invariant fails because HealthyControlPlane
+IS reachable). The `Summary table` rows in
+`failure-modes.md` give the state-count and timing.
+
+### Apalache hopelessness — recovery disabled
+
+For EXOGENOUS FMs and KCP-BUG (latent) FMs whose recovery is in
+`step` but not in `stepNoRecovery`, Apalache should prove
+`not(HealthyControlPlane)` HOLDS — the healthy state is
+unreachable without the named recovery.
+
+```sh
+# FM-2, FM-3, FM-13, FM-16 — proven hopeless without recovery
+for init in twoMachineBothUnhealthyInit partitionedClusterInit \
+            lbBrokenInit singleNodeLostVoterInit; do
+  quint verify --main=Lifecycle --init=$init --step=stepNoRecovery \
+               --invariant='not(HealthyControlPlane)' \
+               --max-steps=4 --backend=apalache \
+               formal/specs/Lifecycle.qnt
+done
+
+# FM-17, FM-23 (added in the corpus expansion round)
+quint verify --main=Lifecycle --init=kubeadmMisconfigInit \
+             --step=stepNoRecovery \
+             --invariant='not(HealthyControlPlane)' \
+             --max-steps=4 --backend=apalache \
+             formal/specs/Lifecycle.qnt
+
+quint verify --main=Lifecycle --init=drainStuckInit \
+             --step=stepNoRecovery \
+             --invariant='not(HealthyControlPlane)' \
+             --max-steps=4 --backend=apalache \
+             formal/specs/Lifecycle.qnt
+```
+
+Expected verdicts: `[ok] No violation found` (the negated
+invariant holds, so `HealthyControlPlane` is unreachable). The
+`Summary table` rows give Apalache timing (typically 20–80 s per
+FM at max-steps=4).
+
+### Random-walk safety sweep
+
+Useful for catching obvious safety regressions during
+development. Runs in ~150 ms per invariant.
+
+```sh
+for inv in LearnerCannotVote VoterSetNonEmpty \
+           RemediationTargetHasNodeRef AllSafetyInvariants \
+           IncidentNeverInFlight IncidentBlockReasonCorrect; do
+  quint run --main=Lifecycle \
+            --invariant=$inv \
+            --max-steps=30 --max-samples=2000 \
+            formal/specs/Lifecycle.qnt
+done
+```
+
+### Deterministic incident reproducer
+
+Confirms the user-reported incident reproduces the expected
+condition flips.
+
+```sh
+quint run --main=Lifecycle \
+          --invariant=AllSafetyInvariants \
+          --step=incidentRemediationBlockedRun \
+          --max-samples=1 --verbosity=3 \
+          formal/specs/Lifecycle.qnt | \
+  grep -A 30 "blockReason: Map(4 -> "
+```
+
+Expected: every printed state shows
+`blockReason: Map(4 -> EtcdMemberSetDoesNotMatchMachineSet)`,
+`decision[4] = RemediationBlocked`,
+`preflightBlocked = true`.
+
+## CAPD e2e
+
+The FM-2 reproducer is the working example. Running it requires
+Docker, `make docker-build-e2e` to be complete, and ~25 minutes
+wall time end-to-end:
+
+```sh
+make generate-e2e-templates    # ~30 s
+make docker-build-e2e          # ~20 min, builds 5 controller images
+make test-e2e GINKGO_FOCUS="FM-2"  # ~25 min
+```
+
+Expected verdict: `[1mRan 1 of 38 Specs[0m ... PASSED`.
+
+## State-space tractability budget
+
+| Backend | Bound | Typical wall time |
+|---|---|---|
+| TLC `--max-steps=4` from a focused init | < 100K states | < 5 s |
+| TLC `--max-steps=8` from a focused init | < 5 M states | < 30 s |
+| TLC `--max-steps=8` from `init` (full bootstrap) | hundreds of M states | timeout (~10 min before kill) |
+| Apalache `--max-steps=4` from a focused init | n/a (symbolic) | 20–80 s |
+| Apalache `--max-steps=8` | n/a (symbolic) | 5–10 min, frequently OOM |
+
+Rules of thumb:
+- Use TLC for **reachability** (find a counterexample). Random
+  exploration finds counterexamples fast.
+- Use Apalache for **non-reachability** (prove no counterexample
+  exists). Symbolic exploration excels at unreachability proofs
+  on bounded state spaces.
+- Use Quint random walk for **safety regressions** during
+  development. Cheapest by an order of magnitude.
+
+## Build and gate
+
+```sh
+./scripts/verify-formal.sh
+```
+
+The CI gate runs:
+
+1. `quint typecheck` on every `.qnt` in `formal/specs/`.
+2. `quint run` with the `runs` declared in each module.
+3. `lake build` in `formal/proofs/`.
+4. `tlc` against every `.cfg` next to a `.tla`.
+5. Go build / test of `internal/trace` + the `trace-validator`
+   command.
+6. Drift check: every Quint action has a row in
+   `abstraction-mapping.md`.
+
+The gate is non-blocking on tool absence — it reports `SKIP:
+quint not in PATH` rather than silent success.

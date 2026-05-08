@@ -95,3 +95,4 @@ tmp
 
 # Development container configurations (https://containers.dev/)
 .devcontainer
+_apalache-out

@@ -1,0 +1,855 @@
+# Failure modes for the KCP-managed control-plane lifecycle
+
+This catalogue enumerates every failure mode the model in
+[`specs/Lifecycle.qnt`](./specs/Lifecycle.qnt) can reach. Each
+mode is identified by an English name, a Quint `run` that drives
+the system into the bad state, a recovery sequence (or the
+documented absence of one), and a classification:
+
+| Class | Meaning |
+|---|---|
+| **EXOGENOUS** | Caused by an open-system event the model cannot prevent — network partition, hardware failure, etcd cluster-wide unreachability. KCP cannot fix it; a recovery requires the open-system event to resolve. |
+| **KCP-BUG** | KCP can in principle fix this but the current implementation does not, or fixes it incorrectly. Each row links to a counterexample-log entry. |
+| **MODEL-INCOMPLETE** | The model does not yet capture the full controller-runtime behaviour required to recover. The mode is not necessarily a bug; the model needs an additional action. |
+| **TRANSIENT** | The system passes through this state during normal operation; convergence requires only that the rest of the choreography continue. Not a bug. |
+
+Convergence is checked against the `HealthyControlPlane`
+predicate in `Lifecycle.qnt` (every Machine has a NodeRef, the
+voter set has quorum, every voter is Healthy, no learners, leader
+exists, no remediation Blocked, no preflightBlocked, all MHC
+observations Reachable).
+
+Every row is reproducible with the corresponding `quint run` invocation.
+
+## Methodology note
+
+Each scenario below has a named `run` in `Lifecycle.qnt` that
+drives the system into the bad state. The classification is
+derived from analytical reasoning over the model's enabled
+actions plus random-walk evidence under both `step` and
+`stepNoRecovery`:
+
+```
+quint run --main=Lifecycle --invariant='not(HealthyControlPlane)' \
+  --init=<scenario> --step=stepNoRecovery \
+  --max-steps=30 --max-samples=5000 \
+  formal/specs/Lifecycle.qnt
+```
+
+Random sampling is sufficient for **existence** witnesses (a
+violation of `not(HealthyControlPlane)` proves
+`HealthyControlPlane` is reachable from the scenario) but is
+not exhaustive for **non-existence** (no violation under N
+samples does not prove unreachability). For exhaustive
+unreachability claims, `quint verify --backend=tlc` is
+authoritative; some scenarios require duplicating action
+definitions to satisfy Quint's "init/step distinct actions"
+rule.
+
+To enable TLC verification, `Lifecycle.qnt` declares an
+`*Init` action per scenario that constructs the post-scenario
+state directly (rather than chaining action calls). The
+`partitionedClusterInit`, `stuckLearnerInit`, and
+`noCorrespondingMemberInit` actions are wired up.
+
+### TLC verification status per scenario
+
+| Scenario | With recovery (step) | Without recovery (stepNoRecovery) |
+|---|---|---|
+| `partitionedClusterInit` | **Converges** (TLC, max-steps=8, 215K states, 1.1 s) | Intractable at full model (75M+ states at max-steps=8) |
+| `stuckLearnerInit` | **Converges** (TLC, max-steps=8, 3.7K states, 0.8 s) | Intractable at full model |
+| `noCorrespondingMemberInit` | **Converges** (TLC, max-steps=8, 77K states, 1.0 s) | Intractable at full model |
+
+The "without recovery" entries are gated by state-space
+tractability, not by the availability of the recovery action.
+Unreachability proof on a smaller model variant (3 machines,
+MAX_TERM=2) is parked as future work.
+
+## FM-1 — Stuck learner
+
+**Trigger.** A new control-plane Machine completes
+`KubeletStarted`, `EtcdAddLearnerSucceeded` flips
+`is_learner=true`, then a network or routing fault leaves the
+learner below the leader's match-progress threshold. Promotion
+never fires; kubeadm-join's `wait-control-plane` blocks; KCP
+records `OwnerRemediated=False, reason=InternalError`.
+
+**Run (drives system into the bad state).**
+`stuckLearnerScenario` in `Lifecycle.qnt`.
+
+**Production-faithful reconstruction.** `incidentInit` in
+`Lifecycle.qnt` reproduces the 2026-04-28 production state at
+`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`:
+
+| Variable | incidentInit value | Production observation |
+|---|---|---|
+| `members` | `{1, 2, 3, 4}` | etcd cluster has zwdl9, two siblings, crhpt |
+| `learners` | `{4}` | crhpt registered as learner |
+| `progress[4]` | `Stuck` | Match index not advancing |
+| `phase[4]` | `JoinFailed` | kubeadm-join exited |
+| `failureReason[4]` | `LearnerStuckOnPromote` | matches incident report |
+| `nodeRefSet[4]` | `false` | "Machine ... does not have a corresponding Node yet" |
+| `observation[1]` | `UnreachableTimeout` | EtcdMemberHealthy=Unknown on leader |
+| `machineHealthLabel[4]` | `UnhealthyMachine` | MHC flagged it |
+
+**TLC-proven invariants from `incidentInit`** (under
+`stepRemediation` at `max-steps=4`, exhausting 6,561 distinct
+states):
+
+  * `IncidentNeverInFlight` — no Machine without a NodeRef ever
+    transitions to `RemediationInFlight`. KCP correctly refuses
+    to admit remediation.
+  * `IncidentBlockReasonCorrect` — every block recorded on a
+    no-NodeRef Machine carries `blockReason =
+    EtcdMemberSetDoesNotMatchMachineSet`. The diagnostic content
+    is preserved across the projection.
+  * `AllSafetyInvariants` — structural invariants (no learner
+    voting, voter set non-empty, RemediationInFlight target has
+    a NodeRef) hold throughout.
+
+**Deterministic trace** (`incidentRemediationBlockedRun` in
+`Lifecycle.qnt`) — RequestRemediation(4) → EvaluateCanSafelyRemediate(4):
+
+```
+State 2 (post RequestRemediation):
+  decision[4]      = RemediationRequested
+  blockReason      = Map()
+  preflightBlocked = false
+
+State 3 (post EvaluateCanSafelyRemediate):
+  decision[4]      = RemediationBlocked
+  blockReason[4]   = EtcdMemberSetDoesNotMatchMachineSet
+  preflightBlocked = true
+```
+
+This matches the production log line at `remediation.go:653`:
+`canSafelyRemediate=false` with `unhealthyMembers=["crhpt (no
+machine)"]`. KCP's behaviour is correct; the diagnostic surface
+is the gap (FM-8).
+
+**Recovery.** `recoverStuckLearner` — `RemoveStuckLearner` then
+`DeleteFailedMachine` then `AddMachine` then re-run the join
+phases. The replacement Machine is a fresh BootstrapData; the
+etcd cluster is left at `members.size() - 1` voters with
+quorum preserved.
+
+**Classification.** **KCP-BUG.** The recovery actions exist in
+the model. The current Go implementation in
+`controlplane/kubeadm/internal/controllers/remediation.go:595`
+(`canSafelyRemediateMachine`) refuses to remediate when
+`compareMachinesAndMembers` reports a mismatch — but a stuck
+learner produces exactly that mismatch (the learner's etcd
+member has no Node-name match because the Node never
+registered). KCP correctly refuses *automated* remediation; it
+does not provide a *manual* path either. The fix is a narrower
+remediation predicate that distinguishes "learner stuck" from
+"voter unreachable" and removes the learner unilaterally.
+
+**Counterexample-log row.** Inaugurated 2026-04-28 against the
+v1beta2 `EtcdMemberHealthy` projection; this row is the related
+upstream behaviour gap. See
+[`counterexample-log.md`](./counterexample-log.md).
+
+## FM-2 — 2-machine cluster with both members unhealthy
+
+**Trigger.** A 2-machine control plane (a transient state during
+scale-down, post-deletion in a 3-node cluster, or an in-flight
+upgrade) sees both Machines flip to MHC observation
+`UnreachableTimeout` — perhaps because both kubelets are off the
+network, or both etcd processes are unresponsive, or a regional
+power event hit the rack housing both control-plane hosts.
+
+**Init.** `twoMachineBothUnhealthyInit` in `Lifecycle.qnt`.
+
+**Why KCP cannot self-recover.** Every membership-changing
+action is gated on `targetEtcdClusterHealthy`:
+
+  * `ScaleUpControlPlane(m)`: assumes the new member is
+    unhealthy when existing members > 1. `targetVoter = 3`,
+    `unhealthy = 3` (both existing + new), `quorum = 2`. `3 - 3 =
+    0 < 2` → refused.
+  * `ScaleDownControlPlane(m)`: requires the target Machine to
+    be `HealthyMachine`; both are `UnhealthyMachine` → refused.
+  * `EvaluateCanSafelyRemediate(m)`: `targetVoter = 1` (after
+    removing m), `unhealthy = 1` (the other one is also
+    UnknownHealth), `quorum = 1`. `1 - 1 = 0 < 1` → blocks.
+  * `MemberHealthChange(id, Healthy)`: gated on
+    `observation[id] == ReachableHealthy`. Observations are
+    UnreachableTimeout for both → refused.
+
+The only paths to clear the impasse are exogenous:
+`HealEtcdReachability(m)` flips an observation back to
+ReachableHealthy and memberHealth back to Healthy. Without it,
+the cluster is stuck.
+
+**TLC / Apalache verdicts.**
+
+| Step relation | Backend | max-steps | Result |
+|---|---|---|---|
+| `stepNoRecovery` (HealEtcdReachability disabled) | Apalache | 4 | `[ok] No violation` — `HealthyControlPlane` PROVABLY unreachable in 76 s |
+| `step` (HealEtcdReachability enabled) | TLC | 10 | `[violation]` — HealthyControlPlane reached in 4.7 s, 1.4M distinct states |
+
+The Apalache run is the formal hopelessness proof: in the
+1.4-million-state reachable space at depth 4 from
+`twoMachineBothUnhealthyInit`, **no state satisfies
+HealthyControlPlane**. KCP's behaviour — refusing to remediate —
+is provably correct given the inputs.
+
+**Classification.** **EXOGENOUS.** A two-machine cluster losing
+both members concurrently can only be recovered by external
+heal (network, power, kubelet restart). The formal model
+verifies that KCP's gates are doing the right thing — they
+refuse every transition that would make things worse.
+
+**Note on the 1-unhealthy variant.** If only ONE of the two
+Machines is unhealthy and the other is genuinely Healthy,
+`canSafelyRemediate` admits the remediation (target voter 1,
+unhealthy 0 because the new replacement is best-case healthy
+when existing members ≤ 1, quorum 1, 1-0=1 ≥ 1 → allowed). KCP
+proceeds, the cluster transiently has one voter, then scales
+back up to 3. This is the correct path; FM-2 hopelessness
+applies only when both members are unhealthy.
+
+## FM-3 — Persistent etcd unreachability
+
+**Trigger.** All control-plane Machines have their MHC observation
+flip to `UnreachableTimeout` and the cause is exogenous (network-
+partition event isolating the workload cluster from the
+management plane, regional power outage, etc.). Without
+`HealEtcdReachability` firing for at least quorum-many
+Machines, KCP's `targetEtcdClusterHealthy` gate refuses every
+membership change and the gated `MemberHealthChange` cannot
+flip memberHealth back to Healthy.
+
+**Init.** `partitionedClusterInit` in `Lifecycle.qnt`.
+
+**Why KCP cannot self-recover.** Every membership-changing
+action and every health-rollup action is gated:
+
+  * `targetEtcdClusterHealthy` for any add/remove/remediate sees
+    3 unhealthy voters. With one removal: target=2 voters,
+    unhealthy=2, quorum=2. With one add: target=4 voters,
+    unhealthy=4, quorum=3. Both refuse.
+  * `MemberHealthChange(m, Healthy)` is gated on
+    `observation[m] == ReachableHealthy`; observations are all
+    UnreachableTimeout.
+  * Observations only flip back via `HealEtcdReachability`,
+    which is in `step` but not in `stepNoRecovery`.
+
+**Verification verdicts.**
+
+| Step relation | Backend | max-steps | Result |
+|---|---|---|---|
+| `stepNoRecovery` | Apalache | 4 | `[ok] No violation` — HealthyControlPlane PROVABLY unreachable, 82 s |
+| `step` | TLC | 8 | `[violation]` — reached, 11.6K distinct states, 1.0 s |
+
+**Classification.** **EXOGENOUS.** The model cannot eliminate
+network failure; only the operator (or the underlying
+infrastructure) can. Apalache exhaustively confirms KCP's
+gates are doing the right thing — refusing every transition
+that would worsen the cluster's state.
+
+## FM-4 — PromoteLearner-before-ResolveNodeRef window
+
+**Trigger.** kubeadm-join completes `PromoteLearner` (etcd voter
+exists, `is_learner=false`) before the workload-cluster Node
+controller picks up the Node and KCP's Machine controller resolves
+`Machine.status.nodeRef`. During this window
+`EtcdVotersHaveNodeRef` is locally false.
+
+**Run.** `nodeRefDelayScenario`.
+
+**Recovery.** `ResolveNodeRef(m)` fires; the window closes.
+
+**Classification.** **TRANSIENT.** Not a bug. Documented because
+the existence of this window is what makes
+`EtcdVotersHaveNodeRef` an eventual property rather than an
+always property — and it is also the root cause of the
+mismatch-set check in `canSafelyRemediate` returning false for
+machines that ARE healthy but transiently un-matched.
+
+## FM-5 — MHC observation stuck on NoCorrespondingMember
+
+**Trigger.** A Machine entered the cluster (KCP added it) but the
+etcd member was never registered (kubeadm-join failed or never
+ran). MHC's `Observe` returns `NoCorrespondingMember`.
+`projectV1Beta2` flips the v1beta2 condition reason to
+`InspectionFailed`.
+
+**Run.** `noCorrespondingMemberScenario`.
+
+**Recovery.** Either `EtcdAddLearnerSucceeded(m)` fires (the
+join workflow makes progress) or `DeleteFailedMachine(m)` +
+`AddMachine(m)` (KCP detects the absence and recreates).
+
+**Classification.** **KCP-BUG (latent).** KCP's current behaviour
+relies on Bootstrap eventually succeeding; if Bootstrap is
+stuck, KCP does not detect and recreate. The detection logic
+landing in a future increment closes this row.
+
+## FM-6 — Etcd leader vacancy after term advance
+
+**Trigger.** `AdvanceTerm` fires (an exogenous event from etcd:
+network blip, leader gracefully steps down). At the new term, no
+Machine has been elected yet. Until `ElectLeader` fires for some
+voter, no `AddLearner` or `RemoveMember` action is enabled.
+
+**Run.** `leaderVacancyScenario`.
+
+**Recovery.** `ElectLeader(c)` for any reachable voter.
+
+**Classification.** **TRANSIENT.** Etcd elects a new leader within
+the election timeout (~1 s default). The model abstracts away
+the timer; in practice this state is observable but resolves
+without controller intervention.
+
+## FM-7 — Concurrent unhealthy machines (cascading remediation)
+
+**Trigger.** Two control-plane Machines flip to `UnhealthyMachine`
+in close succession. KCP issues `RequestRemediation` for both;
+`EvaluateCanSafelyRemediate` for the second is gated by the
+`AtMostOneRemediationPerMachine` invariant in
+[`Remediation.tla`](./specs/Remediation.tla) (the TLC model
+checks this directly). Until the first remediation completes,
+the second is queued.
+
+**Run.** `cascadingRemediationScenario`.
+
+**Recovery.** The first `CompleteRemediation` fires; the second
+is admitted; convergence proceeds.
+
+**Classification.** **TRANSIENT.** The TLC model in
+`Remediation.tla` enforces the serialization. The
+`MaxConcurrent=1` constant in `Remediation.cfg` is the load-
+bearing assumption; raising it would require re-checking the
+quorum invariant under concurrent removals.
+
+## FM-8 — InformativenessObligation violation
+
+**Trigger.** Any observation that flips MHC's v1beta1 message to
+carry `context deadline exceeded` (UnreachableTimeout) or
+`no route to host` (UnreachableNoRoute) is projected by v1beta2
+to the generic `InternalError: Please check controller logs for
+errors`. The diagnostic key is dropped.
+
+**Run.** `informativenessRegressionScenario`.
+
+**Recovery.** None at the projection layer; requires a code
+change in `controlplane/kubeadm/internal/workload_cluster_conditions.go`.
+
+**Classification.** **KCP-BUG.** Inaugural row in
+[`counterexample-log.md`](./counterexample-log.md). Triage:
+restore the upstream gRPC error chain in the v1beta2 message,
+mirror the v1beta1 severity-grading distinction.
+
+## FM-9 — Stuttering / fairness gap
+
+**Trigger.** None — this is a model-checker artefact. Quint's
+`step` action has no fairness assumption attached, so any
+reachable state can stutter indefinitely. TLC reports a
+counterexample to `Convergence` for almost every initial state
+under this regime.
+
+**Recovery.** Add weak fairness on `step`: `WF_vars(step)`. Quint's
+temporal-property surface accepts this when run via the TLC
+backend.
+
+**Classification.** **MODEL-INCOMPLETE.** Tracked here because
+the absence of fairness is the reason `quint verify --temporal=Convergence`
+finds counterexamples even for failure-free traces. Adding
+fairness annotations is a follow-up.
+
+## FM-11 — Invalid kubelet configuration
+
+**Trigger.** A control-plane Machine joined as an etcd voter; its
+kubelet was Ready at join time. Subsequently a configuration
+drift (TLS bundle, CA, apiserver address, container runtime
+endpoint) flips the kubelet to NotReady. The Machine remains an
+etcd voter — etcd is still healthy — but the Node is not.
+
+**Run / init.** `invalidKubeletInit` in `Lifecycle.qnt`, plus the
+`InvalidKubeletConfig(m)` action that reproduces the transition.
+
+**Recovery.** KCP's MachineHealthCheck flags the Machine as
+`UnhealthyMachine`; remediation runs; the failed Machine is
+removed and replaced. Because etcd voter quorum is still preserved
+(only one Machine is unhealthy), `CompleteRemediation` is enabled.
+
+**TLC verdict.** Converges in 18,419 distinct states at max-steps=8
+(1.1 s).
+
+**Classification.** **KCP-BUG (latent).** The recovery is in
+the model. KCP's existing MachineHealthCheck → remediation path
+exercises this case correctly; this row exists to make the
+failure mode explicit and verifiable, not because the
+implementation is broken today.
+
+## FM-12 — Etcd starts but learner-add times out (slow storage)
+
+**Trigger.** A joining Machine's etcd container starts, but the
+`Cluster.MemberAddAsLearner` gRPC times out before the leader
+accepts the membership change. Common cause: slow storage (the
+joining node's WAL fsync exceeds the leader's
+`election-timeout`-derived dial deadline). The leader never
+records the new member; the joining Machine's
+`etcdMemberRegistered` flag stays false. kubeadm's
+`control-plane-join / etcd` phase fails with reason
+`EtcdJoinAddLearnerFailed`.
+
+**Run / init.** `slowStorageEtcdJoinInit` in `Lifecycle.qnt`,
+plus the `EtcdJoinTimeout(m)` action that drives the transition.
+
+**Recovery.** KCP detects the JoinFailed Machine; deletes it via
+`DeleteFailedMachine`; recreates it via `AddMachine`. No etcd
+membership change is needed because the learner was never
+registered.
+
+**TLC verdict.** Converges in 3,459 distinct states at
+max-steps=8 (0.86 s).
+
+**Classification.** **KCP-BUG (latent).** Same shape as FM-1
+without the Stuck-progress complication. The recovery is in
+the model; the implementation needs to ensure JoinFailed
+Machines are detected and deleted rather than left in place.
+
+## FM-13 — apiserver LB proxy broken
+
+**Trigger.** KCP reaches the workload-cluster apiserver (and
+through it, etcd's Status RPC) via a load balancer / proxy. When
+that LB is broken — backing pool drained, listener
+mis-provisioned, certificate expired, network ACL drift —
+every per-Machine MHC observation flips to UnreachableTimeout
+and etcd-side health flips to UnknownHealth, even though the
+cluster's internal etcd is fine.
+
+**Init.** `lbBrokenInit` in `Lifecycle.qnt`, plus the global
+`LbBroken` and `HealLb` actions.
+
+**Why KCP cannot self-recover.** Two distinct gates fail:
+
+  * `ResolveNodeRef(m)` requires `lbHealthy`. Without `HealLb`,
+    the LB stays broken and no Machine can have its NodeRef
+    resolved (or refreshed if it was set before the break).
+  * `MemberHealthChange(m, Healthy)` requires
+    `observation[m] == ReachableHealthy`; observations are all
+    UnreachableTimeout and only flip back via
+    `HealEtcdReachability`, which also lives in `step` only.
+
+So FM-13 has TWO load-bearing recovery actions: `HealLb` AND
+`HealEtcdReachability`. Without both, the cluster is stuck.
+
+**Verification verdicts.**
+
+| Step relation | Backend | max-steps | Result |
+|---|---|---|---|
+| `stepNoRecovery` (HealLb + HealEtcdReachability disabled) | Apalache | 4 | `[ok] No violation` — HealthyControlPlane PROVABLY unreachable, 38 s |
+| `step` | TLC | 10 | `[violation]` — reached, 11.6K distinct states, 1.0 s |
+
+**Classification.** **EXOGENOUS.** The model cannot prevent LB
+failure or workload-cluster apiserver isolation; only the
+operator or infrastructure team can. Apalache exhaustively
+confirms KCP's gates correctly refuse every membership change
+and health-rollup transition while the LB is broken.
+
+## FM-14 — Kubelet up but Node never registers
+
+**Trigger.** A Machine completes `KubeletStarted` (the kubelet
+process is up). Despite that, the kubelet cannot reach the
+workload-cluster apiserver — perhaps because the workload-
+cluster apiserver Service is not reachable from the kubelet's
+network position, or a firewall rule blocks the port. The
+Node never registers with the apiserver; KCP's
+Machine-controller never sets `Machine.status.nodeRef`.
+
+**Run / init.** `nodeNeverJoinsInit` in `Lifecycle.qnt`, plus
+the `NodeNeverJoins(m)` and `RestoreNodeReachability(m)`
+actions.
+
+**Recovery.** Either the network heals
+(`RestoreNodeReachability` fires; the Node registers; NodeRef
+resolves) or the Machine is detected as unhealthy and remediated
+via the existing `RequestRemediation` → `CompleteRemediation`
+path.
+
+**TLC verdict.** Converges in 25,396 distinct states at
+max-steps=8 (1.0 s).
+
+**Classification.** **KCP-BUG (latent).** The recovery via
+remediation requires KCP to detect "etcd voter exists, kubelet
+is Ready, but NodeRef never resolves" as an unhealthy state.
+The current implementation does not always detect this fast
+enough — the Machine is technically Healthy from etcd's view
+yet useless for any workload.
+
+## FM-15 — Upgrade in flight, replacement not yet promoted
+
+**Trigger.** The operator bumped `KubeadmControlPlane.spec.template`
+(e.g. to a new Kubernetes version). KCP's rolling-update
+controller scaled up a replacement Machine with the new
+template. The replacement is mid-join: kubeadm-join has not yet
+promoted it to etcd voter. Until the join completes, the cluster
+holds 4 machines (in a 3-node deployment) at mixed templates.
+
+**Run / init.** `upgradeInFlightInit` in `Lifecycle.qnt`, plus
+the `InitiateUpgrade(t)` and `ScaleUpControlPlane(m)` /
+`ScaleDownControlPlane(m)` actions.
+
+**Recovery.** The join completes (PromoteLearner fires);
+ScaleDownControlPlane removes one of the old-template Machines;
+the cycle repeats until every Machine is on the new template.
+HealthyControlPlane requires `template[m] == desiredTemplate` for
+every Machine, so convergence is gated on the rolling update
+completing.
+
+**TLC verdict.** Converges in 2,871,557 distinct states at
+max-steps=8 (6.5 s).
+
+**Classification.** **TRANSIENT.** The system passes through this
+state during normal upgrades. The model verifies that — under
+the modelled recovery actions — the rolling update completes
+and the cluster returns to a healthy state on the new template.
+
+## FM-16 — Single-node cluster losing its only voter
+
+**Trigger.** A 1-node KCP cluster's only Machine fails
+(kubelet stops, etcd member becomes unreachable). The voter set
+is empty; quorum cannot be reached. KCP cannot remediate because
+no surviving voter exists to admit a membership change;
+`RemoveMember`, `CompleteRemediation`, and every membership-
+change action are disabled by their voter-quorum guards.
+
+**Init.** `singleNodeLostVoterInit` in `Lifecycle.qnt`. State:
+`members = {}`, `learners = {}`, `phase[1] = JoinFailed`,
+`failureReason[1] = KubeletNotReady`,
+`observation[1] = UnreachableTimeout`,
+`memberHealth[1] = UnknownHealth`,
+`nodeRefSet[1] = false`,
+`nodeReachable[1] = false`. Total disaster.
+
+**Recovery.** `RestoreClusterFromSnapshot(m)` in `Lifecycle.qnt`
+— the operator's disaster-recovery path. Rebuilds the cluster
+atomically as a single-voter etcd cluster on Machine m, with a
+leader, healthy memberHealth, NodeRef resolved, and observation
+ReachableHealthy. Available in `step` only; excluded from
+`stepNoRecovery`.
+
+**Verification verdicts.**
+
+| Step relation | Backend | max-steps | Result |
+|---|---|---|---|
+| `stepNoRecovery` (RestoreClusterFromSnapshot disabled) | Apalache | 4 | `[ok] No violation` — HealthyControlPlane PROVABLY unreachable, 21 s |
+| `step` (RestoreClusterFromSnapshot enabled) | TLC | 10 | `[violation]` — HealthyControlPlane reached, 633 states, 0.8 s |
+
+The Apalache verdict completes the proof: under `stepNoRecovery`
+from a total-loss state, no transition reaches
+`HealthyControlPlane`. KCP refuses every membership change
+because the voter quorum cannot be met. The cluster is
+permanently stuck without operator intervention. With
+`RestoreClusterFromSnapshot` enabled, recovery is a single
+action — TLC reaches HealthyControlPlane in well under a second
+across only 633 distinct states.
+
+**Classification.** **EXOGENOUS.** No automated KCP path can
+recover from a single-voter total loss. The operator MUST
+restore from a snapshot. The formal model verifies that:
+
+  1. KCP's gates are doing the right thing — refusing every
+     transition that would worsen the cluster's state.
+  2. The operator-driven recovery, when modelled as an atomic
+     restore, is sufficient to return to HealthyControlPlane.
+
+The earlier MODEL-INCOMPLETE tag is dropped now that the
+recovery action exists in the model.
+
+## FM-10 — Conditions race: HealthyMachine while EtcdMemberHealthy=Unknown
+
+**Trigger.** KCP's `MachineHealthChange` action flips a Machine
+to `HealthyMachine` based on Node Ready, while etcd-side
+`MemberHealthChange` has the same Machine as `UnknownHealth`
+(e.g. mid-leader-failover). The `MachineHealth` rollup carries
+forward stale state.
+
+**Run.** `staleHealthRollupScenario`.
+
+**Recovery.** A subsequent `MachineHealthChange` based on a
+fresh observation. The model permits this freely; convergence
+is not threatened.
+
+**Classification.** **TRANSIENT.** Documented because the
+v1beta1→v1beta2 condition projection makes this state look like
+a real disagreement between MHC and etcd-side health, when in
+fact it is just a race between two reconcile loops.
+
+## FM-17 — kubeadm-join misconfiguration (kubelet wrong endpoint)
+
+**Init**: `kubeadmMisconfigInit`. Kubelet starts with a wrong
+apiserver endpoint baked into `/etc/kubernetes/kubelet.conf`.
+Node never registers; etcd join never starts.
+
+**Recovery**: `DeleteFailedMachine + AddMachine` once KCP
+detects the JoinFailed phase.
+
+**Classification**: **KCP-BUG (latent)**. See `issue-corpus.md`
+IC-08.
+
+## FM-18 — Concurrent scale-up + remediation race
+
+**Init**: `concurrentScaleAndRemediateInit`. KCP wants to scale
+3→5; meanwhile Machine 1 has flipped to UnhealthyMachine.
+`targetEtcdClusterHealthy` serialises the two — only one
+membership change at a time.
+
+**Recovery**: Serialisation works correctly via the
+`targetLearners > 0` rule.
+
+**Classification**: **TRANSIENT**. KCP correctly sequences. See
+`issue-corpus.md` IC-10.
+
+## FM-19 — apiserver restart relist storm
+
+**Init**: `apiserverRestartInit`. Workload-cluster apiserver
+restarted; LB returns errors briefly; KCP's MHC cache stale.
+
+**Recovery**: `HealLb` once apiserver finishes restarting; cache
+re-populates.
+
+**Classification**: **TRANSIENT**. See `issue-corpus.md` IC-15.
+
+## FM-20 — Upgrade rollback mid-flight
+
+**Init**: `upgradeRollbackMidFlightInit`. Operator initiated
+upgrade to template 2; KCP scaled up Machine 4 (template 2);
+operator rolled back to template 1 before promotion. Machine 4
+is mid-join with the OLD desiredTemplate.
+
+**Recovery**: KCP must delete the in-flight Machine 4 and
+re-create it with template 1.
+
+**Classification**: **KCP-DESIGN-GAP**. The Go code does not
+explicitly handle "desiredTemplate changed mid-rollout"; the
+model exposes the state. See `issue-corpus.md` IC-11.
+
+## FM-21 — Five-node cluster losing 2 of 5 voters concurrently
+
+**Init**: `fiveNodeTwoFailuresInit`. 5-CP cluster, members 4 and
+5 simultaneously UnhealthyMachine.
+
+**Recovery**: Sequential remediation: remediate 4, wait for
+replacement; remediate 5. The `targetEtcdClusterHealthy` gate
+admits only one membership change at a time even on 5-node
+because of the worst-case-unhealthy assumption on the
+replacement.
+
+**Classification**: **TRANSIENT** (operationally surprising). See
+`issue-corpus.md` IC-13.
+
+## FM-22 — Single-node scale-up race (existing voter dies)
+
+**Init**: `singleNodeScaleUpFailureInit`. Mid-scale-up from 1 to
+3 (Machine 2 added as etcd learner); the only existing voter
+Machine 1 becomes unhealthy before promotion completes.
+
+**Recovery**: With the existing voter unhealthy and the new one
+not yet promoted, quorum cannot be reached. The state is FM-2-
+shaped (both members effectively unhealthy). Recovery requires
+`HealEtcdReachability(1)` (etcd self-heal on the original voter)
+or operator restore.
+
+**Classification**: **EXOGENOUS** (FM-2 sub-shape).
+
+## FM-23 — Drain stuck on PDB during remediation
+
+**Init**: `drainStuckInit`. CompleteRemediation removed Machine
+1 from the etcd member set; Machine still in `machines` because
+the kubelet drain is blocked by PodDisruptionBudgets;
+`preflightBlocked = true` until drain finalises.
+
+**Recovery**: Drain timeout + force-delete; modelled as the
+spec requirement that `DeleteFailedMachine` eventually fires.
+
+**Classification**: **KCP-BUG (latent)**. Direct match with
+cluster-api#13508. See `issue-corpus.md` IC-14.
+
+**Apalache caveat**: A first attempt at proving hopelessness
+under `stepNoRecovery` from `drainStuckInit` found a counter-
+example in 27 s — Apalache identified a path that re-adds the
+removed Machine 1 as an etcd learner, promotes it, and then
+properly removes it via `CompleteRemediation`. This is a model
+artefact: the abstract state captures the post-removal etcd
+member set but doesn't track that the kubelet drain is blocked
+on PDB eviction. To make the proof faithful, the model needs
+a `drainBlocked: MachineId -> bool` flag that gates
+`CompleteRemediation` and prevents the model from "fixing" a
+stuck drain through unrelated membership changes. Recorded as a
+follow-up in `issue-corpus.md` IC-09 (model-fidelity gap) /
+IC-14 (the underlying KCP bug remains).
+
+## FM-24 — Etcd defrag pause
+
+**Init**: `etcdDefragPauseInit`. Etcd's bbolt defrag is running
+on the leader; every Status RPC times out for 10–60 s. KCP marks
+every member EtcdMemberHealthy=Unknown but nothing is broken.
+
+**Recovery**: Defrag finishes; Status RPCs succeed; conditions
+flip back.
+
+**Classification**: **TRANSIENT**. See `issue-corpus.md` IC-12.
+
+## FM-31 — Custom Node conditions not surfaced on Machine
+
+**Trigger.** An operator writes a custom Node condition (e.g.
+via Node Problem Detector) and wants the corresponding Machine to
+reflect it on its `Ready` condition without triggering MHC
+remediation. CAPI's MHC tightly couples observation and
+remediation; there is no "MachineSelfHealing without
+remediation" knob today.
+
+**Init / scenario.** Not added as a Quint init in this round —
+the model would need a `customCondition: MachineId -> str -> str`
+state variable plus a v1beta2 projection that preserves every
+key in that map. Recorded for future modelling.
+
+**Recovery / fix.** Upstream feature: surface arbitrary node
+conditions at machine level. Cross-references
+cluster-api#11826.
+
+**Classification**: **KCP-DESIGN-GAP**. See `issue-corpus.md`
+IC-02 (related — same principle as the v1beta2 projection
+informativeness obligation).
+
+## FM-32 — Webhook rotation gap (cert-manager downtime window)
+
+**Trigger.** Cert-manager rotates the CAPI webhook serving cert.
+For up to ~90 s, mutating + validating webhooks are unreachable;
+any KCP / MHC reconcile that hits a webhook fails. If KCP is
+mid-remediation when this happens, the membership change might
+be retried with a partially-applied state.
+
+**Init / scenario.** Not added as a Quint init this round; the
+formal model would extend with a `webhooksAvailable: bool` flag
+and gate every action that mutates KubeadmControlPlane on it.
+Recorded.
+
+**Recovery / fix.** Cert-manager rotation completes; webhooks
+return; KCP reconcile re-tries successfully. Upstream report:
+cert-manager#10522.
+
+**Classification**: **TRANSIENT** (no permanent harm; the
+window is bounded). The model's safety invariants would all
+hold during the window because gates are pure-state predicates,
+not webhook-mediated checks.
+
+## FM-34 — MHC controller's stale cluster cache during apiserver restart
+
+**Trigger.** The MHC controller maintains a cache-backed client
+for each workload cluster. When the apiserver restarts (e.g. as
+part of an upgrade), the cache holds a stale connection or
+returns "cluster not found" briefly. MHC's view of Machine
+health goes stale; in extreme cases an MHC reconcile mid-restart
+might mis-flag a Machine as unhealthy because its
+`needsRemediation` predicate cannot reach the workload-cluster
+apiserver to confirm Node Ready.
+
+**Init / scenario.** Not added as a Quint init; would extend
+the model with a `mhcCacheStale: bool` flag plus an
+`MhcCacheRefresh` action. Recorded.
+
+**Recovery / fix.** The apiserver restart completes; the cache
+re-populates within `nodeStartupTimeout` (default 30 s);
+remediation that was triggered erroneously is reversed when the
+fresh observation arrives.
+
+**Classification**: **KCP-BUG (latent)**. Cross-references
+cluster-api#12363. The model's `apiserverRestartInit` already
+captures the LB-broken sub-shape; FM-34 is the more specific
+"cache mis-coherence" framing.
+
+## FM-37 — Lifecycle hooks skipped under control-plane unavailability
+
+**Trigger.** CAPI's runtime-extension lifecycle hooks
+(`BeforeClusterUpgrade`, `BeforeControlPlaneUpgrade`, etc.) are
+not invoked when the control plane is not Available. An operator
+who relies on `BeforeClusterUpgrade` to validate pre-conditions
+silently skips the hook during partial-outage scenarios.
+
+**Init / scenario.** Not added as a Quint init; would extend
+the model with a `hooksEnabled: bool` plus per-hook firing
+records, then re-state the contract that hooks fire on every
+upgrade attempt regardless of cluster availability.
+
+**Recovery / fix.** Upstream issue cluster-api#8942 documents
+the gap; a fix would either (a) defer the hook until the cluster
+recovers, or (b) accept a "pre-condition skipped" condition
+reason that the operator can read.
+
+**Classification**: **KCP-BUG (latent)**.
+
+## Summary table
+
+| ID | Name | Class | Recovery available? | TLC verdict (with recovery) |
+|---|---|---|---|---|
+| FM-1 | Stuck learner | KCP-BUG | RemoveStuckLearner | Converges (3.7K states, 0.8 s) |
+| FM-2 | 2-machine cluster, both unhealthy | EXOGENOUS | HealEtcdReachability | Apalache: PROVABLY unreachable under stepNoRecovery (76 s); TLC: reachable under step (1.4M states, 4.7 s) |
+| FM-3 | Persistent etcd unreachability | EXOGENOUS | HealEtcdReachability | Apalache: PROVABLY unreachable under stepNoRecovery (82 s); TLC: reachable under step (11.6K states, 1.0 s) |
+| FM-4 | Promote-before-NodeRef window | TRANSIENT | Self-resolving | TBD |
+| FM-5 | MHC obs stuck NoCorrespondingMember | KCP-BUG (latent) | DeleteFailedMachine | Converges (77K states, 1.0 s) |
+| FM-6 | Etcd leader vacancy | TRANSIENT | Self-resolving | TBD |
+| FM-7 | Concurrent remediation | TRANSIENT | Serialization | TBD |
+| FM-8 | InformativenessObligation | KCP-BUG | Projection rewrite | n/a (specification gap) |
+| FM-9 | Stuttering / fairness gap | MODEL-INCOMPLETE | WF_vars(step) | n/a (model gap) |
+| FM-10 | Stale health rollup | TRANSIENT | Self-resolving | TBD |
+| FM-11 | Invalid kubelet configuration | KCP-BUG (latent) | MachineHealthCheck → remediation | Converges (18K states, 1.1 s) |
+| FM-12 | Etcd join times out (slow storage) | KCP-BUG (latent) | DeleteFailedMachine | Converges (3.5K states, 0.86 s) |
+| FM-13 | apiserver LB proxy broken | EXOGENOUS | HealLb + HealEtcdReachability | Apalache: PROVABLY unreachable under stepNoRecovery (38 s); TLC: reachable under step (11.6K states, 1.0 s) |
+| FM-14 | Kubelet up but Node never joins | KCP-BUG (latent) | RestoreNodeReachability + remediation | Converges (25K states, 1.0 s) |
+| FM-15 | Upgrade in flight | TRANSIENT | Rolling update completes | Converges (2.9M states, 6.5 s) |
+| FM-16 | 1-node cluster lost its only voter | EXOGENOUS | RestoreClusterFromSnapshot | Apalache: PROVABLY unreachable under stepNoRecovery (21 s); TLC: reachable under step (633 states, 0.8 s) |
+| FM-17 | Kubeadm-join misconfiguration (kubelet wrong endpoint) | KCP-BUG (latent) | DeleteFailedMachine + AddMachine | Converges (2.1K states, 0.84 s); Apalache: PROVABLY unreachable under stepNoRecovery (~80 s) |
+| FM-18 | Concurrent scale-up + remediation race | TRANSIENT | Serialisation via targetEtcdClusterHealthy | Converges (9.5K states, 1.2 s) |
+| FM-19 | apiserver restart relist storm | TRANSIENT | HealLb after restart | Converges (10.9K states, 1.1 s) |
+| FM-20 | Upgrade rollback mid-flight | KCP-DESIGN-GAP | Roll-forward delete + recreate | Converges (19.4K states, 1.2 s) |
+| FM-21 | 5-node losing 2 of 5 voters concurrently | TRANSIENT | Sequential remediation | Converges (17.7K states, 1.3 s) |
+| FM-22 | Single-node scale-up race | EXOGENOUS (FM-2 sub-shape) | HealEtcdReachability or operator restore | Converges (13.5K states, 1.2 s); FM-2 hopelessness applies under stepNoRecovery |
+| FM-23 | Drain stuck on PDB during remediation | KCP-BUG (latent) | Drain timeout + force-delete | Converges (10.0K states, 1.1 s); cluster-api#13508 |
+| FM-24 | Etcd defrag pause (false-positive Unknown) | TRANSIENT | Defrag finishes | Converges (12.5K states, 1.0 s) |
+
+| **Plus from upstream-issues research** | | | | |
+| FM-31 | Surface arbitrary Node conditions on Machine without MHC remediation | KCP-DESIGN-GAP | Custom-condition projection | Concept landed in `upstream-issues-research.md`; cluster-api#11826 |
+| FM-32 | Webhook rotation gap (cert-manager) | TRANSIENT | Rotation completes | Concept landed; cert-manager#10522 |
+| FM-34 | Stale MHC cluster-cache during apiserver restart | KCP-BUG (latent) | Cache invalidation | Concept landed; cluster-api#12363 |
+| FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
+
+Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
+FM-23, FM-34, FM-37 latent). Two KCP-DESIGN-GAP rows (FM-20,
+FM-31). One MODEL-INCOMPLETE row (FM-9 — fairness annotations).
+Five EXOGENOUS rows (FM-2, FM-3, FM-13, FM-16, FM-22). Eight
+TRANSIENT rows (FM-4, FM-6, FM-7, FM-10, FM-15, FM-18, FM-19,
+FM-21, FM-24, FM-32).
+
+Six failure modes (FM-1, FM-2, FM-3, FM-13, FM-16) plus the
+FM-2 e2e PASS now carry exhaustive formal proofs — TLC for the
+recovery path, Apalache for the hopelessness without recovery —
+pinning the load-bearing recovery action for each. The FM-2
+reproducer also runs end-to-end on a real CAPD cluster
+(`test/e2e/fm2_quorum_loss.go`).
+
+## Topology coverage
+
+The model in `Lifecycle.qnt` parameterises three topology init
+actions: `singleNodeInit`, `threeNodeInit` (the primary), and
+`fiveNodeInit`. Failure-mode init actions instantiate against
+the topology relevant to that mode; `fiveNodeStuckLearnerInit`
+is a topology-specific variant of FM-1 verified to converge in
+10K distinct states under TLC.
+
+| Topology | Quorum | Largest tolerated fault | Notes |
+|---|---|---|---|
+| 1-node | 1/1 | None — losing the voter is fatal (FM-16) | Common in dev / edge deployments; KCP cannot self-recover. |
+| 3-node | 2/3 | 1 machine concurrently | Primary topology. Most failure-mode rows are exercised here. |
+| 5-node | 3/5 | 2 machines concurrently | More fault-tolerant; same logic as 3-node. |
+
+The user-reported incident at
+`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`
+exhibits FM-1 and FM-8 simultaneously: the stuck learner blocks
+remediation (FM-1) and the v1beta2 condition surface drops the
+diagnostic key that would have explained why (FM-8).

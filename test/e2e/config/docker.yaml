@@ -276,6 +276,10 @@ intervals:
   kcp-remediation/wait-machines: ["5m", "10s"]
   kcp-remediation/check-machines-stable: ["30s", "5s"]
   kcp-remediation/wait-machine-provisioned: ["5m", "10s"]
+  fm2-quorum-loss/wait-cluster: ["10m", "10s"]
+  fm2-quorum-loss/wait-control-plane: ["10m", "10s"]
+  fm2-quorum-loss/wait-worker-nodes: ["5m", "10s"]
+  fm2-quorum-loss/fm2-observe-blocked: ["3m", "15s"]
   #  Giving a bit more time during scale tests, we analyze independently if everything works quickly enough.
   scale/wait-cluster: ["10m", "10s"]
   scale/wait-control-plane: ["20m", "10s"]

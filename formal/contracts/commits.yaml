@@ -1,0 +1,36 @@
+# Pinned upstream commits referenced by the contracts in this
+# directory. The relink.py helper reads this file to re-anchor
+# every link in contracts/*.md when a pin moves.
+#
+# Update procedure:
+#   1. Bump the SHA below.
+#   2. Run `python3 relink.py --check` and inspect any line-range
+#      drift warnings.
+#   3. Run `python3 relink.py --apply` to rewrite the links.
+#   4. Re-read every "Cited at" line in the affected contract and
+#      confirm the cited prose still describes the documented
+#      behaviour.
+#
+# Date format: ISO-8601. Each entry's `notes` field captures the
+# reason for the most recent bump.
+
+repos:
+  kubernetes:
+    url: "https://github.com/kubernetes/kubernetes"
+    sha: "a3895062546711ae2666848a7930ae3b4ffae220"
+    captured: "2026-05-07"
+    notes: "Tip of master at the time the formal/ subtree was scaffolded."
+
+  etcd:
+    url: "https://github.com/etcd-io/etcd"
+    sha: "0cbc031e7f224102bd1ec42a81f659a2b8c3350c"
+    captured: "2026-05-07"
+    notes: "Tip of main at the time the formal/ subtree was scaffolded."
+
+  cluster-api:
+    url: "https://github.com/kubernetes-sigs/cluster-api"
+    # In-tree references use the local working tree, not a SHA.
+    # The kcp-machine-contract treats this entry as `HEAD`.
+    sha: "HEAD"
+    captured: "2026-05-07"
+    notes: "Self-reference; the kcp-machine-contract anchors against the local working tree."
