@@ -210,6 +210,44 @@ module Lifecycle {
   // and etcd's own auto-compaction loop.
   var etcdCompactionInProgress: bool
 
+  // -- containerd ↔ CRI lifecycle of static pods ----------------
+  // The kubelet brings up control-plane static pods (apiserver,
+  // controller-manager, scheduler, local etcd if stacked) via the
+  // CRI gRPC connection to containerd at /run/containerd/containerd.sock.
+  // Each container goes through three CRI lifecycle stages:
+  //   1. Image pull (RuntimeService.PullImage) — refines
+  //      `pkg/kubelet/kuberuntime/kuberuntime_image.go:33`
+  //      (kubeGenericRuntimeManager.PullImage).
+  //   2. Pod sandbox create (RuntimeService.RunPodSandbox) — refines
+  //      `pkg/kubelet/kuberuntime/kuberuntime_sandbox.go:38`
+  //      (kubeGenericRuntimeManager.createPodSandbox).
+  //   3. Container create + start (RuntimeService.CreateContainer +
+  //      StartContainer) — refines
+  //      `pkg/kubelet/kuberuntime/kuberuntime_container.go:199`
+  //      (kubeGenericRuntimeManager.startContainer).
+  //
+  // The model captures one boolean per stage per Machine. Failure
+  // at any stage requires manual operator intervention (image
+  // registry fix, containerd restart, fix to underlying disk/cgroups).
+
+  // True iff the CRI runtime (containerd) is up and the CRI socket
+  // /run/containerd/containerd.sock is responding to RuntimeStatus
+  // RPCs. Refines kubelet's `RuntimeService.Status` probe.
+  var criRuntimeReady: MachineId -> bool
+  // True iff kubelet has pulled all static-pod images on this
+  // Machine via CRI's PullImage. Refines
+  // `pkg/kubelet/kuberuntime/kuberuntime_image.go:33`.
+  var criImagesPulled: MachineId -> bool
+  // True iff kubelet has called CRI's RunPodSandbox for the
+  // control-plane pod sandbox on this Machine. Refines
+  // `pkg/kubelet/kuberuntime/kuberuntime_sandbox.go:38`.
+  var criPodSandboxRunning: MachineId -> bool
+  // True iff kubelet has called CRI's CreateContainer +
+  // StartContainer for every static-pod container (apiserver,
+  // controller-manager, scheduler, local etcd) on this Machine.
+  // Refines `pkg/kubelet/kuberuntime/kuberuntime_container.go:199`.
+  var criContainersRunning: MachineId -> bool
+
   // ===============================================================
   // Initial state
   // ===============================================================
@@ -271,6 +309,10 @@ module Lifecycle {
     // Network
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -313,6 +355,10 @@ module Lifecycle {
     observation' = Map(1 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true),
+    criRuntimeReady'  = Map(1 -> true),
+    criImagesPulled'  = Map(1 -> true),
+    criPodSandboxRunning'  = Map(1 -> true),
+    criContainersRunning'  = Map(1 -> true),
     drainBlocked'  = Map(1 -> false),
     pdbViolatedFor'  = Map(1 -> false),
     apiserverEtcdReachable'  = Map(1 -> true),
@@ -360,6 +406,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
@@ -490,6 +540,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action AdvanceTerm: bool = all {
@@ -519,6 +573,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action AddLearner(id: MachineId): bool = all {
@@ -551,6 +609,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action ObserveLearnerProgress(id: MachineId, p: LearnerProgress): bool = all {
@@ -586,6 +648,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action PromoteLearner(id: MachineId): bool = all {
@@ -619,6 +685,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action RemoveMember(id: MachineId): bool = all {
@@ -653,6 +723,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // LeaderStepDown — the current leader steps down because its
@@ -697,6 +771,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // TransferLeadership — KCP's pre-scale-down optimisation. Refines
@@ -746,6 +824,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // MemberHealthChange — KCP refreshes its memberHealth view by
@@ -802,6 +884,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // Fault action — exogenous.
@@ -834,6 +920,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -868,6 +958,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action PreflightPass(m: MachineId): bool = all {
@@ -898,6 +992,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // DownloadCertsSucceeded — control-plane-prepare phase succeeded.
@@ -933,6 +1031,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EnterEtcdHealthCheck — kubeadm-join enters check-etcd phase.
@@ -965,6 +1067,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // CheckEtcdHealth — check-etcd phase succeeded; existing etcd
@@ -998,6 +1104,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // KubeletStarted — kubelet-start/start: kubeadm has written kubelet
@@ -1035,6 +1145,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // KubeletTLSBootstrap — kubelet-start/wait-bootstrap: kubelet has
@@ -1073,6 +1187,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // RegisterLocalNode — kubelet performs local Node registration
@@ -1113,6 +1231,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EnterEtcdAddLearner — kubeadm enters the etcd-add-learner phase
@@ -1148,6 +1270,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EtcdAddLearnerSucceeded reaches into EtcdMembership to actually
@@ -1188,6 +1314,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EtcdQuorumReady fires after PromoteLearner — kubeadm-join
@@ -1225,6 +1355,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // MarkAsControlPlane — control-plane-join/mark-control-plane:
@@ -1260,6 +1394,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // UploadKubeadmConfig — control-plane-join/uploadconfig: kubeadm
@@ -1294,6 +1432,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action MarkReady(m: MachineId): bool = all {
@@ -1324,6 +1466,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action JoinFailedAt(m: MachineId, r: JoinFailureReason): bool = all {
@@ -1356,6 +1502,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -1399,6 +1549,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action ResolveNodeRef(m: MachineId): bool = all {
@@ -1440,6 +1594,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action MachineHealthChange(m: MachineId, h: MachineHealth): bool = all {
@@ -1468,6 +1626,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action RequestRemediation(m: MachineId): bool = all {
@@ -1500,6 +1662,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EvaluateCanSafelyRemediate mirrors KCP's
@@ -1558,6 +1724,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // CompleteRemediation is the success path: the failed machine is
@@ -1606,6 +1776,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -1666,6 +1840,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   action LoseEtcdMember(m: MachineId): bool = all {
@@ -1696,6 +1874,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -1731,6 +1913,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ScaleUpControlPlane: KCP creates a Machine because actual
@@ -1778,6 +1964,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ScaleDownControlPlane: KCP gracefully removes a healthy Machine
@@ -1821,6 +2011,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // InitiateUpgrade: the operator updates KCP's spec.template
@@ -1853,6 +2047,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -1889,6 +2087,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EtcdJoinTimeout — the etcd Add Learner gRPC call timed out
@@ -1923,6 +2125,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // LbBroken — the apiserver LB proxy fails. KCP reaches the
@@ -1958,6 +2164,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // NodeNeverJoins — the kubelet started, but the Node never
@@ -1992,6 +2202,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -2033,6 +2247,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // RestoreClusterFromSnapshot — the operator's disaster-recovery
@@ -2095,6 +2313,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // RestoreNodeReachability — the workload-cluster apiserver
@@ -2125,6 +2347,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
 
@@ -2164,6 +2390,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // DeleteFailedMachine: KCP detects a JoinFailed Machine and
@@ -2199,6 +2429,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // HealEtcdReachability: an UnreachableTimeout / UnreachableNoRoute
@@ -2235,6 +2469,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ============================================================
@@ -2280,6 +2518,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // DrainTimeout — `nodeDrainTimeout` elapses, KCP force-deletes
@@ -2318,6 +2560,10 @@ module Lifecycle {
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ============================================================
@@ -2359,6 +2605,10 @@ module Lifecycle {
     pdbViolatedFor' = pdbViolatedFor,
     apiserverReady' = apiserverReady,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ApiserverEtcdDisconnect — fault: apiserver's etcd connection
@@ -2397,6 +2647,10 @@ module Lifecycle {
     drainBlocked' = drainBlocked,
     pdbViolatedFor' = pdbViolatedFor,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ApiserverReadinessOk — kube-apiserver's readiness probe passes.
@@ -2431,6 +2685,10 @@ module Lifecycle {
     pdbViolatedFor' = pdbViolatedFor,
     apiserverEtcdReachable' = apiserverEtcdReachable,
     etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // EtcdCompactionStart — etcd auto-compaction begins. Holds the
@@ -2464,6 +2722,255 @@ module Lifecycle {
     pdbViolatedFor' = pdbViolatedFor,
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+  }
+
+  // ============================================================
+  // containerd ↔ CRI lifecycle actions
+  // ============================================================
+
+  // ContainerdReady — kubelet's CRI gRPC client confirms containerd
+  // is reachable and the RuntimeStatus RPC returns OK. Refines
+  // kubelet's runtime probe at
+  // `pkg/kubelet/kuberuntime/kuberuntime_manager.go::Status`.
+  action ContainerdReady(m: MachineId): bool = all {
+    machines.contains(m),
+    criRuntimeReady.keys().contains(m),
+    not(criRuntimeReady.get(m)),
+    criRuntimeReady' = criRuntimeReady.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+  }
+
+  // ContainerdCrash — fault: containerd process exits or its CRI
+  // socket becomes unresponsive. All CRI lifecycle stages on this
+  // Machine reset; the apiserver static pod becomes unreachable
+  // because its container process is gone.
+  action ContainerdCrash(m: MachineId): bool = all {
+    machines.contains(m),
+    criRuntimeReady.keys().contains(m),
+    criRuntimeReady.get(m),
+    criRuntimeReady' = criRuntimeReady.put(m, false),
+    criImagesPulled' = criImagesPulled.put(m, false),
+    criPodSandboxRunning' = criPodSandboxRunning.put(m, false),
+    criContainersRunning' = criContainersRunning.put(m, false),
+    apiserverEtcdReachable' = apiserverEtcdReachable.put(m, false),
+    apiserverReady' = apiserverReady.put(m, false),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // PullStaticPodImages — kubelet calls CRI's PullImage for the
+  // apiserver, controller-manager, scheduler, and (if stacked)
+  // local-etcd images. Refines
+  // `pkg/kubelet/kuberuntime/kuberuntime_image.go:33::PullImage`
+  // (kubeGenericRuntimeManager.PullImage).
+  action PullStaticPodImages(m: MachineId): bool = all {
+    machines.contains(m),
+    criRuntimeReady.keys().contains(m),
+    criRuntimeReady.get(m),
+    criImagesPulled.keys().contains(m),
+    not(criImagesPulled.get(m)),
+    criImagesPulled' = criImagesPulled.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+  }
+
+  // ImagePullFailed — fault: containerd cannot pull a static-pod
+  // image (registry unreachable, image bad sha, auth failure).
+  // Surfaces as `runtime.ErrImagePull` in
+  // `pkg/kubelet/kuberuntime/kuberuntime_image.go`.
+  action ImagePullFailed(m: MachineId): bool = all {
+    machines.contains(m),
+    criRuntimeReady.keys().contains(m),
+    criRuntimeReady.get(m),
+    criImagesPulled.keys().contains(m),
+    not(criImagesPulled.get(m)),
+    // Pull failed; criImagesPulled stays false; all downstream
+    // CRI stages cannot progress. The model leaves the failure
+    // observable as criImagesPulled=false until ContainerdReady
+    // re-fires (e.g. operator fixes the registry).
+    apiserverReady' = apiserverReady.put(m, false),
+    apiserverEtcdReachable' = apiserverEtcdReachable.put(m, false),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+  }
+
+  // CreatePodSandbox — kubelet calls CRI's RunPodSandbox to create
+  // a pod sandbox (network namespace + cgroup) for the static
+  // pods. Refines
+  // `pkg/kubelet/kuberuntime/kuberuntime_sandbox.go:38::createPodSandbox`.
+  action CreatePodSandbox(m: MachineId): bool = all {
+    machines.contains(m),
+    criImagesPulled.keys().contains(m),
+    criImagesPulled.get(m),
+    criPodSandboxRunning.keys().contains(m),
+    not(criPodSandboxRunning.get(m)),
+    criPodSandboxRunning' = criPodSandboxRunning.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criContainersRunning' = criContainersRunning,
+  }
+
+  // StartStaticPodContainers — kubelet calls CRI's CreateContainer
+  // + StartContainer for every static-pod container (apiserver,
+  // controller-manager, scheduler, local-etcd). Refines
+  // `pkg/kubelet/kuberuntime/kuberuntime_container.go:199::startContainer`.
+  action StartStaticPodContainers(m: MachineId): bool = all {
+    machines.contains(m),
+    criPodSandboxRunning.keys().contains(m),
+    criPodSandboxRunning.get(m),
+    criContainersRunning.keys().contains(m),
+    not(criContainersRunning.get(m)),
+    criContainersRunning' = criContainersRunning.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
   }
 
   // EtcdCompactionDone — auto-compaction completes; latency
@@ -2494,6 +3001,10 @@ module Lifecycle {
     pdbViolatedFor' = pdbViolatedFor,
     apiserverEtcdReachable' = apiserverEtcdReachable,
     apiserverReady' = apiserverReady,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
   }
 
   // ===============================================================
@@ -2574,6 +3085,13 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); ApiserverReadinessOk(m),
     EtcdCompactionStart,
     EtcdCompactionDone,
+    // containerd ↔ CRI lifecycle
+    nondet m = MACHINES.oneOf(); ContainerdReady(m),
+    nondet m = MACHINES.oneOf(); ContainerdCrash(m),
+    nondet m = MACHINES.oneOf(); PullStaticPodImages(m),
+    nondet m = MACHINES.oneOf(); ImagePullFailed(m),
+    nondet m = MACHINES.oneOf(); CreatePodSandbox(m),
+    nondet m = MACHINES.oneOf(); StartStaticPodContainers(m),
     // Recovery
     nondet m = MACHINES.oneOf(); RemoveStuckLearner(m),
     nondet m = MACHINES.oneOf(); DeleteFailedMachine(m),
@@ -2653,9 +3171,13 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); BeginDrain(m),
     nondet m = MACHINES.oneOf(); ApiserverEtcdDisconnect(m),
     EtcdCompactionStart,
+    nondet m = MACHINES.oneOf(); ContainerdCrash(m),
+    nondet m = MACHINES.oneOf(); ImagePullFailed(m),
     // No DrainTimeout, ApiserverEtcdConnect, ApiserverReadinessOk,
-    // EtcdCompactionDone, RemoveStuckLearner, DeleteFailedMachine,
-    // HealEtcdReachability, HealLb, or RestoreNodeReachability.
+    // EtcdCompactionDone, ContainerdReady, PullStaticPodImages,
+    // CreatePodSandbox, StartStaticPodContainers, RemoveStuckLearner,
+    // DeleteFailedMachine, HealEtcdReachability, HealLb, or
+    // RestoreNodeReachability.
   }
 
   // stepRemediation — minimal step relation that includes only
@@ -2918,6 +3440,10 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'   = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'   = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'   = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'   = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'   = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'   = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'   = Set(1, 2, 3).mapBy(_ => true),
@@ -2968,6 +3494,10 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'   = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'   = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3010,6 +3540,10 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'   = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'   = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'   = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3089,6 +3623,10 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    criRuntimeReady'  = Map(1 -> true, 2 -> true),
+    criImagesPulled'  = Map(1 -> true, 2 -> true),
+    criPodSandboxRunning'  = Map(1 -> true, 2 -> true),
+    criContainersRunning'  = Map(1 -> true, 2 -> true),
     drainBlocked'  = Map(1 -> false, 2 -> false),
     pdbViolatedFor'  = Map(1 -> false, 2 -> false),
     apiserverEtcdReachable'  = Map(1 -> true, 2 -> true),
@@ -3177,6 +3715,10 @@ module Lifecycle {
                        4 -> NoCorrespondingMember),
     lbHealthy'      = true,    // the LB itself is fine
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -3313,6 +3855,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3356,6 +3902,10 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3396,6 +3946,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -3437,6 +3991,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -3481,6 +4039,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3524,6 +4086,10 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false),
+    criRuntimeReady'  = Map(1 -> false),
+    criImagesPulled'  = Map(1 -> false),
+    criPodSandboxRunning'  = Map(1 -> false),
+    criContainersRunning'  = Map(1 -> false),
     drainBlocked'  = Map(1 -> false),
     pdbViolatedFor'  = Map(1 -> false),
     apiserverEtcdReachable'  = Map(1 -> false),
@@ -3565,6 +4131,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
@@ -3621,6 +4191,10 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -3662,6 +4236,10 @@ module Lifecycle {
     observation' = Map(1 -> ReachableUnhealthy, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -3705,6 +4283,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -3750,6 +4332,10 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
@@ -3794,6 +4380,10 @@ module Lifecycle {
                        4 -> UnreachableTimeout, 5 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
@@ -3834,6 +4424,10 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    criRuntimeReady'  = Map(1 -> true, 2 -> true),
+    criImagesPulled'  = Map(1 -> true, 2 -> true),
+    criPodSandboxRunning'  = Map(1 -> true, 2 -> true),
+    criContainersRunning'  = Map(1 -> true, 2 -> true),
     drainBlocked'  = Map(1 -> false, 2 -> false),
     pdbViolatedFor'  = Map(1 -> false, 2 -> false),
     apiserverEtcdReachable'  = Map(1 -> true, 2 -> true),
@@ -3878,6 +4472,10 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false, 2 -> true, 3 -> true),
+    criRuntimeReady'  = Map(1 -> false, 2 -> true, 3 -> true),
+    criImagesPulled'  = Map(1 -> false, 2 -> true, 3 -> true),
+    criPodSandboxRunning'  = Map(1 -> false, 2 -> true, 3 -> true),
+    criContainersRunning'  = Map(1 -> false, 2 -> true, 3 -> true),
     drainBlocked'   = Map(1 -> true, 2 -> false, 3 -> false),
     pdbViolatedFor' = Map(1 -> true, 2 -> false, 3 -> false),
     apiserverEtcdReachable' = Map(1 -> false, 2 -> true, 3 -> true),
@@ -3920,6 +4518,10 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -3976,6 +4578,10 @@ module Lifecycle {
                       .put(1, UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    criRuntimeReady'  = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled'  = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning'  = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning'  = Set(1, 2, 3).mapBy(_ => true),
     drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
     pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
     apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
@@ -4022,7 +4628,11 @@ module Lifecycle {
                 drainBlocked' = drainBlocked, pdbViolatedFor' = pdbViolatedFor,
                 apiserverEtcdReachable' = apiserverEtcdReachable,
                 apiserverReady' = apiserverReady,
-                etcdCompactionInProgress' = etcdCompactionInProgress })
+                etcdCompactionInProgress' = etcdCompactionInProgress,
+                criRuntimeReady' = criRuntimeReady,
+                criImagesPulled' = criImagesPulled,
+                criPodSandboxRunning' = criPodSandboxRunning,
+                criContainersRunning' = criContainersRunning })
 
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,

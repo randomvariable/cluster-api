@@ -76,6 +76,22 @@ captures three facts about this layer.
 | `Lifecycle.ApiserverReadinessOk` | `staging/src/k8s.io/apiserver/pkg/server/healthz/healthz.go` (the readyz endpoint and registered checks). | apiserver `readyz` returns 200; the LB will route traffic to it. |
 | `Lifecycle.EtcdCompactionStart` / `Lifecycle.EtcdCompactionDone` | `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go:52` (`StartCompactorPerEndpoint`); `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go::compactor.compactIfNeeded`. | Apiserver-driven etcd auto-compaction. Holds the bbolt mmap; gRPC reads spike to 10–60s. The FM-24 mechanism. |
 
+## Refinement anchors — kubelet static-pod manager + containerd ↔ CRI
+
+The kubelet's file-source picks up the static-pod manifests written
+by kubeadm and feeds them through the kuberuntime layer to
+containerd via CRI. Each container traverses three CRI stages.
+
+| Quint action | Go entry point | Notes |
+|---|---|---|
+| `KubeadmJoin.RegisterLocalNode` (Phase 3) | `pkg/kubelet/kubelet_node_status.go:52` (`Kubelet.registerWithAPIServer`); :90 (`Kubelet.tryRegisterWithAPIServer` — calls `Nodes().Create()`); :303 (`Kubelet.initialNode`). | Already documented under KubeadmJoin. The Node registration path is independent of CRI; kubelet uses the bootstrap-kubelet kubeconfig client. |
+| (kubelet file-source — manifest watch) | `pkg/kubelet/config/file.go` (file source); `pkg/kubelet/config/file_linux.go` (inotify-backed watcher); `pkg/kubelet/config/sources.go` (registers the file source for /etc/kubernetes/manifests). | Static-pod manifest discovery. Not a Quint action; folded into `kubeletManifestReady` flag flipping true once kubelet has read and ack'd the manifests. |
+| `Lifecycle.ContainerdReady` / `Lifecycle.ContainerdCrash` | `pkg/kubelet/kuberuntime/kuberuntime_manager.go` (`kubeGenericRuntimeManager.Status` — RuntimeStatus probe); fault: containerd binary exits or `/run/containerd/containerd.sock` becomes unreachable. | The kubelet's CRI runtime probe. ContainerdCrash cascades back through every dependent CRI stage and flips apiserverReady=false. |
+| `Lifecycle.PullStaticPodImages` | `pkg/kubelet/kuberuntime/kuberuntime_image.go:33` (`kubeGenericRuntimeManager.PullImage`); `pkg/kubelet/kuberuntime/instrumented_services.go:311` (instrumented PullImage). Calls CRI's `RuntimeService.PullImage` gRPC. | First CRI lifecycle stage. Failure surfaces as `runtime.ErrImagePull`. |
+| `Lifecycle.ImagePullFailed` | `pkg/kubelet/kuberuntime/kuberuntime_image.go` (PullImage error path) → kubelet's `events.FailedToPullImage` event. | Fault: registry unreachable, image bad sha, auth failure. Manual intervention required (registry credentials, image fix). |
+| `Lifecycle.CreatePodSandbox` | `pkg/kubelet/kuberuntime/kuberuntime_sandbox.go:38` (`kubeGenericRuntimeManager.createPodSandbox`). Calls CRI's `RuntimeService.RunPodSandbox` gRPC. | Second CRI lifecycle stage. Creates network namespace + cgroup for the pod. |
+| `Lifecycle.StartStaticPodContainers` | `pkg/kubelet/kuberuntime/kuberuntime_container.go:199` (`kubeGenericRuntimeManager.startContainer`). Calls CRI's `RuntimeService.CreateContainer` + `RuntimeService.StartContainer` gRPCs. | Third CRI lifecycle stage. After this fires, the apiserver/controller-manager/scheduler/local-etcd containers are running. apiserverEtcdReachable + apiserverReady flips true once the apiserver container probe succeeds. |
+
 ## Status-rollup anchors (conditions ↔ KCP scaling decisions)
 
 | Quint side | Go entry point | Notes |

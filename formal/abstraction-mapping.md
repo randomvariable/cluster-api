@@ -88,6 +88,24 @@ and the seL4 functional-correctness convention
 | Lifecycle | EtcdCompactionStart | k8s.io/apiserver/pkg/storage/etcd3/compact.go:52 (`StartCompactorPerEndpoint`); also the etcd-side auto-compaction loop (`server/etcdserver/server.go::compactor`). | Etcd auto-compaction begins. Bbolt mmap held; gRPC reads spike to 10–60s of latency. Models the FM-24 shape's underlying mechanism. |
 | Lifecycle | EtcdCompactionDone | (etcd-side; compactor finishes). | Compaction completes; Status RPCs return to baseline latency. Recovery action. |
 
+### containerd ↔ CRI lifecycle of static pods
+
+The kubelet brings up control-plane static pods (apiserver,
+controller-manager, scheduler, optionally local-etcd) through the
+CRI gRPC connection to containerd. Each container goes through
+three CRI lifecycle stages: image-pull → sandbox-create →
+container-create+start. Failure at any stage requires manual
+operator intervention.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| Lifecycle | ContainerdReady | pkg/kubelet/kuberuntime/kuberuntime_manager.go (`kubeGenericRuntimeManager.Status` — RuntimeStatus probe). | The CRI runtime (containerd) is up and responding to RuntimeStatus RPCs. Pre-condition for any pod lifecycle action. |
+| Lifecycle | ContainerdCrash | (containerd binary exits, CRI socket /run/containerd/containerd.sock becomes unreachable). | Fault: containerd dies; cascades all CRI lifecycle stages back to false on this Machine, plus cascades apiserverReady=false because the apiserver container process is gone. |
+| Lifecycle | PullStaticPodImages | pkg/kubelet/kuberuntime/kuberuntime_image.go:33 (`kubeGenericRuntimeManager.PullImage`); the instrumented wrapper at pkg/kubelet/kuberuntime/instrumented_services.go:311. Calls CRI's RuntimeService.PullImage gRPC. | Kubelet pulls the apiserver/controller-manager/scheduler/local-etcd images via CRI. |
+| Lifecycle | ImagePullFailed | pkg/kubelet/kuberuntime/kuberuntime_image.go (PullImage returns errors). | Fault: containerd cannot pull a static-pod image (registry unreachable, image bad sha, auth failure). |
+| Lifecycle | CreatePodSandbox | pkg/kubelet/kuberuntime/kuberuntime_sandbox.go:38 (`kubeGenericRuntimeManager.createPodSandbox`). Calls CRI's RuntimeService.RunPodSandbox gRPC. | Kubelet creates the pod sandbox (network namespace + cgroup) for the control-plane pod. |
+| Lifecycle | StartStaticPodContainers | pkg/kubelet/kuberuntime/kuberuntime_container.go:199 (`kubeGenericRuntimeManager.startContainer`). Calls CRI's RuntimeService.CreateContainer + StartContainer gRPCs. | Kubelet creates and starts the static-pod containers. After this fires, apiserverEtcdReachable and apiserverReady can flip true. |
+
 ### MachineHealthCheck.qnt
 
 | Spec | Action | Go reference | Purpose |
