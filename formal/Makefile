@@ -54,6 +54,10 @@ SELFHOSTED    := $(SPECS_DIR)/SelfHosted.qnt
 MSPREFLIGHT   := $(SPECS_DIR)/MachineSetPreflight.qnt
 TOPOLOGY      := $(SPECS_DIR)/Topology.qnt
 INPLACE       := $(SPECS_DIR)/InPlaceUpdate.qnt
+CRRUNTIME     := $(SPECS_DIR)/ControllerRuntime.qnt
+TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
+INPLACE_REFINED := $(SPECS_DIR)/InPlaceUpdateRefined.qnt
+MSPREFLIGHT_REFINED := $(SPECS_DIR)/MachineSetPreflightRefined.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -453,6 +457,110 @@ verify-inplace-random:  ## Random-walk every InPlaceUpdate invariant (2000×80, 
 
 .PHONY: verify-inplace
 verify-inplace: verify-inplace-happy verify-inplace-fallback verify-inplace-multi-ext verify-inplace-retry verify-inplace-cleanup verify-inplace-random  ## Full InPlaceUpdate suite
+
+## --------------------------------------
+## controller-runtime substrate (FM-45/46/47)
+## --------------------------------------
+
+##@ controller-runtime:
+
+.PHONY: verify-cr-happy
+verify-cr-happy:  ## Drive happyManagerStartRun
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=happyManagerStartRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-multiworker
+verify-cr-multiworker:  ## Drive multiWorkerParallelRun (per-key serialisation)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=multiWorkerParallelRun --step=step \
+	             --invariant=FM45_PerKeySerialisation --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-dedup
+verify-cr-dedup:  ## Drive dedupDuringInFlightRun
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=dedupDuringInFlightRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-requeue
+verify-cr-requeue:  ## Drive requeueAfterRun
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=requeueAfterRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-terminal
+verify-cr-terminal:  ## Drive terminalErrorRun (FM-46)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=terminalErrorRun --step=step \
+	             --invariant=FM46_TerminalErrorNoRequeue --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-leader-loss
+verify-cr-leader-loss:  ## Drive leaderLossRun
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=leaderLossRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(CRRUNTIME)
+
+.PHONY: verify-cr-random
+verify-cr-random:  ## Random-walk every controller-runtime invariant (500x60)
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+	            FM46_TerminalErrorNoRequeue FM47_CacheBehindAPI; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ControllerRuntime \
+	               --invariant=$$inv --max-samples=500 --max-steps=60 \
+	               $(CRRUNTIME) || exit 1; \
+	done
+
+.PHONY: verify-cr
+verify-cr: verify-cr-happy verify-cr-multiworker verify-cr-dedup verify-cr-requeue verify-cr-terminal verify-cr-leader-loss verify-cr-random  ## Full controller-runtime substrate suite
+
+## --------------------------------------
+## CAPI refinements onto controller-runtime
+## --------------------------------------
+
+##@ refinements:
+
+.PHONY: verify-topology-refined
+verify-topology-refined:  ## Random-walk TopologyRefined (Topology + CR substrate)
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+	            FM39_BeforeClusterUpgradeIdempotent WorkerVersionLeqCp \
+	            BodyActionsGated; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=TopologyRefined \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(TOPO_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-inplace-refined
+verify-inplace-refined:  ## Random-walk InPlaceUpdateRefined (InPlaceUpdate + CR substrate, multi-worker)
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+	            FM43_UpdateMachineIdempotenceGate \
+	            FM44_MultiExtensionBlocksProgress \
+	            DoneImpliesVersionFlipped BodyActionsGated; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=InPlaceUpdateRefined \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(INPLACE_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-mspreflight-refined
+verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+	            PreflightGateWellFormed PreflightGateRespected \
+	            BodyActionsGated; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=MachineSetPreflightRefined \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(MSPREFLIGHT_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-refinements
+verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
 ## Meta

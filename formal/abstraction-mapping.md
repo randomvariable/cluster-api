@@ -172,6 +172,100 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### ControllerRuntime.qnt
+
+The substrate model. Refines the core mechanics of
+sigs.k8s.io/controller-runtime that every CAPI controller is
+built on top of: Manager, Controller worker pool, priority
+queue, Reconciler result branches, Source/EventHandler/Predicate
+pipeline, leader election, cache-vs-APIReader read split.
+Anchors recovered via gopls + grep on
+`/home/naadir/go/src/sigs.k8s.io/controller-runtime`.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| ControllerRuntime | ManagerStart | pkg/manager/internal.go:347 (`controllerManager.Start`); :349-353 (started flag). | Manager initialisation; not yet leader-elected. |
+| ControllerRuntime | LeaderAcquire | pkg/manager/internal.go:619 (`OnStartedLeading` callback); :621 (`startLeaderElectionRunnables`); :625 (`close(cm.elected)`); :650 (`startLeaderElectionRunnables`). | Manager wins the lease; leader-election runnables (controllers + sources) start. |
+| ControllerRuntime | LeaderLose | pkg/manager/internal.go:627-637 (`OnStoppedLeading` callback). | Catastrophic: lease lost; runnables halted. |
+| ControllerRuntime | ApiServerWrite | (external) — refines a write to the API server that the cache hasn't yet observed. | Increments per-key apiVersion. |
+| ControllerRuntime | CacheSync | pkg/cache/cache.go:65 (`Cache` interface); the informer's watch event firing. | Cache catches up to API server; emits a Source event. |
+| ControllerRuntime | SourceEmitCreate | pkg/source/source.go:48 (`Source = TypedSource[Request]`); pkg/handler/eventhandler.go:124 (`Create` event dispatch). | Source fires a Create event for a key. |
+| ControllerRuntime | EnqueueViaHandler | pkg/handler/eventhandler.go:124-180 (Create/Update/Delete dispatchers); pkg/predicate/predicate.go:33-103 (Predicate filter). | EventHandler optionally enqueues request after Predicate filtering; deduped with respect to in-flight items. |
+| ControllerRuntime | EnqueueAfterTimerExpires | pkg/controller/priorityqueue/priorityqueue.go:309-356 (`handleWaitingItems`). | Waiting-tree timer expires; key transitions to ready. |
+| ControllerRuntime | ProcessNextWorkItem | pkg/internal/controller/controller.go:419 (`processNextWorkItem`); pkg/controller/priorityqueue/priorityqueue.go:424 (`GetWithPriority`); :391 (per-key locked-set guard); :311 (controller.go per-key serialisation comment). | Worker picks up the next ready item whose key is not in the `locked` set. Multi-worker safe. |
+| ControllerRuntime | ReconcileSucceed | pkg/internal/controller/controller.go:508-513 (default success branch); :512 (`Forget`). | Reconcile returned err==nil with zero Result; rate-limiter reset, no requeue. |
+| ControllerRuntime | ReconcileRequeueAfter | pkg/internal/controller/controller.go:495-503 (RequeueAfter branch); :501 (`Forget`); :502 (`AddWithOpts(After)`). | Reconcile returned RequeueAfter > 0; key re-queued in waiting tree. |
+| ControllerRuntime | ReconcileRequeue | pkg/internal/controller/controller.go:504-507 (deprecated Result.Requeue branch). | Reconcile returned Result{Requeue: true}; AddRateLimited. |
+| ControllerRuntime | ReconcileError | pkg/internal/controller/controller.go:483, 487-489 (err != nil non-terminal branch). | Reconcile returned non-terminal error; AddRateLimited; NumRequeues++. |
+| ControllerRuntime | ReconcileTerminalError | pkg/internal/controller/controller.go:484-485 (TerminalError branch); pkg/reconcile/reconcile.go:174 (`TerminalError` constructor). | Reconcile returned `reconcile.TerminalError`; key dropped without requeue. |
+| ControllerRuntime | anyWorkerOnKey (helper) | pkg/controller/priorityqueue/priorityqueue.go:391 (`w.locked.Has(item.Key)` guard); pkg/internal/controller/controller.go:311 (per-key serialisation comment). | Pure predicate. |
+| ControllerRuntime | hookFires (helper) | (model-only) — abstracts the predicate result. | Pure predicate. |
+
+### TopologyRefined.qnt
+
+Refinement of `Topology.qnt` onto the ControllerRuntime
+substrate. Composed state machine: substrate's worker-pool
+dispatch fires Topology body actions only while the cluster's
+key is in flight (`reconcileInFlight`). Verifies that every
+Topology safety invariant survives multi-worker concurrent
+substrate semantics. WORKERS = 1.to(2).
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| TopologyRefined | ManagerStart | pkg/manager/internal.go:347. | Substrate copy. |
+| TopologyRefined | LeaderAcquire | pkg/manager/internal.go:619, :650. | Substrate copy. |
+| TopologyRefined | ProcessNextWorkItem | pkg/internal/controller/controller.go:419. | Substrate copy. |
+| TopologyRefined | ReconcileFinishRequeueAfter | pkg/internal/controller/controller.go:495-503. | Substrate copy. |
+| TopologyRefined | TimerExpires | pkg/controller/priorityqueue/priorityqueue.go:309-356. | Substrate copy. |
+| TopologyRefined | EventEnqueue | pkg/handler/eventhandler.go:124-180. | Substrate copy. |
+| TopologyRefined | EvaluateHook | exp/topology/desiredstate/lifecycle_hooks.go (every `RuntimeClient.CallAllExtensions` site). | Hook call fires inside reconcile dispatch. |
+| TopologyRefined | ReconcileBeforeClusterCreate | internal/controllers/topology/cluster/cluster_controller.go:441 (`callBeforeClusterCreateHook`). | Body of Reconcile loop. |
+| TopologyRefined | ControlPlaneProvisioned | (observable) `reconcile_state.go:218` (`isControlPlaneInitialized`). | Body. |
+| TopologyRefined | FireAfterControlPlaneInitialized | internal/controllers/topology/cluster/reconcile_state.go:188. | Body. |
+| TopologyRefined | OperatorBumpTopologyVersion | (operator-driven, fires outside reconcile). | Watch event re-enqueues. |
+| TopologyRefined | ComputeUpgradePlanOneMinor | exp/topology/desiredstate/upgrade_plan.go:48, :334. | Body. |
+| TopologyRefined | ReconcileBeforeClusterUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:39. | Body. |
+| TopologyRefined | ReconcileBeforeControlPlaneUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:128. | Body. |
+| TopologyRefined | ControlPlaneStepCompletes | (observable) desired_state.go:574. | Body. |
+
+### InPlaceUpdateRefined.qnt
+
+Refinement of (a slice of) `InPlaceUpdate.qnt` onto the
+substrate. Demonstrates per-Machine reconciles dispatched by
+multiple workers concurrently, with FM-45 ensuring the same
+Machine is never reconciled by two workers at once. WORKERS =
+1.to(2), MACHINES = 1.to(2).
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| InPlaceUpdateRefined | ManagerStartAndLeader | pkg/manager/internal.go:347, :619-625, :650. | Substrate copy. |
+| InPlaceUpdateRefined | ProcessNextWorkItem | pkg/internal/controller/controller.go:419, :311. | Substrate copy. |
+| InPlaceUpdateRefined | ReconcileFinishRequeueAfter | pkg/internal/controller/controller.go:495-503. | Substrate copy. |
+| InPlaceUpdateRefined | TimerExpires | pkg/controller/priorityqueue/priorityqueue.go:309-356. | Substrate copy. |
+| InPlaceUpdateRefined | CallUpdateMachineHook | internal/controllers/machine/machine_controller_inplace_update.go:43, :142, :155-156, :185-189, :192-193. | Hook call body (gated by reconcileInFlightOn). |
+| InPlaceUpdateRefined | CompleteInPlaceUpdate | internal/controllers/machine/machine_controller_inplace_update.go:198, :221. | Body. |
+| InPlaceUpdateRefined | OperatorRegisterMultiple | (operator-driven; fires outside). | Misconfiguration. |
+
+### MachineSetPreflightRefined.qnt
+
+Refinement of (a slice of) `MachineSetPreflight.qnt` onto the
+substrate. Demonstrates the `RequeueAfter` requeue loop driven
+by `preflightFailedRequeueAfter` (15s). WORKERS = 1.to(2),
+MS_KEYS = 1.to(2).
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| MachineSetPreflightRefined | ManagerStartAndLeader | pkg/manager/internal.go:347, :619-625, :650. | Substrate copy. |
+| MachineSetPreflightRefined | ProcessNextWorkItem | pkg/internal/controller/controller.go:419, :311. | Substrate copy. |
+| MachineSetPreflightRefined | ReconcileFinishRequeueAfter | pkg/internal/controller/controller.go:495-503. | Substrate copy; matches `preflightFailedRequeueAfter` (machineset_preflight.go:45). |
+| MachineSetPreflightRefined | ReconcileFinishSuccess | pkg/internal/controller/controller.go:508-513. | Substrate copy. |
+| MachineSetPreflightRefined | TimerExpires | pkg/controller/priorityqueue/priorityqueue.go:309-356. | Substrate copy. |
+| MachineSetPreflightRefined | KcpBeginUpgrade | (CP-side abstracted; refines `ControlPlane.IsUpgrading` flipping true at machineset_preflight.go:179). | External event triggering watch. |
+| MachineSetPreflightRefined | KcpFinishUpgrade | (CP-side abstracted; mirrors KcpBeginUpgrade reverse). | External event triggering watch. |
+| MachineSetPreflightRefined | OperatorRequestScaleUp | (operator-driven; refines a `MachineSet.Spec.Replicas` increment). | External event triggering watch. |
+| MachineSetPreflightRefined | EvaluatePreflight | internal/controllers/machineset/machineset_preflight.go:47 (`runPreflightChecks`); call sites at machineset_controller.go:828, :1633. | Body (gated by reconcileInFlightOn). |
+| MachineSetPreflightRefined | CompleteScaleUp | (post-preflight branch in `(*Reconciler).reconcile`). | Body. |
+
 ### InPlaceUpdate.qnt
 
 In-place machine update choreography across MachineDeployment,

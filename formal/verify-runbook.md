@@ -151,6 +151,87 @@ quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
 # Expected: [violation] (~217 ms, 4 steps).
 ```
 
+### controller-runtime substrate (FM-45/46/47)
+
+```sh
+# Six demonstration runs cover Manager start, leader acquire,
+# multi-worker dispatch, dedup-during-inflight, RequeueAfter,
+# TerminalError, and leader loss.
+
+quint run --main=ControllerRuntime --init=happyManagerStartRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+quint run --main=ControllerRuntime --init=multiWorkerParallelRun --step=step \
+          --invariant=FM45_PerKeySerialisation --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+quint run --main=ControllerRuntime --init=dedupDuringInFlightRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+quint run --main=ControllerRuntime --init=requeueAfterRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+quint run --main=ControllerRuntime --init=terminalErrorRun --step=step \
+          --invariant=FM46_TerminalErrorNoRequeue --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+quint run --main=ControllerRuntime --init=leaderLossRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerRuntime.qnt
+
+# Random-walk every CR invariant (500 samples × 60 steps).
+for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+           FM46_TerminalErrorNoRequeue FM47_CacheBehindAPI; do
+  quint run --main=ControllerRuntime --invariant=$inv \
+            --max-samples=500 --max-steps=60 \
+            formal/specs/ControllerRuntime.qnt
+done
+```
+
+Or, from `formal/`: `make verify-cr`.
+
+### CAPI refinements onto controller-runtime
+
+```sh
+# Each refinement embeds the substrate + a slice of the abstract
+# CAPI spec, with body actions guarded by `reconcileInFlight*`.
+# Verifies that abstract safety invariants survive multi-worker
+# substrate semantics.
+
+# Topology + CR substrate
+for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+           FM39_BeforeClusterUpgradeIdempotent WorkerVersionLeqCp \
+           BodyActionsGated; do
+  quint run --main=TopologyRefined --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/TopologyRefined.qnt
+done
+
+# InPlaceUpdate + CR substrate
+for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+           FM43_UpdateMachineIdempotenceGate \
+           FM44_MultiExtensionBlocksProgress \
+           DoneImpliesVersionFlipped BodyActionsGated; do
+  quint run --main=InPlaceUpdateRefined --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/InPlaceUpdateRefined.qnt
+done
+
+# MachineSetPreflight + CR substrate
+for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+           PreflightGateWellFormed PreflightGateRespected \
+           BodyActionsGated; do
+  quint run --main=MachineSetPreflightRefined --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/MachineSetPreflightRefined.qnt
+done
+```
+
+Or, from `formal/`: `make verify-refinements`.
+
 ### In-place updates (deterministic + random-walk)
 
 ```sh

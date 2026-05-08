@@ -30,6 +30,8 @@ For a code reviewer:
 12. [`specs/Lifecycle.qnt`](./specs/Lifecycle.qnt) — the KCP/etcd model.
 13. [`specs/Topology.qnt`](./specs/Topology.qnt) — the ClusterTopology + runtime-extension model.
 14. [`specs/InPlaceUpdate.qnt`](./specs/InPlaceUpdate.qnt) — in-place machine update choreography.
+15. [`specs/ControllerRuntime.qnt`](./specs/ControllerRuntime.qnt) — substrate model of sigs.k8s.io/controller-runtime.
+16. [`specs/TopologyRefined.qnt`](./specs/TopologyRefined.qnt), [`InPlaceUpdateRefined.qnt`](./specs/InPlaceUpdateRefined.qnt), [`MachineSetPreflightRefined.qnt`](./specs/MachineSetPreflightRefined.qnt) — refinements of the abstract CAPI specs onto the controller-runtime substrate.
 
 For a contributor adding a new failure mode:
 
@@ -73,6 +75,8 @@ For a contributor adding a new failure mode:
 | FM-33 | `fm33ScaleUpDuringCpUpgradeInit` / `fm33VersionSkewInit` / `fm33RemediationDuringUpgradeInit` (`specs/MachineSetPreflight.qnt`) | KcpFinishUpgrade / OperatorBumpMsVersion + EvaluatePreflight | 3 demo runs (`fm33ScaleUpBlockedRun`, `fm33ScaleUpAdmittedAfterUpgradeRun`, `fm33VersionSkewBlockedRun`) | — | — |
 | FM-39/40/41 | `happyCreateRun` / `happyUpgradeRun` / `multiStepUpgradeRun` / `annotationBlockedUpgradeRun` / `deleteRun` (`specs/Topology.qnt`) | EvaluateHook + ReconcileBefore/After hooks + ComputeUpgradePlanOneMinor | 5 demo runs + 200×30 random walk on `SafetyInvariants` ∪ `FM39_BeforeClusterUpgradeIdempotent` ∪ `FM40_AnnotationGatesCp` ∪ `FM41_AfterClusterUpgradeAtSteadyState` | — | — |
 | FM-42/43/44 | `happyInPlaceRun` / `canUpdateNoFallbackRun` / `multiExtensionRejectRun` / `updateMachineRetryLoopRun` / `orphanedHookCleanupRun` (`specs/InPlaceUpdate.qnt`) | EvaluateCanUpdateMachineSet + SetMoveAnnotations + StartMove/Acknowledge/CompleteMove + CallUpdateMachineHook + CompleteInPlaceUpdate + CleanupOrphanedHook | 5 demo runs + 2000×80 random walk on `AllSafetyInvariants` ∪ `FM42_PrematureInPlaceAdmission` ∪ `FM43_UpdateMachineIdempotenceGate` ∪ `FM44_MultiExtensionBlocksProgress` ∪ `TwoWayHandshakeAnnotations` | — | — |
+| FM-45/46/47 | `happyManagerStartRun` / `multiWorkerParallelRun` / `dedupDuringInFlightRun` / `requeueAfterRun` / `terminalErrorRun` / `leaderLossRun` (`specs/ControllerRuntime.qnt`) | ManagerStart + LeaderAcquire + ProcessNextWorkItem + Reconcile{Succeed,RequeueAfter,Requeue,Error,TerminalError} + Source/Handler/Predicate pipeline | 6 demo runs + 500×60 random walk on `AllSafetyInvariants` ∪ `FM45_PerKeySerialisation` ∪ `FM46_TerminalErrorNoRequeue` ∪ `FM47_CacheBehindAPI` | — | — |
+| Refinements | `happyRefinedCreateRun` / `multiWorkerRefinedRun` (`specs/TopologyRefined.qnt`); `multiMachineConcurrentInPlaceRun` / `perKeySerialisationRun` (`specs/InPlaceUpdateRefined.qnt`); `multiMSConcurrentPreflightRun` / `preflightBlockRequeueRun` (`specs/MachineSetPreflightRefined.qnt`) | substrate body actions + abstract action set | 6 demo runs + 300×40 random walk on each refinement preserving its abstract invariants ∪ `FM45_PerKeySerialisation` ∪ `BodyActionsGated` | — | — |
 
 19 catalogued FMs have an init action and a TLC reachability
 verdict. **Six** carry exhaustive Apalache verdicts

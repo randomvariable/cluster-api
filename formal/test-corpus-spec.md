@@ -61,6 +61,9 @@ Worthwhile but lower operational priority.
 | FM-42 | MODELLING (closed) | In-place admitted before CanUpdateMachineSet returns yes; verified in `specs/InPlaceUpdate.qnt` |
 | FM-43 | MODELLING (closed) | UpdateMachine hook idempotence (full retry-loop modelled); verified in `specs/InPlaceUpdate.qnt` |
 | FM-44 | MODELLING (closed) | Multi-extension fast-failure for in-place updates; verified in `specs/InPlaceUpdate.qnt` |
+| FM-45 | MODELLING (closed) | Per-key reconcile serialisation under multi-worker (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` + 3 refinement modules |
+| FM-46 | MODELLING (closed) | TerminalError suppresses requeue (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` |
+| FM-47 | MODELLING (closed) | Cache lags API server (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` |
 | FM-37 | KCP-BUG (latent) | Lifecycle hook skipped when CP unavailable |
 
 ### Won't

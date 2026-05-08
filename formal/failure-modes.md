@@ -1409,6 +1409,117 @@ across all deterministic runs and 200×30 random walks.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
+## FM-45 — Per-key reconcile serialisation
+
+**Provenance.** **Upstream** — encoded in
+`pkg/controller/priorityqueue/priorityqueue.go:391`
+(`if w.locked.Has(item.Key) { return true }`) and the comment
+at `pkg/internal/controller/controller.go:311`
+("It enforces that the reconcileHandler is never invoked
+concurrently with the same object").
+
+**Trigger.** A controller running with
+`MaxConcurrentReconciles > 1` has multiple worker goroutines
+draining the priority queue. Without the per-key locked-set
+guard, two workers could pull the same key and call
+`Reconciler.Reconcile(ctx, req)` concurrently — racing on
+SSA / patch-helper writes to the same object.
+
+**Init / scenarios.** `multiWorkerParallelRun` in
+`ControllerRuntime.qnt` exercises two workers picking up two
+distinct keys; `dedupDuringInFlightRun` shows that re-adding
+a key currently in flight is buffered (sent to ready tree only
+after `Done` clears the locked set).
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `processNextWorkItem` | `pkg/internal/controller/controller.go` | 419 |
+| Worker-pool launch | same | 307 |
+| Per-key serialisation comment | same | 311 |
+| `handleReadyItems` (locked-set guard) | `pkg/controller/priorityqueue/priorityqueue.go` | 360-409 |
+| Locked-set check | same | 391 |
+| `lockedAddWithOpts` (re-add during in-flight) | same | 197 |
+| `Done` (delete from locked) | same | 467 |
+
+**Verdict.** `FM45_PerKeySerialisation` holds across all six
+demo runs in `ControllerRuntime.qnt` (500×60 random walk) and
+across the three refinement modules (`TopologyRefined`,
+`InPlaceUpdateRefined`, `MachineSetPreflightRefined`).
+
+**Classification.** **MODELLING** (verifies upstream
+invariant under multi-worker substrate semantics).
+
+## FM-46 — Terminal error suppresses requeue
+
+**Provenance.** **Upstream** — encoded in
+`pkg/internal/controller/controller.go:484-485`. A reconcile
+returning `reconcile.TerminalError(err)` is logged and counted
+in metrics but the key is NOT re-added to the queue, in
+contrast to non-terminal errors which trigger
+`AddWithOpts(RateLimited)` at line 487.
+
+**Trigger.** Operator-correctable failures (e.g. invalid spec,
+missing reference) should be surfaced as TerminalError so the
+controller doesn't loop forever burning rate-limiter budget.
+
+**Init / scenarios.** `terminalErrorRun` drives a Reconcile
+that returns `reconcile.TerminalError`; the model verifies
+the key is removed from the queue (NotInQueue or InReady iff
+re-added during the in-flight window).
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Terminal-error branch | `pkg/internal/controller/controller.go` | 484-485 |
+| `reconcile.TerminalError` constructor | `pkg/reconcile/reconcile.go` | 174 |
+| `terminalError.Is` | same | 194 |
+
+**Verdict.** `FM46_TerminalErrorNoRequeue` holds across the
+demo run and 500×60 random walk.
+
+**Classification.** **MODELLING** (verifies upstream
+invariant).
+
+## FM-47 — Cache lags API server
+
+**Provenance.** **Upstream** — encoded in the cache vs
+APIReader read split at
+`pkg/client/client.go:40-91` (CacheReader path) and the
+informer watch event loop at `pkg/cache/cache.go:65`. A
+controller that uses the cached client (`client.Client`) for
+reads sees a value that may lag the API server until the next
+informer sync.
+
+**Trigger.** Common failure shape — controller patches an
+object via the API server, then immediately re-reads via the
+cache and gets the OLD value because the informer hasn't yet
+delivered the update event. Forces the controller to wait for
+a re-reconcile triggered by the watch.
+
+**Init / scenarios.** The model surfaces
+`FM47_CacheBehindAPI` as a state invariant: cacheVersion[k]
+is always at most apiVersion[k]. The `dedupDuringInFlightRun`
+exercises the staleness window (write happens, cache hasn't
+synced, queue is re-driven).
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `Cache` interface | `pkg/cache/cache.go` | 65 |
+| `client.Options` (CacheReader) | `pkg/client/client.go` | 40 |
+| `CacheOptions.Reader` | same | 77 |
+| `client.New` | same | 116 |
+
+**Verdict.** `FM47_CacheBehindAPI` holds across all CR demo
+runs and 500×60 random walk.
+
+**Classification.** **MODELLING** (verifies upstream
+invariant).
+
 ## FM-42 — In-place update admitted before CanUpdateMachineSet returns yes
 
 **Provenance.** **Modelling** (`InPlaceUpdate.qnt`). The
@@ -1636,6 +1747,9 @@ reason that the operator can read.
 | FM-42 | In-place admitted before CanUpdateMachineSet returns yes | MODELLING | n/a — invariant of upstream contract | Verified in `specs/InPlaceUpdate.qnt` (`FM42_PrematureInPlaceAdmission`) |
 | FM-43 | UpdateMachine hook idempotence | MODELLING | n/a — invariant of upstream contract | Verified in `specs/InPlaceUpdate.qnt` (`FM43_UpdateMachineIdempotenceGate`) |
 | FM-44 | Multiple UpdateMachine extensions registered | MODELLING | Operator removes duplicate extension | Verified in `specs/InPlaceUpdate.qnt` (`FM44_MultiExtensionBlocksProgress`) |
+| FM-45 | Per-key reconcile serialisation under multi-worker | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` + 3 refinement modules (`FM45_PerKeySerialisation`) |
+| FM-46 | TerminalError suppresses requeue | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM46_TerminalErrorNoRequeue`) |
+| FM-47 | Cache lags API server | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM47_CacheBehindAPI`) |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
@@ -1757,6 +1871,9 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 42 | Modelling (InPlaceUpdate spec) | — |
 | 43 | Upstream + Modelling | — |
 | 44 | Upstream | — |
+| 45 | Upstream (controller-runtime) | — |
+| 46 | Upstream (controller-runtime) | — |
+| 47 | Upstream (controller-runtime) | — |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |
 
