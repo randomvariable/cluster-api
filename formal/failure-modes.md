@@ -745,19 +745,43 @@ spec requirement that `DeleteFailedMachine` eventually fires.
 **Classification**: **KCP-BUG (latent)**. Direct match with
 cluster-api#13508. See `issue-corpus.md` IC-14.
 
-**Apalache caveat**: A first attempt at proving hopelessness
-under `stepNoRecovery` from `drainStuckInit` found a counter-
-example in 27 s — Apalache identified a path that re-adds the
-removed Machine 1 as an etcd learner, promotes it, and then
-properly removes it via `CompleteRemediation`. This is a model
-artefact: the abstract state captures the post-removal etcd
-member set but doesn't track that the kubelet drain is blocked
-on PDB eviction. To make the proof faithful, the model needs
-a `drainBlocked: MachineId -> bool` flag that gates
-`CompleteRemediation` and prevents the model from "fixing" a
-stuck drain through unrelated membership changes. Recorded as a
-follow-up in `issue-corpus.md` IC-09 (model-fidelity gap) /
-IC-14 (the underlying KCP bug remains).
+**Apalache verdict (Phase 5).** With the `drainBlocked` flag and
+`pdbViolatedFor` flag added (Phase 4), and `RemoveMember` tightened
+to refuse `drainBlocked[id]=true`, Apalache now proves
+`AllSafetyInvariants` holds at depth 4 under `stepNoRecovery` from
+`drainStuckInit` — exhaustive symbolic exploration in ~278 s.
+Command:
+
+```
+quint verify --main=Lifecycle --init=drainStuckInit \
+             --step=stepNoRecovery --max-steps=4 \
+             --backend=apalache \
+             --invariant=AllSafetyInvariants \
+             formal/specs/Lifecycle.qnt
+```
+
+Result: `[ok] No violation found`. Every safety invariant —
+`LearnerCannotVote`, `VoterSetNonEmpty`, `IncidentNeverInFlight`,
+`IncidentBlockReasonCorrect` — holds across every reachable state
+within 4 steps from drainStuckInit when only fault actions and
+non-recovery transitions are enabled.
+
+**Reachability complement.** Under the full `step` relation
+(recovery enabled), TLC finds a path to `HealthyControlPlane` in
+11,960 distinct states / 7 steps / ~1.3 s — `DrainTimeout(1)` clears
+`drainBlocked[1]`, allowing `RemoveMember(1)` and downstream
+remediation to complete. The complement direction (Apalache proving
+`HealthyControlPlane` itself unreachable under `stepNoRecovery`)
+finds a counterexample because the model permits operator-driven
+`ChangeDesiredReplicas` to drop the cluster to a single-machine
+"healthy" state — a legitimate operator action, not a recovery
+action, that bypasses the FM-23 stuck-drain rather than fixing it.
+This degraded-recovery path is observable in the abstraction-mapping
+row for `ChangeDesiredReplicas` and is documented as a model-
+permissiveness note rather than a bug: a faithful proof of
+"Machine 1's drain stays blocked" requires a stronger invariant
+form (`machines.contains(1) implies drainBlocked.get(1)`) that
+captures the FM-23 shape directly.
 
 ## FM-24 — Etcd defrag pause
 

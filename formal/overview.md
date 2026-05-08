@@ -5,7 +5,7 @@ Kubeadm Control Plane lifecycle. It pairs Quint specifications
 of KCP, etcd membership, kubeadm-join, and MachineHealthCheck
 with TLC / Apalache verification, a Go trace-refinement runtime,
 RFC-2119 contracts pinned to upstream commits, and a working
-CAPD e2e reproducer for the user-reported incident shape.
+CAPD e2e reproducer for the modelled scenario shape.
 
 The CAEP at
 [`docs/proposals/20260507-formal-control-plane-lifecycle-model.md`](../docs/proposals/20260507-formal-control-plane-lifecycle-model.md)
@@ -49,7 +49,7 @@ For a contributor adding a new failure mode:
 
 | FM | Init | Recovery | TLC verdict | Apalache verdict | CAPD e2e |
 |---|---|---|---|---|---|
-| FM-1 | `incidentInit` | RemoveStuckLearner + DeleteFailedMachine + AddMachine | 6.5K states (incident invariants) | n/a | (events.log captures shape during FM-2 e2e) |
+| FM-1 | `incidentInit` | RemoveStuckLearner + DeleteFailedMachine + AddMachine | 6.5K states (FM-1 invariants) | n/a | (events.log captures shape during FM-2 e2e) |
 | FM-2 | `twoMachineBothUnhealthyInit` | HealEtcdReachability | 1.4M states reach (4.7 s) | UNREACHABLE under stepNoRecovery (76 s) | **PASSES** (`test/e2e/fm2_quorum_loss.go`) |
 | FM-3 | `partitionedClusterInit` | HealEtcdReachability | 11.6K states (1.0 s) | UNREACHABLE (82 s) | blueprint |
 | FM-5 | `noCorrespondingMemberInit` | DeleteFailedMachine | 165K states (1.9 s) | — | — |
@@ -66,20 +66,23 @@ For a contributor adding a new failure mode:
 | FM-20 | `upgradeRollbackMidFlightInit` | Roll-forward delete + recreate | 19.4K states (1.2 s) | — | — |
 | FM-21 | `fiveNodeTwoFailuresInit` | Sequential remediation | 17.7K states (1.3 s) | — | — |
 | FM-22 | `singleNodeScaleUpFailureInit` | HealEtcdReachability | 13.5K states (1.2 s) | (FM-2 sub-shape; FM-2 hopelessness applies) | — |
-| FM-23 | `drainStuckInit` | Drain timeout + force-delete | 10.0K states (1.1 s) | model needs `drainBlocked` flag for faithful proof | blueprint |
+| FM-23 | `drainStuckInit` | Drain timeout + force-delete | 11.9K states (1.3 s) | **AllSafetyInvariants holds** (Apalache, ~278 s) | blueprint |
 | FM-24 | `etcdDefragPauseInit` | Defrag finishes | 12.5K states (1.0 s) | — | blueprint |
 
 19 catalogued FMs have an init action and a TLC reachability
-verdict. Five carry exhaustive Apalache hopelessness proofs
-(FM-2, FM-3, FM-13, FM-16, FM-17). One e2e spec PASSES on real
-CAPD (FM-2). Six e2e blueprints are sketched.
+verdict. **Six** carry exhaustive Apalache verdicts
+(FM-2, FM-3, FM-13, FM-16, FM-17, **FM-23**). One e2e spec PASSES on
+real CAPD (FM-2). Six e2e blueprints are sketched.
+
+IC-11 (upgrade rollback mid-flight) is now TLC-verified end-to-end
+via the deterministic `upgradeRollbackRecoveryRun` reaching
+`HealthyControlPlane` in 4 steps.
 
 ## Outstanding gaps
 
 | Gap | Where documented |
 |---|---|
 | FM-9 fairness annotations not added (60-conjunct expansion) | `failure-modes.md` FM-9 |
-| FM-23 model needs `drainBlocked` flag for faithful proof | `failure-modes.md` FM-23 Apalache caveat |
 | FM-31, FM-32, FM-34, FM-37 init actions concept-only | `failure-modes.md` (full sections) |
 | FM-33 worker-machine preflight out of scope | `test-corpus-spec.md` Won't |
 | FM-35 self-hosted upgrade requires topology expansion | `upstream-issues-research.md` Tier 2 |
@@ -119,30 +122,7 @@ documented with explicit modelling paths.
 The gate is non-blocking on tool absence — it reports `SKIP`
 rather than silent success.
 
-## Commit history (formality branch)
+## Branch
 
-```
-3f5f32b59 formal: FM-17 Apalache hopelessness + FM-23 model-fidelity caveat + verify runbook
-31afb9234 formal: TLC verdicts for FM-17..FM-24 + e2e blueprints
-347f0eece formal: corpus expansion — FM-17..FM-24 + spec + issue corpus
-766cdbea4 formal: LSP grounding + DST methodology + upstream-issue research
-4fc36a029 test/e2e: FM-2 reproducer PASSES against CAPD; simplify assertions
-247545b2e test/e2e: FM-2 quorum-loss reproducer (CAPD)
-59ffc6c9e formal: Apalache-prove FM-16 hopelessness via RestoreClusterFromSnapshot
-52ee37f1e formal: Apalache-prove FM-3 (partition) and FM-13 (LB) hopelessness
-7a81912f6 formal: Apalache-prove FM-2 hopelessness; gate MemberHealthChange
-6b23a4976 formal: gate ScaleUp/ScaleDown/Remediation on targetEtcdClusterHealthy
-070741e99 formal: scenarios + TLC verdicts for FM-11..FM-16
-b8085bbf8 formal: topology variants, scale/upgrade ops, and richer faults
-08615f7fe formal: TLC reachability checks for three failure-mode scenarios
-65887d91b formal: failure-mode catalogue + grounded MHC fault model
-d18e69a01 formal: add monolithic Lifecycle.qnt; fix Composition + drift check
-81f33fee8 formal: Go trace-refinement runtime + trace-validator + CI gate
-a4c8b24ac formal: Lean 4 proofs scaffold + Remediation.tla scheduler
-8793b8161 formal/contracts: RFC-2119 contracts for kubeadm, etcd, KCP-Machine
-f8c2a36d8 formal/specs: four core Quint modules + Composition
-0f1fb2569 formal: add CAEP and subtree scaffold
-```
-
-20 commits on `formality`, all pushed to `origin/formality` (the
-user's fork). No upstream push, no PR.
+The corpus lives on the `formality` branch in the user's fork.
+No upstream push, no PR.

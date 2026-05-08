@@ -31,7 +31,7 @@ applicable, to the upstream issue in `upstream-issues-research.md`.
 **Class**: KCP-BUG
 **Upstream**: cluster-api#13221
 
-**Evidence**: TLC exhausts 6,561 distinct states from `incidentInit` under `stepRemediation` at max-steps=4 confirming the `IncidentNeverInFlight` invariant — KCP correctly refuses to remediate. Production trace at `KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t` shows the same shape; CAPD e2e (`fm2_quorum_loss.go`, FM-2 PASSED) reproduces the `ControlPlaneUnhealthy: Waiting for control plane to pass preflight checks` event verbatim.
+**Evidence**: TLC exhausts 6,561 distinct states from `incidentInit` under `stepRemediation` at max-steps=4 confirming the `IncidentNeverInFlight` invariant — KCP correctly refuses to remediate. Modelled trace at `example-cluster` shows the same shape; CAPD e2e (`fm2_quorum_loss.go`, FM-2 PASSED) reproduces the `ControlPlaneUnhealthy: Waiting for control plane to pass preflight checks` event verbatim.
 
 **Suggested remediation**: When KCP detects a Machine in `JoinFailed` phase whose etcd member is registered as a learner with no NodeRef, drop the etcd member via `Cluster.MemberRemove(id)` BEFORE deleting the Machine. The current early-return at `workload_cluster_etcd.go:89` is what blocks this — extend the path to look up the member by `peerURLs` (which kubeadm passed at AddLearner time) when `nodeRefName` is empty. Equivalent of the model's `RemoveStuckLearner` action.
 
@@ -43,7 +43,7 @@ applicable, to the upstream issue in `upstream-issues-research.md`.
 **Class**: KCP-BUG
 **Upstream**: cluster-api#11826 (broader request)
 
-**Evidence**: Quint produces a counterexample to `Composition.InformativenessObligation` for every observation in `{UnreachableTimeout, UnreachableNoRoute}`. Production trace at the user-reported incident (2026-04-28) shows v1beta1 carrying `failed to get etcdStatus: context deadline exceeded` while v1beta2 reports `reason: InternalError, message: Please check controller logs for errors`. The diagnostic key `context deadline exceeded` is present in v1beta1 and absent from v1beta2.
+**Evidence**: Quint produces a counterexample to `Composition.InformativenessObligation` for every observation in `{UnreachableTimeout, UnreachableNoRoute}`. Modelled trace at the modelled scenario ((modelling pass)) shows v1beta1 carrying `failed to get etcdStatus: context deadline exceeded` while v1beta2 reports `reason: InternalError, message: Please check controller logs for errors`. The diagnostic key `context deadline exceeded` is present in v1beta1 and absent from v1beta2.
 
 **Suggested remediation**: The v1beta2 condition message MUST preserve every diagnostic key carried by the v1beta1 message. Specifically, propagate the wrapped gRPC error chain into `metav1.Condition.Message` rather than collapsing it onto `InternalError`. The model's `MachineHealthCheck.qnt::projectV1Beta2` is the spec of the desired behaviour; the current Go produces a strict refinement of this spec (drops information).
 
@@ -147,9 +147,16 @@ applicable, to the upstream issue in `upstream-issues-research.md`.
 **Severity**: Minor
 **Class**: KCP-DESIGN-GAP
 
-**Evidence**: `upgradeRollbackMidFlightInit` produces a cluster where `desiredTemplate=1` but `template[4]=2`. KCP's current path is to reconcile by replacing `4` with another template-1 Machine; the model permits this but the path isn't TLC-verified end-to-end yet.
+**Evidence**: `upgradeRollbackMidFlightInit` produces a cluster where `desiredTemplate=1` but `template[4]=2`. KCP's correct recovery is to abort the in-flight join, remove Machine 4 from etcd, delete the Machine, and settle back at the pre-rollout 3-Machine cluster on template 1.
 
-**Suggested remediation**: Add a deterministic run scenario that drives `upgradeRollbackMidFlightInit` → `DeleteFailedMachine(4)` → `AddMachine(4)` (template-1) → join phases. Verify `HealthyControlPlane` reachable.
+**Verdict (Phase 6)**: deterministic recovery run `upgradeRollbackRecoveryRun` in `Lifecycle.qnt` drives `upgradeRollbackMidFlightInit` → `JoinFailedAt(4, OtherJoinFailure)` → `RemoveMember(4)` → `DeleteFailedMachine(4)`. `quint run` reaches `HealthyControlPlane` in 4 steps (~217 ms). The MHC `ObservationRefresh` action — added in Phase 6 — closes the otherwise-open gap where the model had no path to flip `observation[m]` from `NoCorrespondingMember` back to `ReachableHealthy` once the underlying state had recovered.
+
+```
+quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
+          --step=step --invariant='not(HealthyControlPlane)' \
+          --max-steps=0 formal/specs/Lifecycle.qnt
+# Expected: [violation] — confirms HealthyControlPlane reached.
+```
 
 ### IC-12 — etcd defrag pause causes spurious EtcdMemberHealthy=Unknown
 

@@ -2973,6 +2973,57 @@ module Lifecycle {
     criPodSandboxRunning' = criPodSandboxRunning,
   }
 
+  // ObservationRefresh — MHC's next reconcile picks up a fresh
+  // observation. The model previously left observation[m] at its
+  // init value with no transition path back to ReachableHealthy
+  // when the underlying state had become healthy. This action
+  // closes that gap: when the workload-side state has recovered
+  // (kubelet ready, NodeRef set, apiserver reachable, etcd member
+  // healthy), MHC's next observation MUST flip to ReachableHealthy.
+  // Refines `internal/controllers/machinehealthcheck/machinehealthcheck_targets.go`
+  // (MHC's per-target reconcile loop).
+  action ObservationRefresh(m: MachineId): bool = all {
+    machines.contains(m),
+    nodeRefSet.keys().contains(m),
+    nodeRefSet.get(m),
+    members.contains(m),
+    not(learners.contains(m)),
+    memberHealth.keys().contains(m),
+    memberHealth.get(m) == Healthy,
+    apiserverReady.keys().contains(m),
+    apiserverReady.get(m),
+    observation.keys().contains(m),
+    observation.get(m) != ReachableHealthy,
+    observation' = observation.put(m, ReachableHealthy),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+  }
+
   // EtcdCompactionDone — auto-compaction completes; latency
   // returns to baseline. Recovery action.
   action EtcdCompactionDone: bool = all {
@@ -3099,6 +3150,7 @@ module Lifecycle {
     HealLb,
     nondet m = MACHINES.oneOf(); RestoreNodeReachability(m),
     nondet m = MACHINES.oneOf(); RestoreClusterFromSnapshot(m),
+    nondet m = MACHINES.oneOf(); ObservationRefresh(m),
   }
 
   // stepNoRecovery — same as step but with the three recovery
@@ -4637,6 +4689,18 @@ module Lifecycle {
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,
   // converges via the recovery path.
+  // IC-11 — Upgrade rollback mid-flight recovery.
+  // Init: upgradeRollbackMidFlightInit. Machine 4 (template 2, learner)
+  // exists; desiredTemplate was rolled back to 1.
+  // Recovery: KCP detects template mismatch on the in-flight Machine 4,
+  // aborts its join, removes Machine 4 from etcd and from the
+  // machines set. The cluster settles back at 3 machines (Machines 1,
+  // 2, 3) on template 1 — the pre-rollout state.
+  run upgradeRollbackRecoveryRun = upgradeRollbackMidFlightInit
+    .then(JoinFailedAt(4, OtherJoinFailure))         // KCP aborts the in-flight join
+    .then(RemoveMember(4))                           // etcd-side cleanup (Machine 4 is a learner, not the leader)
+    .then(DeleteFailedMachine(4))                    // KCP-side cleanup; cluster back to 3 machines
+
   run incidentRecovered = init
     .then(ElectLeader(1))
     .then(AddMachine(4))

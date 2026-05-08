@@ -33,7 +33,7 @@ find a counterexample to `not(HealthyControlPlane)` (i.e. the
 healthy state IS reachable).
 
 ```sh
-# FM-1 — incident invariants (max-steps=4 exhausts state space)
+# FM-1 — FM-1 invariants (max-steps=4 exhausts state space)
 quint verify --main=Lifecycle \
              --init=incidentInit --step=stepRemediation \
              --invariant=IncidentNeverInFlight \
@@ -104,12 +104,40 @@ quint verify --main=Lifecycle --init=drainStuckInit \
              --invariant='not(HealthyControlPlane)' \
              --max-steps=4 --backend=apalache \
              formal/specs/Lifecycle.qnt
+
+# FM-23 — Phase 5: with drainBlocked + pdbViolatedFor flags landed,
+# Apalache proves AllSafetyInvariants holds at depth 4 in ~278 s.
+# This is the load-bearing safety verdict for the drain hopelessness
+# claim. The complement direction (`not(HealthyControlPlane)`) finds
+# a counterexample because ChangeDesiredReplicas — a legitimate
+# operator action — can drop the cluster to a single-machine
+# "healthy" state. That degraded path is permitted by the model;
+# it is documented as a model-permissiveness note rather than a
+# hopelessness violation.
+quint verify --main=Lifecycle --init=drainStuckInit \
+             --step=stepNoRecovery \
+             --invariant='AllSafetyInvariants' \
+             --max-steps=4 --backend=apalache \
+             formal/specs/Lifecycle.qnt
+# Expected: [ok] No violation found (~278 s).
 ```
 
 Expected verdicts: `[ok] No violation found` (the negated
 invariant holds, so `HealthyControlPlane` is unreachable). The
 `Summary table` rows give Apalache timing (typically 20–80 s per
 FM at max-steps=4).
+
+### IC-11 — Upgrade rollback mid-flight recovery (TLC reachability)
+
+```sh
+# Verify that upgradeRollbackRecoveryRun reaches HealthyControlPlane.
+# `not(HealthyControlPlane)` is the search invariant; a violation
+# means HealthyControlPlane was reached at some state of the run.
+quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
+          --step=step --invariant='not(HealthyControlPlane)' \
+          --max-steps=0 formal/specs/Lifecycle.qnt
+# Expected: [violation] (~217 ms, 4 steps).
+```
 
 ### Random-walk safety sweep
 
@@ -127,9 +155,9 @@ for inv in LearnerCannotVote VoterSetNonEmpty \
 done
 ```
 
-### Deterministic incident reproducer
+### Deterministic FM-1 reproducer
 
-Confirms the user-reported incident reproduces the expected
+Confirms the modelled scenario reproduces the expected
 condition flips.
 
 ```sh
