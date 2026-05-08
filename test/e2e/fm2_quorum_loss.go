@@ -44,10 +44,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -314,34 +311,3 @@ func pickTwoMachinesToPause(machines []*clusterv1.Machine) []*clusterv1.Machine 
 	return sorted[len(sorted)-2:]
 }
 
-// dockerPause invokes `docker pause <container>...` on the host.
-// CAPD runs each control-plane node as a Docker container on
-// the same host as the CAPD provider, so the management cluster
-// proxy can shell out to docker directly. We use exec.Command
-// rather than the Docker Go client to keep this test free of
-// additional dependencies.
-func dockerPause(ctx context.Context, containers ...string) error {
-	args := append([]string{"pause"}, containers...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker pause %v: %w (output: %s)", containers, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// dockerUnpause is the inverse of dockerPause.
-func dockerUnpause(ctx context.Context, containers ...string) error {
-	args := append([]string{"unpause"}, containers...)
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	// Allow up to 30 s for unpause; the daemon is occasionally
-	// slow when many paused processes are resumed at once.
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd = exec.CommandContext(cctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker unpause %v: %w (output: %s)", containers, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}

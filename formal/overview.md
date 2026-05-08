@@ -89,7 +89,7 @@ For a contributor adding a new failure mode:
 
 | FM range | Spec module | Verdicts |
 |---|---|---|
-| FM-1..FM-24 | `specs/Lifecycle.qnt` + companions | 19 with TLC reachability; 6 with Apalache hopelessness (FM-2/3/13/16/17/23); 1 CAPD e2e PASS (FM-2) |
+| FM-1..FM-24 | `specs/Lifecycle.qnt` + companions | 19 with TLC reachability; 6 with Apalache hopelessness (FM-2/3/13/16/17/23); 1 CAPD e2e PASS (FM-2); 4 CAPD e2e specs LANDED-PENDING-VERIFICATION (FM-3/13/15/19/23) |
 | FM-31/32/34/37 | `specs/Lifecycle.qnt` (custom Node conditions, webhook rotation, MHC cache, lifecycle hooks) | TLC reachability via dedicated init actions |
 | FM-9 | `proofs/ControlPlane/Convergence.lean` | Lean 4 deductive recurrence proof (5 theorems, no `sorry`) |
 | FM-33 | `specs/MachineSetPreflight.qnt` | 3 demo runs verify CP-stable + version-skew gating |
@@ -103,7 +103,7 @@ For a contributor adding a new failure mode:
 
 | Spec module | Demo runs | Random-walk sweep | Apalache | CAPD e2e |
 |---|---|---|---|---|
-| Lifecycle.qnt | 19 inits | 5000×30 across SafetyInvariants | 6 hopelessness verdicts (FM-2/3/13/16/17/23) | 1 PASS |
+| Lifecycle.qnt | 19 inits | 5000×30 across SafetyInvariants | 6 hopelessness verdicts (FM-2/3/13/16/17/23) | FM-2 PASS; FM-3/13/15/19/23 specs landed (`test/e2e/fm{3,13,15,19,23}_*.go`), pending CAPD verification |
 | Topology.qnt | 5 | 200×30 | **10/10 invariants** at depth 4 | — |
 | MachineSetPreflight.qnt | 3 | (deterministic) | — | — |
 | InPlaceUpdate.qnt | 5 | 2000×80 | **9/9 invariants** at depth 4 (FM-42 also at depth 8) | — |

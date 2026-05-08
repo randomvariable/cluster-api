@@ -301,6 +301,13 @@ infrastructure) can. Apalache exhaustively confirms KCP's
 gates are doing the right thing — refusing every transition
 that would worsen the cluster's state.
 
+**CAPD e2e reproducer.** `test/e2e/fm3_etcd_unreachable.go` —
+disconnects one CP node container from the kind network via
+`docker network disconnect`, asserts the Machine set stays
+stable through partition + reconnect. Trace recording wired
+via `tracerecord.E2ERecorder`. Implementation landed; CAPD
+verification is operator-driven (see `make test-e2e-trace`).
+
 ## FM-4 — PromoteLearner-before-ResolveNodeRef window
 
 **Provenance.** Modelling — surfaced by tracing the join phase
@@ -800,6 +807,13 @@ operator or infrastructure team can. Apalache exhaustively
 confirms KCP's gates correctly refuse every membership change
 and health-rollup transition while the LB is broken.
 
+**CAPD e2e reproducer.** `test/e2e/fm13_apiserver_lb_broken.go`
+— pauses the `<cluster>-lb` haproxy container via `docker
+pause`; asserts the Machine set stays stable while the LB is
+unreachable; recovers via `docker unpause`. Trace recording
+wired. Implementation landed; CAPD verification is
+operator-driven.
+
 ## FM-14 — Kubelet up but Node never registers
 
 **Provenance.** Operational; common when kubelet's TLS bootstrap
@@ -864,6 +878,14 @@ max-steps=8 (6.5 s).
 state during normal upgrades. The model verifies that — under
 the modelled recovery actions — the rolling update completes
 and the cluster returns to a healthy state on the new template.
+
+**CAPD e2e reproducer.** `test/e2e/fm15_upgrade_in_flight.go` —
+3-CP cluster at `KubernetesVersionUpgradeFrom`, drives a rolling
+control-plane upgrade to `KubernetesVersionUpgradeTo` via
+`framework.UpgradeControlPlaneAndWaitForUpgrade`, asserts the
+3-Machine set is fully replaced (initial ∩ upgraded = ∅) on the
+target version. Trace recording wired. Implementation landed;
+CAPD verification is operator-driven.
 
 **Infrastructure bounds.**
 - Start condition: `exists m: template.get(m) != desiredTemplate and learners.contains(m)` — a replacement learner exists with the new template, mid-rolling-upgrade.
@@ -1018,6 +1040,13 @@ re-populates.
 
 **Classification**: **TRANSIENT**. See `issue-corpus.md` IC-15.
 
+**CAPD e2e reproducer.** `test/e2e/fm19_apiserver_restart.go` —
+kills one CP node's `kube-apiserver` static pod via `crictl rm
+-f` from inside the node container; asserts the Machine set
+stays stable while kubelet relaunches the static pod. Trace
+recording wired. Implementation landed; CAPD verification is
+operator-driven.
+
 **Infrastructure bounds.**
 - Start condition: `lbHealthy = false or mhcCacheStale = true` — workload-cluster apiserver is restarting (LB returning 502/connection-refused) or MHC's cluster cache holds a stale connection.
 - End condition: `lbHealthy = true and mhcCacheStale = false and forall m: observation.get(m) refreshed` — apiserver is back, cache re-populated, observations refreshed.
@@ -1112,6 +1141,15 @@ spec requirement that `DeleteFailedMachine` eventually fires.
 
 **Classification**: **KCP-BUG (latent)**. Direct match with
 cluster-api#13508. See `issue-corpus.md` IC-14.
+
+**CAPD e2e reproducer.** `test/e2e/fm23_drain_blocked_pdb.go` —
+deploys a sticky pod (toleration for CP NoSchedule taint, pinned
+to a chosen CP Node) and a `policy/v1` `PodDisruptionBudget` with
+`maxUnavailable: 0`; labels the host Machine `mhc-test=fail` to
+trigger remediation; asserts the Machine deletion stalls while
+the PDB is in place; deletes the PDB and asserts deletion
+completes. Trace recording wired. Implementation landed; CAPD
+verification is operator-driven.
 
 **Apalache verdict (Phase 5).** With the `drainBlocked` flag and
 `pdbViolatedFor` flag added (Phase 4), and `RemoveMember` tightened
