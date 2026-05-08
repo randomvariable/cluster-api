@@ -1526,6 +1526,15 @@ KcpInitializeControlPlane.
 demos and 300×60 random walk.
 **Apalache hopelessness proven** (depth 4, ~10 s) — see
 `make verify-e2e-apalache`.
+**Lean 4 deductive proof** in
+`formal/proofs/ControlPlane/Ordering.lean::fm48_no_cp_before_infra_ready`.
+The proof discharges the invariant by structural induction on
+the abstract reachability relation, lifting the bounded
+random-walk verdict to an unbounded state space (any number of
+CP Machines, any cluster topology). The Quint state is a
+faithful subset of `ClusterE2E.qnt`'s; the Lean carriers
+abstract `cpMachineCount: Nat` and `infraProvisioned: Bool` and
+trade the bounded model checker's MachineId range for a `Nat`.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1560,6 +1569,10 @@ requires `controlPlaneInitialised`).
 **Verdict.** `FM49_NoWorkersBeforeCpInit` holds across all
 demos and 300×60 random walk.
 **Apalache hopelessness proven** (depth 4, ~9 s).
+**Lean 4 deductive proof** in
+`formal/proofs/ControlPlane/Ordering.lean::fm49_no_workers_before_cp_init`.
+Same structural-induction technique as FM-48; the proof holds
+for any worker count.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1593,6 +1606,18 @@ remains true.
 **Verdict.** `FM50_EndpointMonotonic` holds across all demos
 and 300×60 random walk.
 **Apalache hopelessness proven** (depth 4, ~9 s).
+**Lean 4 deductive proof** in
+`formal/proofs/ControlPlane/Ordering.lean::fm50_endpoint_monotonic`.
+The Lean proof generalises the bounded check to a
+single-host-name carrier: once the endpoint resolves to
+`some host`, every reachable successor carries the same
+`some host`. The proof relies on a separate invariant
+(`InvEndpointImpliesInfra`: `endpoint = some _ → infraProvisioned`)
+that rules out the only constructor that could mutate the
+endpoint (`infraReady` requires `infraProvisioned = false`,
+contradicting the strengthened invariant). Composed via
+`reachable_preserves` on the conjunctive predicate
+`PEndpointHost`.
 
 **Classification.** **MODELLING** (verifies upstream invariant).
 
@@ -1948,9 +1973,9 @@ reason that the operator can read.
 | FM-45 | Per-key reconcile serialisation under multi-worker | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` + 3 refinement modules (`FM45_PerKeySerialisation`) |
 | FM-46 | TerminalError suppresses requeue | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM46_TerminalErrorNoRequeue`) |
 | FM-47 | Cache lags API server | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM47_CacheBehindAPI`) |
-| FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM48_NoCpBeforeInfraReady`) |
-| FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM49_NoWorkersBeforeCpInit`) |
-| FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM50_EndpointMonotonic`) |
+| FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM48_NoCpBeforeInfraReady`) + Lean 4 deductive (`Ordering.lean::fm48_no_cp_before_infra_ready`) |
+| FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM49_NoWorkersBeforeCpInit`) + Lean 4 deductive (`Ordering.lean::fm49_no_workers_before_cp_init`) |
+| FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM50_EndpointMonotonic`) + Lean 4 deductive (`Ordering.lean::fm50_endpoint_monotonic`) |
 | FM-51 | Cross-spec preflight-gate transient violation | MODELLING | Level-triggered re-evaluation by MS controller | Surfaced + verified in `specs/WorkerLifecycle.qnt`; weakened `FM33_PreflightGate` accordingly |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 

@@ -25,6 +25,10 @@ the model checkers in `../specs/`:
                            infinitely often. Closes the gap that
                            TLC's tableau and Apalache's temporal
                            pass cannot reach.
+  * Ordering.lean        — FM-48/49/50: end-to-end cluster
+                           bring-up ordering invariants. Refines
+                           ClusterE2E.qnt's bounded random-walk
+                           verdicts to an unbounded state space.
 
 The submodules expose definitions, lemmas, and theorems but do
 NOT auto-discharge proofs at the scaffold stage. Open obligations
@@ -36,3 +40,4 @@ import ControlPlane.Refinement
 import ControlPlane.Informativeness
 import ControlPlane.Safety
 import ControlPlane.Convergence
+import ControlPlane.Ordering
