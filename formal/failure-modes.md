@@ -77,17 +77,17 @@ records `OwnerRemediated=False, reason=InternalError`.
 **Run (drives system into the bad state).**
 `stuckLearnerScenario` in `Lifecycle.qnt`.
 
-**Production-faithful reconstruction.** `incidentInit` in
-`Lifecycle.qnt` reproduces the 2026-04-28 production state at
-`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`:
+**Scenario reconstruction.** `incidentInit` in
+`Lifecycle.qnt` reproduces the scenario state at
+`example-cluster`:
 
-| Variable | incidentInit value | Production observation |
+| Variable | incidentInit value | Scenario value |
 |---|---|---|
 | `members` | `{1, 2, 3, 4}` | etcd cluster has zwdl9, two siblings, crhpt |
 | `learners` | `{4}` | crhpt registered as learner |
 | `progress[4]` | `Stuck` | Match index not advancing |
 | `phase[4]` | `JoinFailed` | kubeadm-join exited |
-| `failureReason[4]` | `LearnerStuckOnPromote` | matches incident report |
+| `failureReason[4]` | `LearnerStuckOnPromote` | matches FM-1 spec |
 | `nodeRefSet[4]` | `false` | "Machine ... does not have a corresponding Node yet" |
 | `observation[1]` | `UnreachableTimeout` | EtcdMemberHealthy=Unknown on leader |
 | `machineHealthLabel[4]` | `UnhealthyMachine` | MHC flagged it |
@@ -145,7 +145,7 @@ does not provide a *manual* path either. The fix is a narrower
 remediation predicate that distinguishes "learner stuck" from
 "voter unreachable" and removes the learner unilaterally.
 
-**Counterexample-log row.** Inaugurated 2026-04-28 against the
+**Counterexample-log row.** Inaugurated (modelling pass) against the
 v1beta2 `EtcdMemberHealthy` projection; this row is the related
 upstream behaviour gap. See
 [`counterexample-log.md`](./counterexample-log.md).
@@ -268,6 +268,15 @@ always property — and it is also the root cause of the
 mismatch-set check in `canSafelyRemediate` returning false for
 machines that ARE healthy but transiently un-matched.
 
+**Infrastructure bounds.**
+- Start condition: `members.contains(m) and not(learners.contains(m)) and not(nodeRefSet.get(m))` — the Machine is a voting etcd member but its `Machine.status.nodeRef` has not yet been resolved by the Machine controller.
+- End condition: `nodeRefSet.get(m)` — `ResolveNodeRef(m)` fires.
+- Infrastructure cause(s) that turn this exogenous:
+  * Workload-cluster Node controller stalled (kube-controller-manager unhealthy on the workload cluster).
+  * Management-cluster Machine controller informer cache stuck — the watch on workload Nodes is healthy but events are not being processed.
+  * NodeRef-resolution Go path blocked on a webhook (FM-32 cross-reference); rare but observed during webhook rotation.
+  * apiserver-side Node admission controller misconfigured, dropping registration events.
+
 ## FM-5 — MHC observation stuck on NoCorrespondingMember
 
 **Trigger.** A Machine entered the cluster (KCP added it) but the
@@ -303,6 +312,15 @@ the election timeout (~1 s default). The model abstracts away
 the timer; in practice this state is observable but resolves
 without controller intervention.
 
+**Infrastructure bounds.**
+- Start condition: `currentTerm > 0 and not(leaderAt.keys().contains(currentTerm))` — term has advanced but no leader for the new term.
+- End condition: `leaderAt.keys().contains(currentTerm)` — `ElectLeader` fires for some voter.
+- Infrastructure cause(s) that turn this exogenous:
+  * Persistent network partition between etcd peers prevents quorum on any vote.
+  * Slow storage causes follower heartbeat timeouts to exceed the election timeout window, so each candidate steps down before completing the election round-trip.
+  * Misconfigured `--election-timeout-ms` set high enough to overlap with `--heartbeat-interval` × N, causing election livelock.
+  * Operator simultaneously restarts a quorum's worth of etcd processes (e.g. via systemd or a faulty rolling restart) without waiting for the cluster to re-elect between restarts.
+
 ## FM-7 — Concurrent unhealthy machines (cascading remediation)
 
 **Trigger.** Two control-plane Machines flip to `UnhealthyMachine`
@@ -323,6 +341,15 @@ is admitted; convergence proceeds.
 `MaxConcurrent=1` constant in `Remediation.cfg` is the load-
 bearing assumption; raising it would require re-checking the
 quorum invariant under concurrent removals.
+
+**Infrastructure bounds.**
+- Start condition: `decision.get(m1) = RemediationInFlight and decision.get(m2) = RemediationRequested` — the second remediation is gated by `AtMostOneRemediationPerMachine`.
+- End condition: `decision.get(m1) = Remediated` — the first remediation completes, allowing `EvaluateCanSafelyRemediate(m2)` to fire.
+- Infrastructure cause(s) that turn this exogenous:
+  * The first remediation's drain blocks on a PDB (FM-23 cross-reference) — the queue stalls indefinitely until `nodeDrainTimeout` fires or an operator intervenes.
+  * The replacement Machine for the first remediation cannot pass kubeadm preflight (FM-17 cross-reference) — `CompleteRemediation` never fires, the queue stays stuck.
+  * Etcd leadership lost mid-remediation (FM-6 deadlock) — `RemoveMember` cannot proceed without a leader, blocking the first remediation indefinitely.
+  * Webhook rotation (FM-32) coincides with the second `RequestRemediation` — KCP retries are silently dropped during the rotation window.
 
 ## FM-8 — InformativenessObligation violation
 
@@ -509,6 +536,16 @@ state during normal upgrades. The model verifies that — under
 the modelled recovery actions — the rolling update completes
 and the cluster returns to a healthy state on the new template.
 
+**Infrastructure bounds.**
+- Start condition: `exists m: template.get(m) != desiredTemplate and learners.contains(m)` — a replacement learner exists with the new template, mid-rolling-upgrade.
+- End condition: `forall m in machines: template.get(m) = desiredTemplate and learners = Set()` — every Machine on the desired template, no learners pending.
+- Infrastructure cause(s) that turn this exogenous (transient → permanent):
+  * Slow-storage learner times out kubeadm-join's `wait-control-plane` — the learner never promotes (overlaps FM-12).
+  * Workload-cluster Node controller fails to register the new Machine; `MarkReady` cannot fire, the rolling update stalls (overlaps FM-14).
+  * apiserver TLS bundle on the new template excludes a certificate signing the existing kube-proxy / kubelet identity — the new Machine cannot be reached over the LB once it advertises (cross-reference FM-13).
+  * Operator rolls forward repeatedly (template churn) — KCP cancels the in-flight rollout, scales the new learner down, repeats indefinitely (overlaps FM-20).
+  * Image-pull failure on the new template's container image — Preflight passes but kubelet never starts the static pods (apiserver, controller-manager, scheduler).
+
 ## FM-16 — Single-node cluster losing its only voter
 
 **Trigger.** A 1-node KCP cluster's only Machine fails
@@ -580,6 +617,15 @@ v1beta1→v1beta2 condition projection makes this state look like
 a real disagreement between MHC and etcd-side health, when in
 fact it is just a race between two reconcile loops.
 
+**Infrastructure bounds.**
+- Start condition: `machineHealthLabel.get(m) = HealthyMachine and memberHealth.get(m) = UnknownHealth` — disagreement between MHC's view of the Node and etcd-side health.
+- End condition: `memberHealth.get(m) in Set(Healthy, Lost)` — etcd-side observation refreshes (next Status RPC succeeds or fails decisively).
+- Infrastructure cause(s) that turn this exogenous:
+  * Etcd leader failover overlapping with MHC reconcile means `MemberHealthChange` fires with stale data; recovers within an election timeout under normal conditions.
+  * MHC controller's cluster cache stale (FM-34 cross-reference) — the etcd-side observation never refreshes because the cache holds old data.
+  * Permanent etcd Status RPC timeout (FM-13 LB outage or FM-3 partition) — `memberHealth` is stuck on `UnknownHealth` indefinitely.
+  * Concurrent rolling apiserver restart (FM-19) — the cache window overlaps with multiple reconciles, the race re-arms each cycle.
+
 ## FM-17 — kubeadm-join misconfiguration (kubelet wrong endpoint)
 
 **Init**: `kubeadmMisconfigInit`. Kubelet starts with a wrong
@@ -605,6 +651,15 @@ membership change at a time.
 **Classification**: **TRANSIENT**. KCP correctly sequences. See
 `issue-corpus.md` IC-10.
 
+**Infrastructure bounds.**
+- Start condition: `desiredReplicas > machines.size() and exists m in machines: machineHealthLabel.get(m) = UnhealthyMachine` — KCP simultaneously wants to scale up and remediate an unhealthy member.
+- End condition: One operation (scale-up or remediation) completes; the other is then admitted by the `targetEtcdClusterHealthy` gate.
+- Infrastructure cause(s) that turn this exogenous:
+  * The first-admitted operation fails (FM-23 stuck drain on remediation; FM-12 slow-storage on scale-up); the second never gets admitted.
+  * Webhook rotation (FM-32) coincides — both operations stall, KCP retries silently dropped during rotation window.
+  * Operator changes `desiredReplicas` mid-flight, churning the gate state (cross-reference FM-20 rollback).
+  * `targetEtcdClusterHealthy` returns `Unknown` due to LB outage (FM-13) — neither operation is admitted indefinitely.
+
 ## FM-19 — apiserver restart relist storm
 
 **Init**: `apiserverRestartInit`. Workload-cluster apiserver
@@ -614,6 +669,16 @@ restarted; LB returns errors briefly; KCP's MHC cache stale.
 re-populates.
 
 **Classification**: **TRANSIENT**. See `issue-corpus.md` IC-15.
+
+**Infrastructure bounds.**
+- Start condition: `lbHealthy = false or mhcCacheStale = true` — workload-cluster apiserver is restarting (LB returning 502/connection-refused) or MHC's cluster cache holds a stale connection.
+- End condition: `lbHealthy = true and mhcCacheStale = false and forall m: observation.get(m) refreshed` — apiserver is back, cache re-populated, observations refreshed.
+- Infrastructure cause(s) that turn this exogenous (transient → indistinguishable from permanent outage):
+  * apiserver in CrashLoopBackOff (config error, missing flag, etcd unreachable from apiserver pod) — the LB never returns 200.
+  * In-flight watches not properly drained on apiserver shutdown — informer caches across the management cluster hold stale data after the new apiserver comes up.
+  * Local etcd disk full on the workload cluster — apiserver keeps restarting; `lbHealthy` flaps between true/false in a way that matches FM-13 (LB broken) for any single window.
+  * Workload-cluster apiserver memory pressure → OOMKill loop, cycle time exceeds `nodeStartupTimeout` (default 30 s) — KCP starts treating the cluster as unhealthy and may begin remediation, deepening the outage.
+  * Operator-initiated apiserver upgrade overlapping with KCP rolling-upgrade — multiple cache refreshes overlap, the relist storm extends beyond the modelled window.
 
 ## FM-20 — Upgrade rollback mid-flight
 
@@ -642,6 +707,16 @@ replacement.
 
 **Classification**: **TRANSIENT** (operationally surprising). See
 `issue-corpus.md` IC-13.
+
+**Infrastructure bounds.**
+- Start condition: `members.size() = 5 and Set(4, 5).filter(m => memberHealth.get(m) = UnknownHealth).size() = 2` — 5-CP cluster has lost 2 voters concurrently.
+- End condition: First remediation succeeds (one replacement passes through learner→voter); the `targetEtcdClusterHealthy` gate then admits the second remediation.
+- Infrastructure cause(s) that turn this exogenous (transient → permanent):
+  * Correlated rack/power event leaves both nodes unreachable indefinitely — the cluster is in a 3-of-5 state, technically still has quorum, but cannot self-heal until at least one of the unhealthy machines comes back or is replaced.
+  * Replacement Machine for the first remediation cannot pass kubeadm-join (FM-1 stuck learner / FM-12 slow storage on the new node) — the first remediation never completes, the second stays queued.
+  * A *third* voter starts to flip to `UnknownHealth` while remediation is in flight — quorum boundary breached, becomes FM-2-shaped (both remaining members effectively unhealthy).
+  * Operator-initiated maintenance on a third voter overlapping with the concurrent failure — same FM-2 shape as above.
+  * `nodeStartupTimeout` set unusually high (e.g. 30 m) means KCP doesn't surface that the replacement Machine isn't joining; the queue stays blocked silently.
 
 ## FM-22 — Single-node scale-up race (existing voter dies)
 
@@ -694,6 +769,16 @@ every member EtcdMemberHealthy=Unknown but nothing is broken.
 flip back.
 
 **Classification**: **TRANSIENT**. See `issue-corpus.md` IC-12.
+
+**Infrastructure bounds.**
+- Start condition: `forall m in members: observation.get(m) = UnreachableTimeout` while etcd defrag holds the leader's locks (modelled as a transient flag on the leader).
+- End condition: Defrag finishes; Status RPC succeeds; `observation` flips to `ReachableHealthy` for every voter.
+- Infrastructure cause(s) that turn this exogenous (transient → permanent):
+  * Defrag process hung on I/O — zombie process holds the bbolt mmap lock, every Status RPC times out indefinitely.
+  * Underlying storage corruption (failed NVMe sector, btrfs/ext4 filesystem inconsistency) — defrag cannot complete, manual `etcdctl snapshot restore` required.
+  * OOMKill mid-defrag — etcd's bbolt file is left in an inconsistent state on disk; subsequent etcd restart fails or runs in degraded mode.
+  * Defrag triggered repeatedly under sustained write load (alarm threshold tripping every cycle) — the cluster spends most of its time in the "all voters Unknown" state, KCP starts treating it as an outage.
+  * Storage I/O depth exceeds defrag's working set — defrag completes for the leader but every other voter sees a different defrag start within the same KCP reconcile window, observations never simultaneously settle to ReachableHealthy.
 
 ## FM-31 — Custom Node conditions not surfaced on Machine
 
@@ -848,8 +933,8 @@ is a topology-specific variant of FM-1 verified to converge in
 | 3-node | 2/3 | 1 machine concurrently | Primary topology. Most failure-mode rows are exercised here. |
 | 5-node | 3/5 | 2 machines concurrently | More fault-tolerant; same logic as 3-node. |
 
-The user-reported incident at
-`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`
+The modelled scenario at
+`example-cluster`
 exhibits FM-1 and FM-8 simultaneously: the stuck learner blocks
 remediation (FM-1) and the v1beta2 condition surface drops the
 diagnostic key that would have explained why (FM-8).
