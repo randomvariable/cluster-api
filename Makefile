@@ -1006,6 +1006,18 @@ test-e2e: $(GINKGO) generate-e2e-templates ## Run the end-to-end tests
 		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
 		--e2e.use-existing-cluster=$(USE_EXISTING_CLUSTER)
 
+.PHONY: verify-trace-replay
+verify-trace-replay: ## Generate random Quint traces and replay through internal/trace/checkers (issue #11)
+	$(ROOT_DIR)/hack/tools/trace-replay-sweep.sh --total-traces 50 --max-steps 15
+
+.PHONY: verify-trace-replay-large
+verify-trace-replay-large: ## Like verify-trace-replay but with 10000 traces/spec (issue #11 acceptance)
+	$(ROOT_DIR)/hack/tools/trace-replay-sweep.sh --total-traces 10000 --max-steps 20
+
+.PHONY: verify-trace-replay-strict
+verify-trace-replay-strict: ## Trace-replay sweep that fails on any checker finding (not just pipeline errors)
+	$(ROOT_DIR)/hack/tools/trace-replay-sweep.sh --total-traces 50 --max-steps 15 --strict
+
 .PHONY: test-e2e-trace
 test-e2e-trace: ## Run the FM-* e2e tests and validate every recorded trace against internal/trace/checkers/
 	@# Run only the FM-* scenarios that wire the trace recorder.
