@@ -1,9 +1,8 @@
-# LSP-grounded refinement anchors
+# LSP-grounded refinement anchors — methodology
 
-Each abstract action in `formal/specs/Lifecycle.qnt` (and the
-related per-module specs) is grounded in a real Go entry point in
-this repository. The references below were resolved with the
-gopls language server (`mcp__gopls__go_search` /
+Every abstract action across the corpus is grounded in a real
+Go entry point. References were resolved with the gopls
+language server (`mcp__gopls__go_search` /
 `go_symbol_references`) at the SHA recorded in
 `formal/contracts/commits.yaml` under `repos.cluster-api.sha`
 (`HEAD`). Treat any reference that no longer resolves as a stale
@@ -16,6 +15,30 @@ by a gopls-resolvable symbol, not a free-text path. When a Go
 function moves or is renamed, the LSP-resolved entry point is
 where reviewers should look first to confirm the mapping is
 still sound.
+
+## Where the anchors live
+
+The canonical reference is
+[`formal/abstraction-mapping.md`](./abstraction-mapping.md), which
+has one row per Quint action with file:line citations. This file
+documents the methodology and provides a high-level summary by
+spec module.
+
+| Spec module | Primary Go anchor sites |
+|---|---|
+| `Lifecycle.qnt` + `Composition.qnt` + `EtcdMembership.qnt` + `KCPReconcile.qnt` + `KubeadmJoin.qnt` + `MachineHealthCheck.qnt` | `controlplane/kubeadm/internal/controllers/{controller,scale,remediation}.go`; `controlplane/kubeadm/internal/{workload_cluster,workload_cluster_etcd,workload_cluster_conditions}.go`; `internal/controllers/machine/{machine_controller,machine_controller_phases,drain/drain.go}.go`; `pkg/kubelet/{kubelet_node_status,kuberuntime}/`; `cmd/kubeadm/app/cmd/phases/join/`; `staging/src/k8s.io/apiserver/pkg/storage/etcd3/` |
+| `Topology.qnt` | `internal/controllers/topology/cluster/{cluster_controller,reconcile_state}.go`; `exp/topology/desiredstate/{desired_state,upgrade_plan,lifecycle_hooks}.go`; `internal/hooks/tracking.go`; `exp/topology/scope/upgradetracker.go`; `api/runtime/v1beta2/extensionconfig_types.go`; `api/core/v1beta2/common_types.go` |
+| `MachineSetPreflight.qnt` | `internal/controllers/machineset/{machineset_controller,machineset_preflight}.go` |
+| `InPlaceUpdate.qnt` | `feature/feature.go`; `api/runtime/hooks/v1alpha1/inplaceupdate_types.go`; `api/core/v1beta2/{machine,machineset}_types.go`; `internal/controllers/machine/machine_controller_inplace_update.go`; `internal/controllers/machineset/machineset_controller.go`; `internal/controllers/machinedeployment/{machinedeployment_canupdatemachineset,machinedeployment_rollout_rollingupdate}.go` |
+| `ControllerRuntime.qnt` + 3 refinements | `pkg/internal/controller/controller.go`; `pkg/controller/priorityqueue/priorityqueue.go`; `pkg/manager/{manager,internal}.go`; `pkg/{reconcile,source,handler,predicate,cache,client,leaderelection}/*.go` (in `/home/naadir/go/src/sigs.k8s.io/controller-runtime`) |
+| `ClusterE2E.qnt` | `internal/controllers/cluster/cluster_controller_phases.go`; plus all of the above (cross-controller composition) |
+| `SelfHosted.qnt` + `Lifecycle.multicluster.qnt` | (same as `Lifecycle.qnt` per cluster) |
+
+## Sample anchors per spec
+
+The abstraction-mapping table is the source of truth; the rows
+below are a representative subset for each spec, useful for
+finding where to look when an entry-point is renamed.
 
 ## Refinement anchors — KCP reconcile path
 

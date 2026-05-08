@@ -24,17 +24,89 @@ postconditions:
 
 ## Capabilities
 
+### Sanity & meta
+
 | Capability | Make target | Underlying command | Expected output marker |
 |---|---|---|---|
 | Sanity gate | `make verify` | `verify-formal.sh` | `All formal-subtree checks passed.` |
+| Regenerate fairness | `make fairness-gen` | `python3 hack/tools/quint-fairness-gen.py` | snippet at `/tmp/fairness-snippet.qnt` |
+| List Go LSP anchors | `make lsp-list` | `grep -oE …` | newline-separated paths |
+
+### KCP control plane (Lifecycle.qnt)
+
+| Capability | Make target | Underlying command | Expected output marker |
+|---|---|---|---|
 | Verify FM-N reachability | `make verify-fmN` | `quint verify --backend=tlc --invariant='not(HealthyControlPlane)'` | `[violation] Found an issue` (good — recovery is reachable) |
 | Verify FM-N hopelessness | (Apalache) `make verify-fmN` | `quint verify --backend=apalache --invariant='not(HealthyControlPlane)' --step=stepNoRecovery` | `[ok] No violation found` (good — hopeless without recovery) |
 | Verify IC-11 recovery | `make verify-ic11` | `quint run` deterministic | `[violation]` (HealthyControlPlane reached) |
 | Run fairness witness | `make verify-fm9-witness` | `quint run --init=fairConvergenceWitnessRun` | `[ok] No violation found` |
 | Self-hosted deadlock | `make verify-selfhosted-deadlock` | `quint run --invariant='not(Deadlocked)'` | `[violation]` (Deadlocked reached) |
 | Self-hosted recovery | `make verify-selfhosted-recovery` | `quint run` | `[ok]` |
-| Regenerate fairness | `make fairness-gen` | `python3 hack/tools/quint-fairness-gen.py` | snippet at `/tmp/fairness-snippet.qnt` |
-| List Go LSP anchors | `make lsp-list` | `grep -oE …` | newline-separated paths |
+
+### MachineSet preflight (FM-33, MachineSetPreflight.qnt)
+
+| Capability | Make target | Expected output marker |
+|---|---|---|
+| FM-33 blocked | `make verify-fm33-blocked` | `[ok]` |
+| FM-33 admitted-after-upgrade | `make verify-fm33-admitted-after-upgrade` | `[ok]` |
+| FM-33 version-skew | `make verify-fm33-versionskew` | `[ok]` |
+| FM-33 aggregate | `make verify-fm33` | `[ok]` × 3 |
+
+### ClusterTopology + runtime extensions (FM-39/40/41, Topology.qnt)
+
+| Capability | Make target | Expected output marker |
+|---|---|---|
+| Topology happy create | `make verify-topology-create` | `[ok]` |
+| Topology single upgrade | `make verify-topology-upgrade` | `[ok]` |
+| Topology multi-step upgrade | `make verify-topology-multistep` | `[ok]` |
+| Topology blocked-by-annotation | `make verify-topology-blocked` | `[ok]` |
+| Topology delete path | `make verify-topology-delete` | `[ok]` |
+| Topology random walk | `make verify-topology-random` | `[ok]` × 4 |
+| Topology aggregate | `make verify-topology` | end-to-end |
+
+### In-place updates (FM-42/43/44, InPlaceUpdate.qnt)
+
+| Capability | Make target | Expected output marker |
+|---|---|---|
+| Happy in-place | `make verify-inplace-happy` | `[ok]` |
+| Fallback to rolling | `make verify-inplace-fallback` | `[ok]` |
+| Multi-extension reject | `make verify-inplace-multi-ext` | `[ok]` |
+| Idempotence retry | `make verify-inplace-retry` | `[ok]` |
+| Cleanup orphaned hook | `make verify-inplace-cleanup` | `[ok]` |
+| Random walk (2000×80) | `make verify-inplace-random` | `[ok]` × 5 |
+| Aggregate | `make verify-inplace` | end-to-end |
+
+### controller-runtime substrate (FM-45/46/47, ControllerRuntime.qnt)
+
+| Capability | Make target | Expected output marker |
+|---|---|---|
+| Manager start | `make verify-cr-happy` | `[ok]` |
+| Multi-worker dispatch | `make verify-cr-multiworker` | `[ok]` |
+| Dedup-during-inflight | `make verify-cr-dedup` | `[ok]` |
+| RequeueAfter loop | `make verify-cr-requeue` | `[ok]` |
+| TerminalError no-requeue | `make verify-cr-terminal` | `[ok]` |
+| Leader loss | `make verify-cr-leader-loss` | `[ok]` |
+| Random walk (500×60) | `make verify-cr-random` | `[ok]` × 4 |
+| Aggregate | `make verify-cr` | end-to-end |
+
+### Refinements (Layer 2)
+
+| Capability | Make target |
+|---|---|
+| TopologyRefined random walk | `make verify-topology-refined` |
+| InPlaceUpdateRefined random walk | `make verify-inplace-refined` |
+| MachineSetPreflightRefined random walk | `make verify-mspreflight-refined` |
+| Aggregate | `make verify-refinements` |
+
+### End-to-end cluster lifecycle (FM-48/49/50, ClusterE2E.qnt)
+
+| Capability | Make target | Expected output marker |
+|---|---|---|
+| Bring-up to Stable | `make verify-e2e-bringup` | `[ok]` |
+| Rolling upgrade | `make verify-e2e-rolling` | `[ok]` |
+| In-place upgrade | `make verify-e2e-inplace` | `[ok]` |
+| Random walk (300×60) | `make verify-e2e-random` | `[ok]` × 12 |
+| Aggregate | `make verify-e2e` | end-to-end |
 
 ## Failure-mode catalogue (one row per FM)
 
@@ -69,69 +141,120 @@ postconditions:
 | 34 | KCP-BUG (latent) | `mhcCacheStaleInit` | `MhcCacheRefresh` | TLC: random walk passes |
 | 35 | MODEL-EXPANSION | `selfHostedDeadlockInit` (SelfHosted.qnt) | `KcpReconcileResume` | quint run: deadlock + recovery traces verified |
 | 37 | KCP-BUG (latent) | `lifecycleHookSkippedInit` | `TriggerPreUpgradeHook` | TLC: random walk passes |
+| 33 | KCP-DESIGN-GAP (closed) | `fm33ScaleUpDuringCpUpgradeInit` (`MachineSetPreflight.qnt`) | `KcpFinishUpgrade + EvaluatePreflight` | 3 demo runs verify gating |
+| 39 | MODELLING (closed) | `multiStepUpgradeRun` (`Topology.qnt`) | n/a — invariant of upstream contract | 5 demos + 200×30 random walk |
+| 40 | MODELLING (closed) | `annotationBlockedUpgradeRun` (`Topology.qnt`) | Operator removes annotation | 5 demos + 200×30 random walk |
+| 41 | MODELLING (closed) | (state invariant — `Topology.qnt`) | n/a | 200×30 random walk |
+| 42 | MODELLING (closed) | (state invariant — `InPlaceUpdate.qnt`) | n/a | 5 demos + 2000×80 random walk |
+| 43 | MODELLING (closed) | `updateMachineRetryLoopRun` (`InPlaceUpdate.qnt`) | n/a — idempotence invariant | 5 demos + 2000×80 random walk |
+| 44 | MODELLING (closed) | `multiExtensionRejectRun` (`InPlaceUpdate.qnt`) | Operator removes duplicate extension | 5 demos + 2000×80 random walk |
+| 45 | MODELLING (closed) | (state invariant — `ControllerRuntime.qnt`) | n/a — per-key serialisation | 6 demos + 500×60 random walk |
+| 46 | MODELLING (closed) | `terminalErrorRun` (`ControllerRuntime.qnt`) | n/a — TerminalError no-requeue | 6 demos + 500×60 random walk |
+| 47 | MODELLING (closed) | (state invariant — `ControllerRuntime.qnt`) | n/a — cache lag | 500×60 random walk |
+| 48 | MODELLING (closed) | (state invariant — `ClusterE2E.qnt`) | n/a — KCP-not-before-InfraReady | 3 demos + 300×60 random walk |
+| 49 | MODELLING (closed) | (state invariant — `ClusterE2E.qnt`) | n/a — workers-not-before-CPInit | 3 demos + 300×60 random walk |
+| 50 | MODELLING (closed) | (state invariant — `ClusterE2E.qnt`) | n/a — endpoint monotonicity | 3 demos + 300×60 random walk |
 
-## State-variable inventory
+## Spec-module inventory
 
-40 state variables across 8 categories. See [`reference.md` §State
-variables](./reference.md#state-variables-lifecycleqnt) for the
-exhaustive table. Categories:
+The corpus comprises 16 Quint modules organised in four layers.
+For exhaustive state-variable listings per module, read each
+spec's State section (the comment blocks at the top of each
+file group state vars by component with LSP anchors). The
+[`reference.md` §State variables](./reference.md#state-variables-lifecycleqnt)
+section catalogues `Lifecycle.qnt`'s 41 vars in detail.
 
-- EtcdMembership: `members`, `learners`, `leaderAt`, `currentTerm`, `progress`, `memberHealth` (6)
-- KubeadmJoin: `phase`, `failureReason`, `etcdMemberRegistered`, `kubeletReady`, `tlsBootstrapped`, `kubeletManifestReady`, `nodeLocallyRegistered`, `staticPodManifestsWritten`, `kubeadmMarkedAsControlPlane`, `kubeadmConfigUploaded` (10)
-- KCPReconcile: `machines`, `nodeRefSet`, `machineHealthLabel`, `decision`, `blockReason`, `preflightBlocked`, `desiredReplicas`, `template`, `desiredTemplate` (9)
-- MHC: `observation` (1)
-- Network: `lbHealthy`, `nodeReachable` (2)
-- Drain & PDB: `drainBlocked`, `pdbViolatedFor` (2)
-- Apiserver↔etcd: `apiserverEtcdReachable`, `apiserverReady`, `etcdCompactionInProgress` (3)
-- CRI: `criRuntimeReady`, `criImagesPulled`, `criPodSandboxRunning`, `criContainersRunning` (4)
-- Other: `customCondition` (FM-31), `webhooksAvailable` (FM-32), `mhcCacheStale` (FM-34), `hooksTriggered` (FM-37) (4)
+### Layer 0 (substrate)
+- `ControllerRuntime.qnt` — Manager + worker pool + priority
+  queue + leader election + cache vs APIReader. Multi-worker
+  variabilised via `WORKERS = 1.to(N)`.
 
-Total: 41 (the count drift between this and `40` in some docs is
-documentation sync; the source of truth is the `var` declarations
-in `formal/specs/Lifecycle.qnt`).
+### Layer 1 (per-component abstract specs)
+- `Lifecycle.qnt` — KCP + etcd + kubeadm-join + MHC (41 vars,
+  ~70 actions). Monolithic for TLC/Apalache verification.
+- `EtcdMembership.qnt`, `KCPReconcile.qnt`, `KubeadmJoin.qnt`,
+  `MachineHealthCheck.qnt`, `Composition.qnt` — modular
+  decomposition of `Lifecycle.qnt`, kept for documentation
+  and abstraction-mapping checks.
+- `Lifecycle.multicluster.qnt` — per-cluster expansion for
+  FM-35 self-hosted topology.
+- `SelfHosted.qnt` — focused FM-35 deadlock + recovery model.
+- `Topology.qnt` — ClusterTopology reconciler + 8 lifecycle
+  hooks + multi-step upgrade plan.
+- `MachineSetPreflight.qnt` — worker MS preflight gating.
+- `InPlaceUpdate.qnt` — in-place machine update choreography
+  across MD/MS/Machine controllers (10 actions, 5 demo runs).
+
+### Layer 2 (refinements)
+- `TopologyRefined.qnt` — Topology + CR substrate, single
+  Cluster, multi-worker.
+- `InPlaceUpdateRefined.qnt` — InPlaceUpdate (slice) + CR
+  substrate, two Machines, multi-worker.
+- `MachineSetPreflightRefined.qnt` — MachineSetPreflight (slice)
+  + CR substrate, two MachineSets, multi-worker.
+
+### Layer 3 (end-to-end)
+- `ClusterE2E.qnt` — full cluster lifecycle: bring-up
+  (BeforeClusterCreate → InfraCluster provision → KCP first CP
+  Machine → CP scale-up → ControlPlaneInitialized → MD creates
+  workers) plus rolling and in-place upgrade strategies.
+
+### TLA+
+- `Remediation.tla` — concurrent-remediation scheduler
+  (TLC-only, used to verify `Remediation.cfg` invariants).
 
 ## Workflow: add a new FM
 
-1. Decide on a name (e.g. FM-25 for the next slot) and an init
-   action name (e.g. `myFaultInit`).
-2. Edit `formal/specs/Lifecycle.qnt`:
-   - Copy a similar `*Init` action (e.g. `lbBrokenInit` for a
-     network-fault, `incidentInit` for a Machine-level fault).
+1. **Pick the right spec module** by domain:
+   - KCP / etcd / kubeadm-join / MHC → `Lifecycle.qnt`
+   - ClusterTopology / runtime hooks → `Topology.qnt`
+   - Worker MachineSet preflight → `MachineSetPreflight.qnt`
+   - In-place machine updates → `InPlaceUpdate.qnt`
+   - controller-runtime substrate → `ControllerRuntime.qnt`
+   - End-to-end ordering → `ClusterE2E.qnt`
+2. Decide on a name (next free FM-N) and an init action name.
+3. Edit the spec module:
+   - Copy a similar init/action as a template.
    - Adjust state-variable bindings to capture the new fault.
-3. Edit `formal/failure-modes.md`:
-   - Add `## FM-25 — <name>` section with trigger, recovery,
-     classification.
-4. Run typecheck:
+4. Edit `formal/failure-modes.md`:
+   - Add `## FM-N — <name>` section with trigger, recovery,
+     classification, LSP grounding (file:line citations).
+5. Run typecheck:
    ```sh
    cd formal && make typecheck
    ```
-5. Verify reachability:
+6. Verify reachability under `step` (replace `<Module>` and
+   `<invariant>` per spec):
    ```sh
-   quint verify --main=Lifecycle --init=myFaultInit --step=step \
+   quint verify --main=<Module> --init=<your-init> --step=step \
                 --max-steps=8 --backend=tlc \
-                --invariant='not(HealthyControlPlane)' \
-                formal/specs/Lifecycle.qnt
+                --invariant='not(<invariant>)' \
+                formal/specs/<Module>.qnt
    ```
-   Expected: `[violation]`.
-6. Verify hopelessness if applicable:
+   Expected: `[violation]` (the recovery state is reachable).
+7. Verify hopelessness under `stepNoRecovery` (Apalache, when
+   applicable):
    ```sh
-   echo y | quint verify --main=Lifecycle --init=myFaultInit \
+   echo y | quint verify --main=<Module> --init=<your-init> \
                           --step=stepNoRecovery --max-steps=4 \
                           --backend=apalache \
-                          --invariant='not(HealthyControlPlane)' \
-                          formal/specs/Lifecycle.qnt
+                          --invariant='not(<invariant>)' \
+                          formal/specs/<Module>.qnt
    ```
    Expected: `[ok] No violation found`.
-7. Add a `verify-fm25` Make target in `formal/Makefile`.
-8. Add an issue-corpus row in `formal/issue-corpus.md` if there's a
-   corresponding upstream gap.
-9. Run the CI gate:
-   ```sh
-   ./scripts/verify-formal.sh
-   ```
-   Expected: `All formal-subtree checks passed.`.
-10. Commit on `formality` branch with subject
-    `formal: FM-25 <name> (Phase NN/MM)`.
+8. Add a `verify-fm<N>` Make target in `formal/Makefile`.
+9. Add abstraction-mapping rows for any new actions in
+   `formal/abstraction-mapping.md` (one row per action,
+   `| <Module> | <Action> | <go-file:line> | <purpose> |`).
+10. Add an issue-corpus row in `formal/issue-corpus.md` if
+    there's a corresponding upstream gap.
+11. Run the CI gate:
+    ```sh
+    ./scripts/verify-formal.sh
+    ```
+    Expected: `All formal-subtree checks passed.`.
+12. Commit on `formality` branch with subject
+    `formal: FM-N <name>`.
 
 ## Workflow: re-bind a stale Go LSP anchor
 

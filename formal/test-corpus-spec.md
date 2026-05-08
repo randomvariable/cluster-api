@@ -1,10 +1,33 @@
 # Refinement test corpus — specification
 
-The cluster-api formal-modelling work has accumulated 24
-catalogued failure modes (FM-1..FM-24, plus seven candidates
-FM-31..FM-37 from the upstream-issue research). This document
-sets the scope, prioritisation, and method for turning them into
-a complete refinement test suite.
+The Cluster API formal-modelling work spans four CAPI controller
+domains plus the controller-runtime substrate they share, with
+50 catalogued failure modes (FM-1..FM-50). This document sets
+the scope, prioritisation, and method for the corpus.
+
+Failure-mode coverage by domain:
+
+| Domain | FM range | Spec module(s) |
+|---|---|---|
+| KCP control-plane lifecycle | FM-1..FM-24, FM-31, FM-32, FM-34, FM-37 | `Lifecycle.qnt` + companions |
+| Self-hosted topology | FM-35 | `SelfHosted.qnt`, `Lifecycle.multicluster.qnt` |
+| Worker MachineSet preflight | FM-33 | `MachineSetPreflight.qnt` |
+| ClusterTopology + runtime extensions | FM-39, FM-40, FM-41 | `Topology.qnt` |
+| In-place machine updates | FM-42, FM-43, FM-44 | `InPlaceUpdate.qnt` |
+| controller-runtime substrate | FM-45, FM-46, FM-47 | `ControllerRuntime.qnt` |
+| End-to-end cluster lifecycle | FM-48, FM-49, FM-50 | `ClusterE2E.qnt` |
+
+Three additional refinement modules
+(`TopologyRefined.qnt`, `InPlaceUpdateRefined.qnt`,
+`MachineSetPreflightRefined.qnt`) compose abstract specs onto
+the controller-runtime substrate and verify that every abstract
+safety invariant survives multi-worker semantics.
+
+The MoSCoW prioritisation below ranks each FM by operational
+priority. The classes (Must / Should / Could / Won't) refer to
+verification effort, not severity — every Must-row has at least
+one TLC reachability or Apalache hopelessness verdict; every
+Could-row has a Quint init landed.
 
 ## 1. MoSCoW prioritisation
 

@@ -4,35 +4,81 @@ Why the formal subtree is shaped the way it is. For task-oriented
 recipes see [`how-to.md`](./how-to.md); for the exhaustive listing
 see [`reference.md`](./reference.md).
 
-## Why a formal model at all
+## Why a formal corpus at all
 
-The Cluster API control-plane lifecycle has at least three
-interdependent state machines (KCP, etcd Raft, kubeadm-join) running
-on top of a fourth (the kubelet ↔ containerd ↔ static-pod runtime).
-A bug in any layer's invariant — quorum preservation, phase
-ordering, MHC observation projection — surfaces as cluster downtime
-that operators document but rarely root-cause to a specific
-contract. The formal model makes the implicit contracts between
-these layers explicit and machine-checkable.
+Cluster API runs an interdependent network of controllers — KCP,
+ClusterTopology, MachineDeployment, MachineSet, Machine,
+MachineHealthCheck — all built on the same controller-runtime
+substrate (worker pool, priority queue, leader election,
+informer cache). A bug in any layer's invariant — quorum
+preservation, phase ordering, hook ordering, per-key reconcile
+serialisation, version-skew gating — surfaces as cluster
+downtime that operators document but rarely root-cause to a
+specific contract.
+
+The formal corpus makes the implicit contracts between these
+layers explicit and machine-checkable.
 
 Concretely, the corpus exists to:
 
-1. **Catch interface drift early** — every action in the Quint spec
-   is anchored to a Go entry point in `abstraction-mapping.md`. If a
-   future refactor moves or renames an entry point, the CI gate
-   refuses the change, forcing a deliberate decision.
-2. **Document operational failure modes** — the 24 catalogued FMs
-   (plus 4 from upstream issue mining) capture the failure shapes
-   operators see in production, with explicit start/end conditions
-   and infrastructure causes.
-3. **Verify hopelessness claims** — Apalache proves five FMs (FM-2,
-   3, 13, 16, 17) are unrecoverable without operator intervention.
-   These verdicts justify the operator-facing alerts ("you must
-   restore from snapshot") that exist today as folklore.
-4. **Provide a shared vocabulary** — when an upstream issue
-   describes a failure, mapping it to a model FM gives reviewers a
-   shared anchor and makes the overlap with already-documented FMs
-   visible.
+1. **Catch interface drift early** — every action in every Quint
+   spec is anchored to a Go entry point in
+   `abstraction-mapping.md`. If a future refactor moves or
+   renames an entry point, the CI gate refuses the change,
+   forcing a deliberate decision.
+2. **Document operational failure modes** — 50 catalogued FMs
+   (FM-1..FM-50) capture failure shapes from production
+   incidents, upstream issue mining, and modelling-original
+   discoveries. Each carries explicit start/end conditions and
+   infrastructure causes.
+3. **Verify hopelessness claims** — Apalache proves six FMs
+   (FM-2, 3, 13, 16, 17, 23) are unrecoverable without operator
+   intervention. These verdicts justify the operator-facing
+   alerts ("you must restore from snapshot") that exist today
+   as folklore.
+4. **Surface cross-controller ordering invariants** — the
+   end-to-end spec (`ClusterE2E.qnt`) verifies cross-cutting
+   properties like "KCP must not create CP Machines before
+   InfraCluster is ready" (FM-48), "MD must not create workers
+   before ControlPlaneInitialized" (FM-49), and
+   "ControlPlaneEndpoint is monotonic" (FM-50).
+5. **Provide a shared vocabulary** — when an upstream issue
+   describes a failure, mapping it to a model FM gives
+   reviewers a shared anchor and makes the overlap with
+   already-documented FMs visible.
+
+## The four-layer architecture
+
+The corpus is organised around CAPI's controller architecture:
+
+- **Layer 0 (substrate)** — `ControllerRuntime.qnt` models the
+  workqueue + worker pool + leader election + cache vs APIReader
+  split that every CAPI controller is built on. Multi-worker
+  concurrency is variabilised via `WORKERS = 1.to(N)`.
+- **Layer 1 (per-component abstract specs)** — one spec per
+  controller domain, each focused on its own state machine
+  without modelling the substrate. `Lifecycle.qnt` covers KCP +
+  etcd + kubeadm-join + MHC; `Topology.qnt` covers the
+  ClusterTopology reconciler + runtime-extension lifecycle
+  hooks; `MachineSetPreflight.qnt` covers worker MS preflight
+  gating; `InPlaceUpdate.qnt` covers the in-place machine update
+  choreography across MD/MS/Machine controllers.
+- **Layer 2 (refinements)** — three `*Refined.qnt` modules
+  compose Layer 1 specs onto the Layer 0 substrate. Each
+  verifies that the abstract safety invariants survive the
+  multi-worker substrate semantics (per-key serialisation,
+  RequeueAfter, leader election).
+- **Layer 3 (end-to-end)** — `ClusterE2E.qnt` consolidates the
+  full bring-up handshake (BeforeClusterCreate → InfraCluster
+  provision → KCP first CP Machine → CP scale-up →
+  ControlPlaneInitialized → MD creates workers → Stable) plus
+  the upgrade flow (rolling vs in-place).
+
+Why layers? Each spec is verifiable in isolation, which keeps
+TLC/Apalache state spaces tractable. Layer 2 lets us prove the
+abstract specs survive substrate semantics without re-verifying
+the abstract behaviour. Layer 3 surfaces ordering invariants
+that no single Layer-1 spec captures.
 
 ## Why Quint, not raw TLA+
 
@@ -53,27 +99,56 @@ The cost: Quint's TLA+ output isn't always optimal, and some
 features (notably fairness, see Phase 11c below) hit translation
 edge cases that you'd avoid writing TLA+ directly.
 
-## Why a monolithic Lifecycle.qnt
+## Why a monolithic Lifecycle.qnt for the KCP domain
 
 The original plan had one module per concern (EtcdMembership,
 KCPReconcile, KubeadmJoin, MachineHealthCheck) plus a Composition
-module wiring them. We have those modules — they're checked by the
-abstraction-mapping drift CI gate — but TLC and Apalache run against
-the monolithic `Lifecycle.qnt`. Why:
+module wiring them. We have those modules — they're checked by
+the abstraction-mapping drift CI gate — but TLC and Apalache run
+against the monolithic `Lifecycle.qnt`. Why:
 
 - **Cross-module composition in Quint hits TLA+ level errors.**
-  `import M.*` plus `init`/`step` collisions cause `Level error in
-  applying operator $SetOfAll` from TLC. Worked around for the
-  modular specs but the composition is sketchy.
-- **Single-spec verification is faster.** Apalache's symbolic engine
-  prefers one spec; cross-module verification compounds variable
-  resolution.
-- **Counterexamples are easier to read.** A monolithic spec means
-  a single trace; modular specs require synthesis.
+  `import M.*` plus `init`/`step` collisions cause `Level error
+  in applying operator $SetOfAll` from TLC. Worked around for
+  the modular specs but the composition is sketchy.
+- **Single-spec verification is faster.** Apalache's symbolic
+  engine prefers one spec; cross-module verification compounds
+  variable resolution.
+- **Counterexamples are easier to read.** A monolithic spec
+  means a single trace; modular specs require synthesis.
 
-The trade-off: Lifecycle.qnt is large (~5000 lines, 70 actions). The
-modular specs are kept as documentation and for the abstraction-
-mapping drift check.
+The trade-off: `Lifecycle.qnt` is large (~5000 lines, 70
+actions). The modular specs are kept as documentation and for
+the abstraction-mapping drift check.
+
+This pattern applies only to the KCP domain. The other Layer-1
+specs (`Topology.qnt`, `MachineSetPreflight.qnt`,
+`InPlaceUpdate.qnt`) are each smaller (300-700 lines) and
+focused on one controller, so the modular trade-off doesn't
+apply.
+
+## Why composition without import (refinement modules)
+
+The Layer-2 refinement modules
+(`TopologyRefined.qnt`, `InPlaceUpdateRefined.qnt`,
+`MachineSetPreflightRefined.qnt`) embed both the substrate state
+and the abstract spec state in one self-contained module rather
+than using Quint `import`. Why:
+
+- **Quint's import semantics are limited.** Cross-file imports
+  don't compose well with action-level state mutation; the
+  refinement modules need both substrate state vars
+  (`queuePos`, `workerOnKey`) and abstract state vars
+  (`clusterPhase`, `pendingHooks`) to mutate within the same
+  action.
+- **Self-contained modules are easier to verify.** A reader can
+  see the full state machine in one file. The duplication is
+  the cost of avoiding import-time errors.
+- **Refinement is verified empirically.** Each refinement
+  module re-states every abstract safety invariant; running
+  random walks confirms they hold under the joint substrate
+  semantics. This is a sound proof of refinement modulo the
+  invariants verified.
 
 ## Why TLC + Apalache
 

@@ -1,16 +1,33 @@
-# Failure modes for the KCP-managed control-plane lifecycle
+# Failure modes — Cluster API formal corpus
 
-This catalogue enumerates every failure mode the model in
-[`specs/Lifecycle.qnt`](./specs/Lifecycle.qnt) can reach. Each
-mode is identified by an English name, a Quint `run` that drives
-the system into the bad state, a recovery sequence (or the
-documented absence of one), and a classification:
+This catalogue enumerates every failure mode the corpus models.
+Each mode is identified by an English name, a Quint `run` (or
+`init` action) that drives the system into the bad state, a
+recovery sequence (or the documented absence of one), the
+spec module that hosts it, and a classification.
+
+The catalogue spans four CAPI controller domains plus the
+controller-runtime substrate they share:
+
+| Domain | Spec module(s) | FM range |
+|---|---|---|
+| KCP control-plane lifecycle | `Lifecycle.qnt` + companions | FM-1..FM-24, FM-31, FM-32, FM-34, FM-37 |
+| Self-hosted topology | `SelfHosted.qnt` + `Lifecycle.multicluster.qnt` | FM-35 |
+| Worker MachineSet preflight | `MachineSetPreflight.qnt` | FM-33 |
+| ClusterTopology + runtime extensions | `Topology.qnt` | FM-39, FM-40, FM-41 |
+| In-place machine updates | `InPlaceUpdate.qnt` | FM-42, FM-43, FM-44 |
+| controller-runtime substrate | `ControllerRuntime.qnt` | FM-45, FM-46, FM-47 |
+| End-to-end cluster lifecycle | `ClusterE2E.qnt` | FM-48, FM-49, FM-50 |
+
+## Classification taxonomy
 
 | Class | Meaning |
 |---|---|
-| **EXOGENOUS** | Caused by an open-system event the model cannot prevent — network partition, hardware failure, etcd cluster-wide unreachability. KCP cannot fix it; a recovery requires the open-system event to resolve. |
-| **KCP-BUG** | KCP can in principle fix this but the current implementation does not, or fixes it incorrectly. Each row links to a counterexample-log entry. |
-| **MODEL-INCOMPLETE** | The model does not yet capture the full controller-runtime behaviour required to recover. The mode is not necessarily a bug; the model needs an additional action. |
+| **EXOGENOUS** | Caused by an open-system event the model cannot prevent — network partition, hardware failure, etcd cluster-wide unreachability. The controller cannot fix it; recovery requires the open-system event to resolve. |
+| **KCP-BUG** | KCP can in principle fix this but the current implementation does not, or fixes it incorrectly. Each row links to a counterexample-log entry. (Used for KCP-specific FMs; the broader equivalent for non-KCP controllers is **CONTROLLER-BUG** but the classes are documented inline per-FM.) |
+| **KCP-DESIGN-GAP** / **CONTROLLER-DESIGN-GAP** | The controller's design has a known gap surfaced by the model; the gap is closed in upstream code (e.g. FM-33 closed by cluster-api#11117). |
+| **MODEL-INCOMPLETE** | The model does not yet capture the full controller behaviour required to recover. The mode is not necessarily a bug; the model needs an additional action. |
+| **MODELLING** | A safety / ordering invariant of the upstream code that the model surfaces explicitly, e.g. multi-step upgrade hook ordering (FM-39), per-key serialisation under multi-worker (FM-45), KCP must not create CP Machines before InfraReady (FM-48). These verify upstream behaviour rather than expose bugs. |
 | **TRANSIENT** | The system passes through this state during normal operation; convergence requires only that the rest of the choreography continue. Not a bug. |
 
 Each FM also carries a **Provenance** line marking how the failure
@@ -20,20 +37,24 @@ mode entered this catalogue:
 |---|---|
 | **Operational** | Observed by humans operating real clusters — folklore, incident reports, post-mortems, on-call runbooks. Most KCP failure modes. |
 | **LLM-synthesised** | Pattern-recognised during the modelling work by reasoning across components (kubeadm + kubelet + CRI + etcd + KCP + MHC). No specific upstream issue was found; the failure mode is plausible from cross-component knowledge but not yet documented elsewhere. |
-| **Modelling** | Uncovered by the formal model itself — TLC counterexamples, Apalache hopelessness verdicts, type-check forced disambiguation, fairness-bisection cycles. Section refers to the verification artefact that exposed it. |
+| **Modelling** | Uncovered by the formal model itself — TLC counterexamples, Apalache hopelessness verdicts, type-check forced disambiguation, fairness-bisection cycles, ordering invariants surfaced by composition. Section refers to the verification artefact that exposed it. |
 | **Upstream issue: <repo#N>** | An explicit issue thread; the pinned link is in the FM's body. |
+| **Upstream (controller-runtime)** | Documented behaviour of `sigs.k8s.io/controller-runtime` modelled in `ControllerRuntime.qnt`. |
 
 A given FM may carry multiple provenance tags when sources
 overlap (e.g. operational knowledge corroborated by an upstream
 issue).
 
-Convergence is checked against the `HealthyControlPlane`
-predicate in `Lifecycle.qnt` (every Machine has a NodeRef, the
-voter set has quorum, every voter is Healthy, no learners, leader
-exists, no remediation Blocked, no preflightBlocked, all MHC
-observations Reachable).
+Convergence (where applicable) is checked against per-spec
+predicates: `HealthyControlPlane` in `Lifecycle.qnt`,
+`AllSafetyInvariants` in `Topology.qnt` /
+`MachineSetPreflight.qnt` / `InPlaceUpdate.qnt` /
+`ControllerRuntime.qnt` / `ClusterE2E.qnt`. Each FM cites its
+relevant invariants inline.
 
-Every row is reproducible with the corresponding `quint run` invocation.
+Every row is reproducible with the corresponding `quint run`
+invocation; see [`verify-runbook.md`](./verify-runbook.md) for
+copy-paste recipes per spec.
 
 ## Methodology note
 

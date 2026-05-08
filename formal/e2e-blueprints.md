@@ -6,6 +6,15 @@ that are realistic to implement on a CAPD-based test
 infrastructure. Each blueprint is ~150 LoC of Go and ~5–25
 minutes of e2e wall time.
 
+The blueprints below are KCP-focused (FM-1..FM-24) — these are
+the FMs with the most operational urgency and the clearest
+docker-primitive mapping. The non-KCP failure modes (FM-33,
+FM-39..FM-50) are largely modelling-level invariants of upstream
+contracts; they don't have concrete failure shapes that a CAPD
+test can reproduce. Future work could add e2e blueprints for
+e.g. multi-step upgrade hook ordering (FM-39) or in-place
+update idempotence (FM-43), but the marginal value is low.
+
 The fault catalogue in `dst-methodology.md` §2 maps every
 abstract action to a Docker primitive. The blueprints below cite
 the Docker primitive(s) each spec will use.

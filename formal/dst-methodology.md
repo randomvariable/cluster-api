@@ -1,10 +1,19 @@
 # Deterministic simulation testing methodology for CAPI
 
 This document collects the fault-injection and trace-replay
-patterns the formal model relies on. The intent is to bridge the
-gap between the model's abstract actions (`Partition(m)`,
-`LbBroken`, `EtcdJoinTimeout(m)`, …) and concrete, reproducible
-operations on a CAPD-based test cluster.
+patterns the formal corpus relies on. The intent is to bridge
+the gap between abstract actions across all spec modules
+(`Partition(m)`, `LbBroken`, `EtcdJoinTimeout(m)`,
+`InfraClusterProvision`, `OperatorBumpVersion`, …) and concrete,
+reproducible operations on a CAPD-based test cluster.
+
+The methodology applies to every spec in the corpus —
+`Lifecycle.qnt`, `Topology.qnt`, `MachineSetPreflight.qnt`,
+`InPlaceUpdate.qnt`, and the end-to-end `ClusterE2E.qnt`. The
+controller-runtime substrate (`ControllerRuntime.qnt`) is
+verified analytically rather than via DST since its faults
+(leader loss, cache lag) reduce to ordering invariants on the
+abstract substrate state.
 
 The approach takes its cues from public DST literature —
 notably Hsieh et al. (NSDI 2017), Conway et al. (FoundationDB,
@@ -93,7 +102,7 @@ The test runner picks the seed for the `rand()` invocations from
 
 ## 4. Pareto buggify — rare-event fault injection
 
-Many production failures look like the user-reported FM-1
+Many production failures look like the FM-1
 incident: a low-frequency triggering event that, once present,
 holds the cluster in an unrecoverable state. To exercise these,
 inject faults with **Pareto-distributed inter-arrival times**:

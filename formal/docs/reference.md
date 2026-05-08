@@ -13,11 +13,11 @@ Run `cd formal && make help`. Targets are grouped by purpose:
 | Target | Effect | Typical runtime |
 |---|---|---|
 | `typecheck` | `quint typecheck` every `formal/specs/*.qnt` | <1 s |
-| `test` | `quint run --max-samples=200` every spec with declared runs | ~30 s for Lifecycle.qnt |
+| `test` | `quint run --max-samples=200` every spec with declared runs | ~3 min total |
 | `proofs` | `lake build` the Lean 4 project at `formal/proofs/` | ~2 min cold, instant warm |
 | `tlc` | run TLC against every `formal/specs/*.cfg` | ~1 s for `Remediation.tla` |
 | `drift` | check every Quint action has an `abstraction-mapping.md` row | <1 s |
-| `verify` | sequential: `typecheck` → `test` → `tlc` → `proofs` → `drift` | ~3 min cold |
+| `verify` | sequential: `typecheck` → `test` → `tlc` → `proofs` → `drift` | ~5 min cold |
 | `clean` | remove `proofs/.lake`, `proofs/build`, `_apalache-out` | instant |
 
 ### Per-FM verification
@@ -51,6 +51,76 @@ Variables: `MAX_STEPS_APALACHE` (default 4), `MAX_STEPS_TLC` (default
 |---|---|---|
 | `verify-selfhosted-deadlock` | `selfHostedDeadlockTrace` reaches `Deadlocked` | quint run |
 | `verify-selfhosted-recovery` | `selfHostedRecoveryTrace` clears Deadlocked | quint run |
+| `verify-multicluster-typecheck` | typecheck `Lifecycle.multicluster.qnt` | quint typecheck |
+| `verify-multicluster-safety` | random-walk SafetyInvariants | quint run |
+| `verify-multicluster-deadlock` | deterministic FM-35 deadlock trace | quint run |
+| `verify-multicluster-recovery` | deterministic FM-35 recovery trace | quint run |
+
+### FM-33 (MachineSet preflight)
+
+| Target | Property | Backend |
+|---|---|---|
+| `verify-fm33-blocked` | `fm33ScaleUpBlockedRun` blocks with CpUnstable | quint run |
+| `verify-fm33-admitted-after-upgrade` | scale-up admitted after KCP upgrade | quint run |
+| `verify-fm33-versionskew` | block with KubernetesVersionSkewViolation | quint run |
+| `verify-fm33` | aggregate of the three | — |
+
+### FM-39/40/41 (ClusterTopology + runtime extensions)
+
+| Target | Effect |
+|---|---|
+| `verify-topology-create` | `happyCreateRun` |
+| `verify-topology-upgrade` | `happyUpgradeRun` (single-step) |
+| `verify-topology-multistep` | `multiStepUpgradeRun` (3 minor steps) |
+| `verify-topology-blocked` | `annotationBlockedUpgradeRun` (FM-40) |
+| `verify-topology-delete` | `deleteRun` |
+| `verify-topology-fm39`, `verify-topology-fm41` | random walks of single invariants |
+| `verify-topology-random` | random walk every Topology invariant (200×30) |
+| `verify-topology` | aggregate of all of the above |
+
+### FM-42/43/44 (in-place machine updates)
+
+| Target | Effect |
+|---|---|
+| `verify-inplace-happy` | full move + UpdateMachine + complete |
+| `verify-inplace-fallback` | extension says no, fall back to rolling |
+| `verify-inplace-multi-ext` | FM-44 multi-extension reject |
+| `verify-inplace-retry` | FM-43 idempotence retry loop |
+| `verify-inplace-cleanup` | operator strips annotation; cleanup |
+| `verify-inplace-random` | random walk every invariant (2000×80) |
+| `verify-inplace` | aggregate |
+
+### FM-45/46/47 (controller-runtime substrate)
+
+| Target | Effect |
+|---|---|
+| `verify-cr-happy` | manager start + leader + reconcile |
+| `verify-cr-multiworker` | per-key serialisation under multi-worker |
+| `verify-cr-dedup` | dedup-during-inflight |
+| `verify-cr-requeue` | RequeueAfter loop |
+| `verify-cr-terminal` | FM-46 TerminalError no-requeue |
+| `verify-cr-leader-loss` | leader-loss path |
+| `verify-cr-random` | random walk every invariant (500×60) |
+| `verify-cr` | aggregate |
+
+### Refinements (Layer 2)
+
+| Target | Effect |
+|---|---|
+| `verify-topology-refined` | TopologyRefined random walk (300×40) |
+| `verify-inplace-refined` | InPlaceUpdateRefined random walk |
+| `verify-mspreflight-refined` | MachineSetPreflightRefined random walk |
+| `verify-refinements` | aggregate |
+
+### FM-48/49/50 (end-to-end cluster lifecycle)
+
+| Target | Effect |
+|---|---|
+| `verify-e2e-bringup` | full bring-up to Stable |
+| `verify-e2e-rolling` | bring-up + rolling upgrade |
+| `verify-e2e-inplace` | bring-up + in-place upgrade |
+| `verify-e2e-random` | random walk every E2E invariant (300×60) |
+| `verify-e2e` | aggregate |
 
 ### Meta
 
@@ -61,7 +131,8 @@ Variables: `MAX_STEPS_APALACHE` (default 4), `MAX_STEPS_TLC` (default
 
 ## Per-FM commands (manual invocation)
 
-For FMs without dedicated targets, the template is:
+For FMs in `Lifecycle.qnt` without dedicated targets, the
+template is:
 
 ```sh
 # TLC reachability under recovery (expect [violation] = HealthyControlPlane reached):
@@ -78,7 +149,14 @@ echo y | quint verify --main=Lifecycle --init=<init> \
                        formal/specs/Lifecycle.qnt
 ```
 
-Replace `<init>` with one of (full list in `Lifecycle.qnt`):
+For non-KCP specs, swap `--main=Lifecycle` for the spec module
+(`Topology` / `MachineSetPreflight` / `InPlaceUpdate` /
+`ControllerRuntime` / `ClusterE2E`) and pick the spec's primary
+invariant (`AllSafetyInvariants` is universal).
+
+Replace `<init>` with one of (full list in `Lifecycle.qnt`,
+`Topology.qnt`, `MachineSetPreflight.qnt`, `InPlaceUpdate.qnt`,
+`ControllerRuntime.qnt`, `ClusterE2E.qnt`):
 
 | FM | Init action |
 |---|---|
@@ -108,7 +186,10 @@ Replace `<init>` with one of (full list in `Lifecycle.qnt`):
 
 ## State variables (Lifecycle.qnt)
 
-The model carries 40 state variables, organised by component.
+The KCP model carries 40 state variables, organised by component.
+For state variables in the other specs, read the spec's State
+section directly — the comment blocks at the top of each module
+group them by component with LSP anchors.
 
 ### EtcdMembership
 
@@ -274,13 +355,22 @@ formal/
 │   ├── kcp-machine-contract.md
 │   └── kubeadm-etcd-contract.md
 ├── specs/                         — Quint + TLA+ source
-│   ├── Lifecycle.qnt              — monolithic spec (TLC target)
+│   ├── Lifecycle.qnt              — monolithic KCP spec (TLC target)
+│   ├── Lifecycle.multicluster.qnt — per-cluster expansion (FM-35)
 │   ├── EtcdMembership.qnt         — modular spec
 │   ├── KCPReconcile.qnt
 │   ├── KubeadmJoin.qnt
 │   ├── MachineHealthCheck.qnt
 │   ├── Composition.qnt
 │   ├── SelfHosted.qnt             — FM-35 dual-cluster
+│   ├── Topology.qnt               — ClusterTopology + runtime extensions (FM-39/40/41)
+│   ├── MachineSetPreflight.qnt    — worker MS preflight gating (FM-33)
+│   ├── InPlaceUpdate.qnt          — in-place machine updates (FM-42/43/44)
+│   ├── ControllerRuntime.qnt      — substrate model (FM-45/46/47)
+│   ├── TopologyRefined.qnt        — refinement onto substrate
+│   ├── InPlaceUpdateRefined.qnt   — refinement onto substrate
+│   ├── MachineSetPreflightRefined.qnt — refinement onto substrate
+│   ├── ClusterE2E.qnt             — end-to-end cluster lifecycle (FM-48/49/50)
 │   ├── Remediation.tla            — concurrent-remediation scheduler
 │   └── Remediation.cfg
 ├── proofs/                        — Lean 4 (lake)
