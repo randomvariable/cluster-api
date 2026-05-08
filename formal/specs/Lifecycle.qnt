@@ -423,7 +423,7 @@ module Lifecycle {
   action ObserveLearnerProgress(id: MachineId, p: LearnerProgress): bool = all {
     learners.contains(id),
     // Stuck is sticky: once a learner is Stuck, only an explicit
-    // recovery action can clear it. This matches the user-reported
+    // recovery action can clear it. This matches the modelled
     // incident's dynamics where an underlying gRPC routing bug
     // (kubernetes-sigs reproducer) keeps the learner from
     // promoting; observation alone does not heal it.
@@ -470,10 +470,82 @@ module Lifecycle {
     members.contains(id),
     voters(members.exclude(Set(id)), learners.exclude(Set(id))).size() >= 1,
     hasLeader(leaderAt, currentTerm),
+    leaderAt.get(currentTerm) != id,
     members'  = members.exclude(Set(id)),
     learners' = learners.exclude(Set(id)),
     progress' = progress, memberHealth' = memberHealth,
     leaderAt' = leaderAt, currentTerm' = currentTerm,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // LeaderStepDown — the current leader steps down because its
+  // observation flipped to UnreachableTimeout/Unhealthy or it was
+  // removed from the cluster out-of-band. Advances the term; no
+  // leader assigned at the new term until ElectLeader fires.
+  // Refines the etcd-side observation that the leader's lease
+  // lapses when it loses connectivity to a quorum.
+  // Contract: R-LEAD-STEP-DOWN.
+  action LeaderStepDown(id: MachineId): bool = all {
+    hasLeader(leaderAt, currentTerm),
+    leaderAt.get(currentTerm) == id,
+    currentTerm < MAX_TERM,
+    any {
+      memberHealth.keys().contains(id) and memberHealth.get(id) == UnknownHealth,
+      memberHealth.keys().contains(id) and memberHealth.get(id) == Unhealthy,
+      not(members.contains(id)),
+    },
+    currentTerm' = currentTerm + 1,
+    members' = members, learners' = learners,
+    leaderAt' = leaderAt, progress' = progress,
+    memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // TransferLeadership — KCP's pre-scale-down optimisation. Refines
+  // Workload.ForwardEtcdLeadership: before removing the current
+  // leader, transfer leadership to a healthy follower. Pre-conditions
+  // encode etcd's MoveLeader RPC contract:
+  //   * src is the current leader
+  //   * dst is a current voter (not a learner)
+  //   * dst is healthy enough to accept the transfer
+  // Effect: advances the term and assigns dst as leader at the new
+  // term. The brief no-leader window real etcd exposes during transfer
+  // is exposed separately via LeaderStepDown.
+  // Contract: R-LEAD-STEP-DOWN.
+  action TransferLeadership(src: MachineId, dst: MachineId): bool = all {
+    hasLeader(leaderAt, currentTerm),
+    leaderAt.get(currentTerm) == src,
+    members.contains(dst),
+    not(learners.contains(dst)),
+    dst != src,
+    memberHealth.keys().contains(dst),
+    memberHealth.get(dst) == Healthy,
+    currentTerm < MAX_TERM,
+    not(leaderAt.keys().contains(currentTerm + 1)),
+    currentTerm' = currentTerm + 1,
+    leaderAt' = leaderAt.put(currentTerm + 1, dst),
+    members' = members, learners' = learners,
+    progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
     machines' = machines, nodeRefSet' = nodeRefSet,
@@ -812,7 +884,7 @@ module Lifecycle {
   //
   //   1. matchableMachines == machines (every Machine has a
   //      NodeRef, so KCP can match Machines to etcd members by
-  //      node name). The user-reported incident fails at this gate.
+  //      node name). The modelled scenario fails at this gate.
   //   2. targetEtcdClusterHealthy(addEtcdMember=false,
   //      etcdMemberToBeDeleted=m) — the post-remediation etcd
   //      cluster has quorum.
@@ -1271,7 +1343,7 @@ module Lifecycle {
   // RemoveStuckLearner: KCP detects a learner stuck below the
   // promote threshold and removes the etcd member as part of
   // remediation. This is the action whose absence in the
-  // user-reported incident stalled the cluster.
+  // modelled scenario stalled the cluster.
   action RemoveStuckLearner(m: MachineId): bool = all {
     learners.contains(m),
     progress.keys().contains(m),
@@ -1358,6 +1430,10 @@ module Lifecycle {
       ObserveLearnerProgress(id, p),
     nondet id = MACHINES.oneOf(); PromoteLearner(id),
     nondet id = MACHINES.oneOf(); RemoveMember(id),
+    nondet id = MACHINES.oneOf(); LeaderStepDown(id),
+    nondet src = MACHINES.oneOf();
+      nondet dst = MACHINES.oneOf();
+      TransferLeadership(src, dst),
     nondet id = MACHINES.oneOf();
       nondet h = Set(Healthy, Unhealthy, UnknownHealth).oneOf();
       MemberHealthChange(id, h),
@@ -1422,6 +1498,10 @@ module Lifecycle {
       ObserveLearnerProgress(id, p),
     nondet id = MACHINES.oneOf(); PromoteLearner(id),
     nondet id = MACHINES.oneOf(); RemoveMember(id),
+    nondet id = MACHINES.oneOf(); LeaderStepDown(id),
+    nondet src = MACHINES.oneOf();
+      nondet dst = MACHINES.oneOf();
+      TransferLeadership(src, dst),
     nondet id = MACHINES.oneOf();
       nondet h = Set(Healthy, Unhealthy, UnknownHealth).oneOf();
       MemberHealthChange(id, h),
@@ -1551,7 +1631,7 @@ module Lifecycle {
   // Incident-witness invariants
   // ===============================================================
   //
-  // The user-reported incident's defining shape is: a Machine
+  // The modelled scenario's defining shape is: a Machine
   // exists in `machines` without a NodeRef AND it is
   // RemediationRequested. KCP must refuse to admit it to
   // RemediationInFlight; instead it must record
@@ -1560,7 +1640,7 @@ module Lifecycle {
   //
   // The two invariants below together state:
   //
-  //   1. `IncidentNeverInFlight` — under the incident
+  //   1. `IncidentNeverInFlight` — under the FM-1
   //      preconditions, no Machine ever holds
   //      RemediationInFlight. This is the *positive* invariant —
   //      KCP correctly refuses.
@@ -1835,8 +1915,8 @@ module Lifecycle {
 
   // -------------------------------------------------------------
   // Incident init — faithful reconstruction of the production
-  // state at KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t
-  // observed 2026-04-28
+  // state at example-cluster
+  // observed in the modelled scenario
   // -------------------------------------------------------------
   //
   // Mapping:
@@ -1844,7 +1924,7 @@ module Lifecycle {
   //                EtcdMemberHealthy=Unknown because the leader's
   //                etcd client cannot reach the workload-cluster
   //                etcd to confirm health — the gRPC routing bug
-  //                described in the incident report).
+  //                described in the FM-1 spec).
   //   Machine 2, 3 = the other two control-plane Machines that
   //                completed the join and are healthy.
   //   Machine 4  = crhpt — the new joining Machine that
@@ -2464,6 +2544,45 @@ module Lifecycle {
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
   }
 
+  // leaderRemovalRaceInit — Machine 1 is the current etcd leader and
+  // has just flipped to UnhealthyMachine. KCP wants to remediate it,
+  // which requires removing it from the etcd member set. Etcd refuses
+  // to remove the current leader; KCP MUST call ForwardEtcdLeadership
+  // (TransferLeadership) or wait for the leader's lease to lapse
+  // (LeaderStepDown) before RemoveMember(1) can succeed.
+  // 3-CP topology, Machine 4 reserved for replacement.
+  action leaderRemovalRaceInit = all {
+    members'      = Set(1, 2, 3),
+    learners'     = Set(),
+    leaderAt'     = Map(1 -> 1),
+    currentTerm'  = 1,
+    progress'     = Map(),
+    memberHealth' = Set(1, 2, 3).mapBy(_ => Healthy)
+                      .put(1, UnknownHealth),
+    phase'                = Set(1, 2, 3).mapBy(_ => JoinComplete)
+                              .put(4, NotStarted),
+    failureReason'        = Map(),
+    etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeletReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    machines'    = Set(1, 2, 3),
+    nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
+    machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
+                              .put(1, UnhealthyMachine),
+    decision'    = Set(1, 2, 3).mapBy(_ => NoRemediationNeeded)
+                      .put(1, RemediationRequested),
+    blockReason' = Map(),
+    preflightBlocked' = false,
+    desiredReplicas' = 3,
+    template'        = Set(1, 2, 3).mapBy(_ => 1),
+    desiredTemplate' = 1,
+    observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy)
+                      .put(1, UnreachableTimeout),
+    lbHealthy'      = true,
+    nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+  }
+
   // -------------------------------------------------------------
   // Incident proof scenario — drives the production state through
   // RequestRemediation + EvaluateCanSafelyRemediate and asserts
@@ -2495,7 +2614,7 @@ module Lifecycle {
                 observation' = observation,
                 lbHealthy' = lbHealthy, nodeReachable' = nodeReachable })
 
-  // The incident — learner stuck at promotion. Without recovery,
+  // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,
   // converges via the recovery path.
   run incidentRecovered = init

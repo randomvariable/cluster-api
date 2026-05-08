@@ -194,16 +194,75 @@ module EtcdMembership {
   // single-member, matching etcd's runtime check. As with
   // PromoteLearner, the per-member maps are kept monotonic;
   // readers gate on `members.contains(id)`.
+  //
+  // Etcd's runtime refuses to remove the current leader; the
+  // controller MUST transfer leadership or wait for a step-down
+  // first. Contract: R-LEAD-STEP-DOWN.
   action RemoveMember(id: MemberId): bool = all {
     members.contains(id),
     voters(members.exclude(Set(id)), learners.exclude(Set(id))).size() >= 1,
     leaderOrNone(leaderAt, currentTerm) != 0,
+    leaderOrNone(leaderAt, currentTerm) != id,
     members'  = members.exclude(Set(id)),
     learners' = learners.exclude(Set(id)),
     progress'    = progress,
     health'      = health,
     leaderAt'    = leaderAt,
     currentTerm' = currentTerm,
+  }
+
+  // ── LeaderStepDown ────────────────────────────────────────────
+  // The current leader steps down (e.g. because its memberHealth
+  // flipped to UnknownHealth or it was removed from the cluster
+  // out-of-band). Advances the term; no leader is assigned at the
+  // new term until a subsequent ElectLeader fires.
+  //
+  // Refines the etcd-side observation that the leader's lease lapses
+  // when its peer connections fail or it loses connectivity to a
+  // quorum.
+  action LeaderStepDown(id: MemberId): bool = all {
+    leaderOrNone(leaderAt, currentTerm) == id,
+    currentTerm < MAX_TERM,
+    any {
+      health.get(id) == UnknownHealth,
+      health.get(id) == Unhealthy,
+      not(members.contains(id)),
+    },
+    currentTerm' = currentTerm + 1,
+    members'     = members,
+    learners'    = learners,
+    leaderAt'    = leaderAt,
+    progress'    = progress,
+    health'      = health,
+  }
+
+  // ── TransferLeadership ────────────────────────────────────────
+  // KCP's pre-scale-down optimisation: before removing the current
+  // leader, transfer leadership to a healthy follower. Refines the
+  // Go entry point Workload.ForwardEtcdLeadership.
+  //
+  // Pre-conditions encode etcd's MoveLeader RPC contract:
+  //   * the source is the current leader;
+  //   * the target is a current voter (not a learner);
+  //   * the target is healthy enough to accept the transfer.
+  // Effect: advances the term and assigns the target as leader at
+  // the new term. The model collapses the brief no-leader window
+  // that real etcd exposes during transfer into a single atomic
+  // step; that window is exposed separately via LeaderStepDown.
+  action TransferLeadership(src: MemberId, dst: MemberId): bool = all {
+    leaderOrNone(leaderAt, currentTerm) == src,
+    members.contains(dst),
+    not(learners.contains(dst)),
+    dst != src,
+    health.get(dst) == Healthy,
+    currentTerm < MAX_TERM,
+    not(leaderAt.keys().contains(currentTerm + 1)),
+    currentTerm' = currentTerm + 1,
+    leaderAt'    = leaderAt.put(currentTerm + 1, dst),
+    members'     = members,
+    learners'    = learners,
+    progress'    = progress,
+    health'      = health,
   }
 
   // ── HealthChange ──────────────────────────────────────────────
@@ -222,7 +281,7 @@ module EtcdMembership {
 
   // ── LearnerStuck ──────────────────────────────────────────────
   // Fault action: a learner's progress signal flips to Stuck. The
-  // user-reported incident exercises exactly this transition.
+  // modelled scenario exercises exactly this transition.
   action LearnerStuck(id: MemberId): bool = all {
     learners.contains(id),
     progress.keys().contains(id),
@@ -247,6 +306,10 @@ module EtcdMembership {
       ObserveLearnerProgress(id, p),
     nondet id = MEMBERS.oneOf(); PromoteLearner(id),
     nondet id = MEMBERS.oneOf(); RemoveMember(id),
+    nondet id = MEMBERS.oneOf(); LeaderStepDown(id),
+    nondet src = MEMBERS.oneOf();
+      nondet dst = MEMBERS.oneOf();
+      TransferLeadership(src, dst),
     nondet id = MEMBERS.oneOf();
       nondet h  = Set(Healthy, Unhealthy, UnknownHealth).oneOf();
       HealthChange(id, h),

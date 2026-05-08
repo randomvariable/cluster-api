@@ -131,7 +131,35 @@ the leader is partitioned away from a quorum:
   precondition implies promotion will not succeed until either
   the partition heals or the leader changes.
 
-P1 + P2 are the etcd-side shape of the user-reported incident.
+P1 + P2 are the etcd-side shape of the modelled scenario.
+
+## 5a. Leadership transfer and step-down
+
+Etcd's runtime refuses to remove the current leader. The
+controller MUST either transfer leadership to a healthy follower
+or wait for the leader's lease to lapse before issuing
+`MemberRemove`.
+
+- **R-LEAD-STEP-DOWN** — A voter MUST step down from leadership
+  before being removed from the member set. Two paths:
+  - `MoveLeader` RPC (atomic transfer): the source leader names a
+    target follower; the cluster transitions to the new leader at
+    a new term. Refines `TransferLeadership(src, dst)` in
+    `EtcdMembership.qnt` and `Lifecycle.qnt`.
+  - Lease-lapse (passive step-down): when the leader loses
+    connectivity to a quorum, its lease lapses and the cluster
+    advances the term with no leader assigned until a new
+    election completes. Refines `LeaderStepDown(id)`.
+- KCP's Go entry point: `Workload.ForwardEtcdLeadership` in
+  `controlplane/kubeadm/internal/workload_cluster_etcd.go`.
+  Called from `scaleDownControlPlane` before
+  `RemoveEtcdMember(leader)`.
+- Observable in the trace: between term `t` and `t+1` the
+  `leaderAt` projection drops the entry for `t` and gains an
+  entry for `t+1` (transfer) or no entry (step-down), and any
+  subsequent `RemoveMember(id)` action where `id` was the
+  leader at `t` is gated on the `leaderAt[currentTerm] != id`
+  precondition.
 
 ## 6. Conformance summary
 
@@ -148,3 +176,4 @@ P1 + P2 are the etcd-side shape of the user-reported incident.
 | S2 | Status.leader names the responding member's view | `api/etcdserverpb/rpc.proto::StatusResponse` |
 | P1 | Partitioned-leader Status returns stale state | observed; not formally tested by etcd's own suite |
 | P2 | Partitioned-leader MemberPromote fails | observed; modelled as fault `LearnerStuck` |
+| R-LEAD-STEP-DOWN | Leader MUST step down or transfer before removal | `controlplane/kubeadm/internal/workload_cluster_etcd.go::ForwardEtcdLeadership`; etcd `server/etcdserver/server.go::transferLeadership` |

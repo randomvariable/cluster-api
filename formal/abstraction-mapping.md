@@ -33,10 +33,12 @@ and the seL4 functional-correctness convention
 | EtcdMembership | AdvanceTerm | (stub) — etcd-side, not directly invoked from CAPI; the trace checker observes AdvanceTerm via the leader change in `etcd_member_status.go`. | Term advances on leader change. |
 | EtcdMembership | ElectLeader | (stub) — etcd-side, observed in the `etcd.Member.IsLearner` projection. | Leader election. |
 | EtcdMembership | HealthChange | controlplane/kubeadm/internal/workload_cluster_conditions.go:66 (`updateManagedEtcdConditions`) | KCP polls each member's Status; the action records the resulting health flip. |
+| EtcdMembership | LeaderStepDown | (stub) — observed through `etcd.Member.IsLeader` flipping false on the prior leader (Status RPC). The model treats lease-lapse as an exogenous-from-KCP event. | Current leader steps down; term advances with no leader assigned at the new term. Refines etcd's lease-lapse semantics. Contract: R-LEAD-STEP-DOWN. |
 | EtcdMembership | LearnerStuck | (stub) — surfaced by `tryGetEtcdMemberName` returning empty when a learner is unmatched. | Learner promotion stuck — fault action used by IncidentWitness. |
 | EtcdMembership | ObserveLearnerProgress | (stub) — observed through `etcd.Member.RaftAppliedIndex` (not yet wired). | Leader observes a learner's progress. |
 | EtcdMembership | PromoteLearner | controlplane/kubeadm/internal/workload_cluster_etcd.go (TBD: not currently invoked from KCP — promotion is performed by kubeadm-join. The trace checker observes the side-effect through MemberList.) | Promotes a learner to voter. |
-| EtcdMembership | RemoveMember | controlplane/kubeadm/internal/workload_cluster_etcd.go:56 (`RemoveEtcdMember`) | Removes an etcd member. |
+| EtcdMembership | RemoveMember | controlplane/kubeadm/internal/workload_cluster_etcd.go:56 (`RemoveEtcdMember`) | Removes an etcd member. Gated on `leaderAt[currentTerm] != id` per R-LEAD-STEP-DOWN — controllers MUST transfer leadership or wait for step-down before removing the leader. |
+| EtcdMembership | TransferLeadership | controlplane/kubeadm/internal/workload_cluster_etcd.go (`Workload.ForwardEtcdLeadership` — function-level; the etcd `MoveLeader` RPC is the underlying primitive). | KCP's pre-scale-down optimisation: before removing the current etcd leader, transfer leadership to a healthy follower. Contract: R-LEAD-STEP-DOWN. |
 
 ### KubeadmJoin.qnt
 
