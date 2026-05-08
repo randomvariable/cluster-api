@@ -1329,15 +1329,31 @@ non-paused Machine.
 **Recovery.** `KcpReconcileResume` (operator-driven KCP pod
 failover via `kubectl delete pod`).
 
-**Verdict.** quint run on `selfHostedDeadlockTrace` reaches the
-`Deadlocked` invariant; `selfHostedRecoveryTrace` clears it.
+**Verdict.** Two specs verify FM-35 from complementary angles:
 
-**Classification.** **MODEL-EXPANSION.** A faithful
-verification against the full Lifecycle.qnt would require
-per-cluster expansion (every state variable wrapped to
-`ClusterId -> X` and every action gaining a `cluster`
-parameter). The dual-cluster `SelfHosted.qnt` module captures
-the dynamics without that refactor.
+1. **`SelfHosted.qnt`** — focused dynamics: `selfHostedDeadlockTrace`
+   reaches the `Deadlocked` invariant; `selfHostedRecoveryTrace`
+   clears it.
+2. **`Lifecycle.multicluster.qnt`** (Phase 12 full) — per-cluster
+   expansion of the KCP lifecycle. Every state variable is
+   `ClusterId -> X` and every action takes a `cl: ClusterId`
+   parameter. KCP-on-mgmt-cluster gating
+   (`kcpReconcileEnabled[mgmtCluster[cl]]`) makes the FM-35
+   feedback loop explicit. Verdicts:
+   - `selfHostedDeadlockTrace` (steady → bump template → KCP
+     host pause) reaches `FM35Deadlocked` in 2 steps.
+   - `selfHostedRecoveryTrace` (deadlock state → fail KCP pod
+     to a healthy non-paused Machine) clears `FM35Deadlocked`.
+   - Random-walk `SafetyInvariants` holds (200 samples × 20
+     steps).
+
+**Classification.** **MODEL-EXPANSION → VERIFIED.** Both the
+focused-sketch (SelfHosted.qnt) and the full per-cluster
+expansion (Lifecycle.multicluster.qnt) verify the FM-35 deadlock
+entry and recovery flows. The full mirror of every single-cluster
+action in Lifecycle.qnt remains optional — Lifecycle.multicluster.qnt
+covers the FM-35-relevant subset (etcd membership + kubeadm join
++ KCP reconcile + drain + remediation, ~20 actions instead of 70).
 
 ## Provenance summary
 

@@ -117,9 +117,9 @@ LSP-grounded refinement anchors added across all the above for:
 
 | Gap | Where documented |
 |---|---|
-| Full per-cluster Lifecycle.qnt expansion for FM-35 (current SelfHosted.qnt is a focused module) | `upstream-issues-research.md` #12886 |
 | FM-33 worker-machine preflight out of scope | `test-corpus-spec.md` Won't |
 | Most FMs lack e2e specs (5 are blueprinted) | `e2e-blueprints.md` |
+| FM-9 fairness verdict beyond TLC's 16-conjunct cap (Lean 4 deductive proof needed) | `failure-modes.md` FM-9 §"Phase 11d" |
 
 The corpus now provides comprehensive refinement coverage of the
 KCP control-plane lifecycle with LSP-grounded anchors into the

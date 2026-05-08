@@ -49,6 +49,7 @@ SPECS_DIR     := specs
 PROOFS_DIR    := proofs
 CONTRACTS_DIR := contracts
 LIFECYCLE     := $(SPECS_DIR)/Lifecycle.qnt
+LIFECYCLE_MC  := $(SPECS_DIR)/Lifecycle.multicluster.qnt
 SELFHOSTED    := $(SPECS_DIR)/SelfHosted.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
@@ -257,6 +258,39 @@ verify-selfhosted-recovery:  ## Drive selfHostedRecoveryTrace; expect resolved
 	$(QUINT) run --backend=$(QUINT_BACKEND) \
 	             --main=SelfHosted --init=selfHostedRecoveryTrace \
 	             --step=step --max-steps=0 $(SELFHOSTED)
+
+## --------------------------------------
+## FM-35 — multicluster (Phase 12 full per-cluster spec)
+## --------------------------------------
+
+##@ multicluster:
+
+.PHONY: verify-multicluster-typecheck
+verify-multicluster-typecheck:  ## Typecheck the per-cluster spec
+	$(QUINT) typecheck $(LIFECYCLE_MC)
+
+.PHONY: verify-multicluster-safety
+verify-multicluster-safety:  ## Random-walk SafetyInvariants on the per-cluster spec
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --max-samples=200 --max-steps=20 \
+	             --invariant=SafetyInvariants \
+	             $(LIFECYCLE_MC)
+
+.PHONY: verify-multicluster-deadlock
+verify-multicluster-deadlock:  ## Drive selfHostedDeadlockTrace; expect FM35Deadlocked reached
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=LifecycleMultiCluster \
+	             --init=selfHostedDeadlockTrace --step=step \
+	             --invariant='not(FM35Deadlocked)' --max-steps=0 \
+	             $(LIFECYCLE_MC)
+
+.PHONY: verify-multicluster-recovery
+verify-multicluster-recovery:  ## Drive selfHostedRecoveryTrace; expect FM35Deadlocked cleared
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=LifecycleMultiCluster \
+	             --init=selfHostedRecoveryTrace --step=step \
+	             --invariant=FM35Deadlocked --max-steps=0 \
+	             $(LIFECYCLE_MC)
 
 ## --------------------------------------
 ## Meta

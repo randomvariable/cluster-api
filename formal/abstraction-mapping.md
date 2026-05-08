@@ -125,6 +125,39 @@ checker tests.
 To be populated when `Remediation.tla` lands in Phase 5 of the
 proposal.
 
+### LifecycleMultiCluster.qnt
+
+Per-cluster expansion for FM-35 verification. Each action takes a
+`cl: ClusterId` parameter and updates the per-cluster slot of the
+corresponding state variable. Refines the same Go entry points as
+the single-cluster Lifecycle.qnt actions; only the cluster
+dimension differs.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| LifecycleMultiCluster | ElectLeader | etcd-side; `controlplane/kubeadm/internal/workload_cluster_etcd.go::ForwardEtcdLeadership` reverse-references this transition. | Per-cluster ElectLeader; cl=0 is the management cluster. |
+| LifecycleMultiCluster | AdvanceTerm | etcd-side; observable through `Status.leader` term changes. | Etcd Raft term advances. |
+| LifecycleMultiCluster | AddLearner | controlplane/kubeadm/internal/workload_cluster_etcd.go (kubeadm-driven). | Etcd learner added (for cluster cl). |
+| LifecycleMultiCluster | PromoteLearner | etcd-side; observable when `is_learner` flips false on `MemberList`. | Learner promoted to voter. |
+| LifecycleMultiCluster | RemoveMember | controlplane/kubeadm/internal/workload_cluster_etcd.go:56 (`RemoveEtcdMember`). | Removes etcd member; gated on R-LEAD-STEP-DOWN and D-DRAIN-TIMEOUT. |
+| LifecycleMultiCluster | LeaderStepDown | etcd-side passive lease-lapse. | Current leader steps down. |
+| LifecycleMultiCluster | MemberHealthChange | controlplane/kubeadm/internal/workload_cluster_conditions.go:66. | KCP refreshes per-member health from observation. |
+| LifecycleMultiCluster | BeginJoin | (Bootstrap controller signals join start). | kubeadm-join begins on the new Machine. |
+| LifecycleMultiCluster | CompleteJoin | (collapsed from KubeadmJoin's 14 phases for FM-35 focus). | kubeadm-join succeeded; advances phase to JoinComplete. |
+| LifecycleMultiCluster | AddMachine | controlplane/kubeadm/internal/controllers/scale.go (`scaleUpControlPlane`). | KCP creates a new control-plane Machine on cluster cl. |
+| LifecycleMultiCluster | DeleteFailedMachine | controlplane/kubeadm/internal/controllers/scale.go (`scaleDownControlPlane` failure path). | KCP deletes a Machine that failed kubeadm-join. |
+| LifecycleMultiCluster | ResolveNodeRef | internal/controllers/machine/machine_controller_noderef.go. | Machine controller resolves Machine.status.nodeRef. |
+| LifecycleMultiCluster | MachineHealthChange | internal/controllers/machinehealthcheck/machinehealthcheck_targets.go:80 (`needsRemediation`). | MHC flips a Machine's health label. |
+| LifecycleMultiCluster | BeginDrain | internal/controllers/machine/machine_controller.go:841 (`Reconciler.drainNode`). | KCP-driven drain begins. |
+| LifecycleMultiCluster | DrainTimeout | internal/controllers/machine/machine_controller.go:712 (`nodeDrainTimeoutExceeded`). | Drain timeout elapses; force-delete bypasses PDB. |
+| LifecycleMultiCluster | OperatorBumpTemplate | api/controlplane/kubeadm/v1beta2/kubeadmcontrolplane_types.go (`spec.template` / `spec.kubernetesVersion`). | Operator bumps desired CP template (upgrade trigger). |
+| LifecycleMultiCluster | KcpHostPause | (operational fault — KCP pod's host Node paused / drained). | Fault: KCP reconciler pod's host is paused mid-upgrade. The FM-35 deadlock entry. |
+| LifecycleMultiCluster | KcpReconcileResume | (operator workaround — `kubectl delete pod -n kcp-system kcp-controller-...` forces Deployment-driven re-schedule). | Recovery: KCP pod fails over to a healthy non-paused Machine. |
+| LifecycleMultiCluster | selfHostedSteadyInit | (initialiser — no Go entry). | 3-CP self-hosted cluster healthy. |
+| LifecycleMultiCluster | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock state: KCP host paused mid-upgrade. |
+| LifecycleMultiCluster | dualClusterSteadyInit | (initialiser — no Go entry). | Dual-cluster (mgmt + workload) healthy steady state. |
+| LifecycleMultiCluster | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume + DrainTimeout. |
+
 ### SelfHosted.qnt
 
 | Spec | Action | Go reference | Purpose |
