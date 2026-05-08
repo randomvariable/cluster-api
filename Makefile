@@ -1006,6 +1006,42 @@ test-e2e: $(GINKGO) generate-e2e-templates ## Run the end-to-end tests
 		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
 		--e2e.use-existing-cluster=$(USE_EXISTING_CLUSTER)
 
+.PHONY: test-e2e-trace
+test-e2e-trace: ## Run the FM-* e2e tests and validate every recorded trace against internal/trace/checkers/
+	@# Run only the FM-* scenarios that wire the trace recorder.
+	@# Currently: FM-2 quorum-loss. Future FMs are added by:
+	@#   1) starting a tracerecord.E2ERecorder in the spec's BeforeEach,
+	@#   2) emitting Bootstrap once the cluster is steady-state,
+	@#   3) emitting transition events as the test progresses.
+	$(MAKE) test-e2e GINKGO_FOCUS="(FM-[0-9]+)"
+	@# Build the validator binary into a temp file and run it on
+	@# every JSONL file the recorder produced under <ARTIFACTS>/trace/.
+	@echo
+	@echo "==> Running trace-validator on $(ARTIFACTS)/trace/*.trace.jsonl"
+	@validator=$$(mktemp); \
+	  ( cd $(ROOT_DIR)/hack/tools && go build -tags tools -o $$validator ./trace-validator ); \
+	  failed=0; \
+	  shopt -s nullglob 2>/dev/null || true; \
+	  found=0; \
+	  for trace_file in $(ARTIFACTS)/trace/*.trace.jsonl; do \
+	    [ -e "$$trace_file" ] || continue; \
+	    found=$$((found+1)); \
+	    echo "    $$trace_file"; \
+	    if ! $$validator -format jsonl "$$trace_file"; then \
+	      failed=$$((failed+1)); \
+	    fi; \
+	  done; \
+	  rm -f $$validator; \
+	  if [ "$$found" -eq 0 ]; then \
+	    echo "ERROR: no trace files were produced under $(ARTIFACTS)/trace/" >&2; \
+	    exit 1; \
+	  fi; \
+	  if [ "$$failed" -ne 0 ]; then \
+	    echo "ERROR: $$failed trace(s) failed validation" >&2; \
+	    exit 1; \
+	  fi; \
+	  echo "OK: all $$found trace(s) validated cleanly"
+
 
 .PHONY: kind-cluster
 kind-cluster: ## Create a new kind cluster designed for development with Tilt

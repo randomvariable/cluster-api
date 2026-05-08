@@ -152,3 +152,45 @@ The `WaitForControlPlaneIntervals` for each spec should follow
 the catalogue in `test/e2e/config/docker.yaml` —
 `fm2-quorum-loss/*` keys are the pattern; add per-FM keys as
 specs land.
+
+## Trace recording (issue #8)
+
+Every FM-* e2e spec wires a `tracerecord.E2ERecorder` (in
+`test/e2e/internal/tracerecord/`) that writes JSON-Lines events
+to `<ArtifactFolder>/trace/<scenario>.trace.jsonl`. The recorder
+is observer-style: the e2e test reads Kubernetes object state
+via the management cluster proxy and emits a `TraceRecord`
+whenever it observes a spec-relevant transition. The CAPI
+controllers themselves are not modified — this keeps the wiring
+strictly inside `test/e2e/` and the upstream binaries
+unaffected.
+
+After the e2e finishes, `make test-e2e-trace` builds the
+`hack/tools/trace-validator/` binary and runs every checker in
+`internal/trace/checkers/` against each recorded trace. The
+target exits non-zero if any checker reports a violation or if
+no trace files were produced.
+
+The CI gate (`scripts/verify-formal.sh`) does NOT run the CAPD
+e2e (too heavy for a per-commit gate). Instead, it runs
+`internal/trace/recorder_validator_integration_test.go`, which
+exercises the same recorder → JSONL → loader → checker pipeline
+on a synthesised FM-2-shaped trace and asserts a green verdict.
+That test is the CI-runnable counterpart to the CAPD e2e and
+guards against silent regressions in the recorder/loader
+plumbing.
+
+Adding trace recording to a new FM-* spec is three steps:
+
+1. In the spec's main test body, after the cluster reaches
+   steady state, call `tracerecord.Start(input.ArtifactFolder,
+   "<scenario>")` and `defer` the returned close function.
+2. Once the initial voter set is observable, call
+   `recorder.Bootstrap(<nodeNames>)`.
+3. As the test progresses, emit transition events
+   (`AddLearner`, `RemoveMember`, `PromoteLearner`,
+   `ObserveLearnerProgress`) at the points where the spec's
+   abstraction-mapping row would fire the corresponding
+   action. The Bootstrap-only path is sufficient for FMs whose
+   load-bearing assertion is the absence of membership change
+   (FM-2's hopelessness, for example).

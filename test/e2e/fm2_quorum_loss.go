@@ -56,6 +56,7 @@ import (
 
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/test/e2e/internal/log"
+	"sigs.k8s.io/cluster-api/test/e2e/internal/tracerecord"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	"sigs.k8s.io/cluster-api/util"
@@ -142,6 +143,19 @@ func FM2QuorumLossSpec(ctx context.Context, inputGetter func() FM2QuorumLossSpec
 		clusterName := clusterResources.Cluster.Name
 		log.Logf("FM-2 cluster %s is up at 3-CP", clusterName)
 
+		// Start the formal-model trace recorder. The recorder
+		// writes JSON-Lines to <ArtifactFolder>/trace/<cluster>.trace.jsonl;
+		// the suite-level test-e2e-trace post-step (see Makefile)
+		// runs trace-validator on it after the test exits.
+		recorder, recorderClose, err := tracerecord.Start(input.ArtifactFolder, fmt.Sprintf("fm2-%s", clusterName))
+		Expect(err).NotTo(HaveOccurred(), "failed to start trace recorder")
+		defer func() {
+			if cerr := recorderClose(); cerr != nil {
+				log.Logf("WARNING: trace recorder close failed: %v", cerr)
+			}
+		}()
+		log.Logf("Trace recorder writing to %s", recorder.Path())
+
 		// Identify the three control-plane Machines and wait for
 		// every one to have a resolved NodeRef (the container
 		// name we'll pause is read from Status.NodeRef.Name).
@@ -165,6 +179,18 @@ func FM2QuorumLossSpec(ctx context.Context, inputGetter func() FM2QuorumLossSpec
 			return true
 		}, input.E2EConfig.GetIntervals(specName, "wait-control-plane")...).Should(BeTrue(),
 			"expected 3 control-plane Machines, all with NodeRef resolved")
+
+		// Emit the Bootstrap event for the recorder once all
+		// three voters are observable. This anchors the trace's
+		// initial state in the EtcdMembership checker; absence of
+		// any subsequent RemoveMember in the FM-2 happy path is
+		// what the checker (and the formal model) expects.
+		bootstrapNodes := make([]string, 0, len(machines))
+		for _, m := range machines {
+			bootstrapNodes = append(bootstrapNodes, m.Status.NodeRef.Name)
+		}
+		Expect(recorder.Bootstrap(bootstrapNodes)).To(Succeed(),
+			"failed to record Bootstrap event")
 
 		// Pick the two non-leader Machines to pause. We pause the
 		// non-leader members specifically; pausing the leader

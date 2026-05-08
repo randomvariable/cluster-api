@@ -194,7 +194,12 @@ upstream behaviour gap. See
 **Provenance.** Operational; the scale-down quorum-loss case is
 folklore in the etcd / KCP communities. Apalache-proven hopeless
 under `stepNoRecovery` (this corpus). CAPD e2e reproducer passes
-(`test/e2e/fm2_quorum_loss.go`).
+(`test/e2e/fm2_quorum_loss.go`). The e2e wires the formal-trace
+recorder (`test/e2e/internal/tracerecord/`) to emit a Bootstrap
+record once the 3-CP cluster reaches steady state; the
+`make test-e2e-trace` target post-validates the recorded trace
+against `internal/trace/checkers/` and exits non-zero on
+violation. See `formal/e2e-blueprints.md` § Trace recording.
 
 **Trigger.** A 2-machine control plane (a transient state during
 scale-down, post-deletion in a 3-node cluster, or an in-flight
