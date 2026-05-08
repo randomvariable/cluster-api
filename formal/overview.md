@@ -68,6 +68,7 @@ For a contributor adding a new failure mode:
 | FM-22 | `singleNodeScaleUpFailureInit` | HealEtcdReachability | 13.5K states (1.2 s) | (FM-2 sub-shape; FM-2 hopelessness applies) | — |
 | FM-23 | `drainStuckInit` | Drain timeout + force-delete | 11.9K states (1.3 s) | **AllSafetyInvariants holds** (Apalache, ~278 s) | blueprint |
 | FM-24 | `etcdDefragPauseInit` | Defrag finishes | 12.5K states (1.0 s) | — | blueprint |
+| FM-33 | `fm33ScaleUpDuringCpUpgradeInit` / `fm33VersionSkewInit` / `fm33RemediationDuringUpgradeInit` (`specs/MachineSetPreflight.qnt`) | KcpFinishUpgrade / OperatorBumpMsVersion + EvaluatePreflight | 3 demo runs (`fm33ScaleUpBlockedRun`, `fm33ScaleUpAdmittedAfterUpgradeRun`, `fm33VersionSkewBlockedRun`) | — | — |
 
 19 catalogued FMs have an init action and a TLC reachability
 verdict. **Six** carry exhaustive Apalache verdicts
@@ -117,7 +118,6 @@ LSP-grounded refinement anchors added across all the above for:
 
 | Gap | Where documented |
 |---|---|
-| FM-33 worker-machine preflight out of scope | `test-corpus-spec.md` Won't |
 | Most FMs lack e2e specs (5 are blueprinted) | `e2e-blueprints.md` |
 | FM-9 fairness verdict beyond TLC's 16-conjunct cap (Lean 4 deductive proof needed) | `failure-modes.md` FM-9 §"Phase 11d" |
 

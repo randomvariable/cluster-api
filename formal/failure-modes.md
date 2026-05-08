@@ -1205,6 +1205,81 @@ window is bounded). The model's safety invariants would all
 hold during the window because gates are pure-state predicates,
 not webhook-mediated checks.
 
+## FM-33 — Worker MachineSet preflight gating
+
+**Provenance.** **Upstream cluster-api#11117** ("Add MachineSet
+preflight checks to gate scale-up and remediation against
+control-plane status / version-skew"). Modelled in
+[`specs/MachineSetPreflight.qnt`](./specs/MachineSetPreflight.qnt)
+rather than `Lifecycle.qnt` — workers don't have etcd quorum, so
+the gating dynamics fit a stand-alone module.
+
+**Trigger.** A worker MachineSet operation (scale-up or
+remediation) lands while one of four invariants is violated:
+control-plane is mid-upgrade / provisioning, the MS-vs-CP
+Kubernetes version skew exceeds policy, the kubeadm bootstrap
+provider's same-major+minor rule is violated, or the
+ClusterTopology version is not yet propagated to the MS. Without
+the preflight gate, the operation proceeds and may produce a
+worker with a kubelet version skew that the upstream API server
+cannot serve.
+
+**Init / scenarios.** Three scenario inits in
+`MachineSetPreflight.qnt`:
+
+| Init | Scenario | Expected verdict |
+|---|---|---|
+| `fm33ScaleUpDuringCpUpgradeInit` | Operator requests scale-up while KCP is rolling | EvaluatePreflight blocks with reason `CpUnstable`; admitted only after `KcpFinishUpgrade` |
+| `fm33VersionSkewInit` | MS template version exceeds CP version | EvaluatePreflight blocks with reason `KubernetesVersionSkewViolation` |
+| `fm33RemediationDuringUpgradeInit` | Worker is unhealthy and remediation is requested while KCP is rolling | EvaluatePreflight blocks with reason `CpUnstable`; admitted only after `KcpFinishUpgrade` |
+
+Three demonstration runs trace the expected outcomes:
+`fm33ScaleUpBlockedRun`, `fm33ScaleUpAdmittedAfterUpgradeRun`,
+`fm33VersionSkewBlockedRun`.
+
+**LSP grounding.** Anchors recovered via gopls `go_search`
+(`controlPlaneStablePreflightCheck`) and `grep -nE` on the
+preflight file:
+
+| Go entry point | File | Line |
+|---|---|---|
+| `Reconciler.runPreflightChecks` (orchestrator) | `internal/controllers/machineset/machineset_preflight.go` | 47 |
+| `shouldRun` (per-check skip predicate) | same | 144 |
+| `controlPlaneStablePreflightCheck` | same | 149 |
+| `kubernetesVersionPreflightCheck` | same | 190 |
+| `kubeadmVersionPreflightCheck` | same | 206 |
+| `controlPlaneVersionPreflightCheck` | same | 226 |
+| `skippedPreflightChecks` | same | 236 |
+| Scale-up call site | `internal/controllers/machineset/machineset_controller.go` | 828 |
+| `Reconciler.reconcileUnhealthyMachines` | same | 1493 |
+| Remediation call site | same | 1633 |
+
+The four sub-checks are folded into a single
+`evaluatePreflight` pure def in the spec; the model carries no
+skip-annotation surface, so `shouldRun` is collapsed.
+
+**Recovery / fix.** The Go controller uses
+`preflightFailedRequeueAfter = 15 * time.Second`
+(`machineset_preflight.go:45`) to retry. The model's recovery
+action is `KcpFinishUpgrade` (clearing `cpUpgradeInProgress`) or
+`OperatorBumpMsVersion` (resolving version skew). After either,
+a fresh `EvaluatePreflight` admits the previously-blocked
+decision via the `ActionInFlight` branch.
+
+**Verdict.** TLC reachability of the three demonstration runs.
+`SafetyInvariants` and `PreflightGateRespected` hold throughout.
+The key obligation — every Machine in `ActionInFlight` passed the
+gate at admission time — is captured by `PreflightGateRespected`
+(no fresh `EvaluatePreflight` between admission and a CP-state
+flip would violate it). See `verify-runbook.md` for the
+`make verify-fm33-*` targets.
+
+**Classification.** **KCP-DESIGN-GAP** (closed). The preflight
+gate is an implemented feature behind the
+`MachineSetPreflightChecks` feature gate (line 50). The model
+verifies the gate's behaviour is correct in the reasonable
+domain of inputs.
+
 ## FM-34 — MHC controller's stale cluster cache during apiserver restart
 
 **Provenance.** **Upstream cluster-api#12363** ("MachineHealthcheck
@@ -1288,6 +1363,7 @@ reason that the operator can read.
 | **Plus from upstream-issues research** | | | | |
 | FM-31 | Surface arbitrary Node conditions on Machine without MHC remediation | KCP-DESIGN-GAP | Custom-condition projection | Concept landed in `upstream-issues-research.md`; cluster-api#11826 |
 | FM-32 | Webhook rotation gap (cert-manager) | TRANSIENT | Rotation completes | Concept landed; cert-manager#10522 |
+| FM-33 | Worker MachineSet preflight gating | KCP-DESIGN-GAP (closed) | Preflight requeue + KCP upgrade completion | Verified in `specs/MachineSetPreflight.qnt`; cluster-api#11117 |
 | FM-34 | Stale MHC cluster-cache during apiserver restart | KCP-BUG (latent) | Cache invalidation | Concept landed; cluster-api#12363 |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
@@ -1402,6 +1478,7 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 24 | Operational / etcd folklore | — |
 | 31 | Upstream | cluster-api#11826 |
 | 32 | Upstream + Modelling (Phase 11d cycle) | cert-manager#10522 |
+| 33 | Upstream | cluster-api#11117 |
 | 34 | Upstream | cluster-api#12363 |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |

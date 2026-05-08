@@ -51,6 +51,7 @@ CONTRACTS_DIR := contracts
 LIFECYCLE     := $(SPECS_DIR)/Lifecycle.qnt
 LIFECYCLE_MC  := $(SPECS_DIR)/Lifecycle.multicluster.qnt
 SELFHOSTED    := $(SPECS_DIR)/SelfHosted.qnt
+MSPREFLIGHT   := $(SPECS_DIR)/MachineSetPreflight.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -291,6 +292,39 @@ verify-multicluster-recovery:  ## Drive selfHostedRecoveryTrace; expect FM35Dead
 	             --init=selfHostedRecoveryTrace --step=step \
 	             --invariant=FM35Deadlocked --max-steps=0 \
 	             $(LIFECYCLE_MC)
+
+## --------------------------------------
+## FM-33 — worker-MachineSet preflight
+## --------------------------------------
+
+##@ machineset-preflight:
+
+.PHONY: verify-fm33-blocked
+verify-fm33-blocked:  ## Drive fm33ScaleUpBlockedRun; expect ActionBlocked
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachineSetPreflight \
+	             --init=fm33ScaleUpBlockedRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(MSPREFLIGHT)
+
+.PHONY: verify-fm33-admitted-after-upgrade
+verify-fm33-admitted-after-upgrade:  ## Drive fm33ScaleUpAdmittedAfterUpgradeRun; expect Machine 4 admitted
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachineSetPreflight \
+	             --init=fm33ScaleUpAdmittedAfterUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(MSPREFLIGHT)
+
+.PHONY: verify-fm33-versionskew
+verify-fm33-versionskew:  ## Drive fm33VersionSkewBlockedRun; expect KubernetesVersionSkewViolation
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachineSetPreflight \
+	             --init=fm33VersionSkewBlockedRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(MSPREFLIGHT)
+
+.PHONY: verify-fm33
+verify-fm33: verify-fm33-blocked verify-fm33-admitted-after-upgrade verify-fm33-versionskew  ## All three FM-33 demonstration runs
 
 ## --------------------------------------
 ## Meta

@@ -14,7 +14,7 @@ The corpus is incomplete without these.
 
 | FM | Class | Why MUST | Status |
 |---|---|---|---|
-| FM-1 | KCP-BUG | The user-reported incident; production observed; upstream cluster-api#13221 | TLC-proven (incident invariants); deterministic run; no e2e yet |
+| FM-1 | KCP-BUG | The modelled scenario; model-detected; upstream cluster-api#13221 | TLC-proven (FM-1 invariants); deterministic run; no e2e yet |
 | FM-2 | EXOGENOUS | Apalache hopelessness proven; **e2e PASSES on CAPD** | Apalache + e2e |
 | FM-3 | EXOGENOUS | Apalache proven; upstream cluster-api#8465 | Apalache |
 | FM-8 | KCP-BUG | The condition-projection regression that hides the production diagnostic; upstream cluster-api#11826 surfaces the broader gap | Quint counterexample |
@@ -53,6 +53,7 @@ Worthwhile but lower operational priority.
 | FM-22 | KCP-BUG (design gap) | Single-node scale-up race |
 | FM-31 | KCP-DESIGN-GAP | Surface custom Node conditions on Machine without MHC remediation |
 | FM-32 | TRANSIENT | Webhook rotation gap (cert-manager#10522) |
+| FM-33 | KCP-DESIGN-GAP (closed) | Worker MachineSet preflight gating; verified in `specs/MachineSetPreflight.qnt` (cluster-api#11117) |
 | FM-34 | KCP-BUG (latent) | Stale MHC cluster-cache during apiserver restart |
 | FM-37 | KCP-BUG (latent) | Lifecycle hook skipped when CP unavailable |
 
@@ -65,7 +66,6 @@ Out of scope for this round.
 | FM-9 | MODEL-INCOMPLETE | Fairness annotations require a 60-conjunct expansion that is mechanical but tedious; deferred |
 | FM-25 — etcd cert rotation | EXOGENOUS | Provider-specific PKI choreography; out of CAPI core scope |
 | FM-26 — workload apiserver TLS expiry | EXOGENOUS | Same |
-| FM-33 | OUT-OF-SCOPE | Worker-machine preflight (cluster-api#11117); control-plane-only focus |
 | FM-35 — self-hosted upgrade deadlock | MODEL-EXPANSION | Requires modelling management ↔ workload as separate clusters |
 | FM-36 — drain blocked by PDB | OVERLAPS-FM-23 | Subsumed by FM-23 |
 | FM-38..FM-40 — provider-specific | OUT-OF-SCOPE | Infrastructure-layer faults already abstracted via Partition / NodeNeverJoins |
@@ -113,7 +113,7 @@ The combinations explored so far:
   - 3-node × Network × Apalache (FM-3 partition, FM-13 LB)
   - 3-node × Total-loss × Apalache (FM-2 both unhealthy)
   - 1-node × Total-loss × Apalache (FM-16)
-  - 3-node × Remediation-gate × TLC (FM-1 incident invariants)
+  - 3-node × Remediation-gate × TLC (FM-1 FM-1 invariants)
   - 3-node × Network × CAPD-e2e (**FM-2, PASSED**)
   - 5-node × Join-fault × TLC (fiveNodeStuckLearnerInit)
 

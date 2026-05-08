@@ -172,6 +172,29 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### MachineSetPreflight.qnt
+
+FM-33 — worker-MachineSet preflight gating. Anchors discovered
+via gopls `go_search` (`controlPlaneStablePreflightCheck`,
+`runPreflightChecks`, `reconcileUnhealthyMachines`) and `grep -nE` on
+the preflight file; line numbers refer to the working tree at HEAD
+of the `formality` branch.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| MachineSetPreflight | KcpBeginUpgrade | controlplane/kubeadm/internal/controllers/upgrade.go (KCP rolling-update entry; observable side-effect: `ControlPlane.IsUpgrading()` flips true at `internal/controllers/machineset/machineset_preflight.go:179`). | Abstract CP-side action: KCP starts a rolling upgrade. Captured by the workers as `cpUpgradeInProgress = true`. |
+| MachineSetPreflight | KcpFinishUpgrade | controlplane/kubeadm/internal/controllers/upgrade.go (steady-state branch; observable: `ControlPlane.IsUpgrading()` returns false). | Abstract CP-side action: KCP finishes upgrade. Captured by `cpUpgradeInProgress = false`. |
+| MachineSetPreflight | OperatorBumpMsVersion | api/core/v1beta2/machineset_types.go (`MachineSetSpec.Template.Spec.Version`); reconciliation observes the new value at `internal/controllers/machineset/machineset_preflight.go:101-106` (`ms.Spec.Template.Spec.Version` parsed via `semver.ParseTolerant`). | Operator bumps the MachineSet's worker template version. Triggers re-evaluation against version-skew checks. |
+| MachineSetPreflight | RequestScaleUp | internal/controllers/machineset/machineset_controller.go:828 (scale-up call site; calls `runPreflightChecks(ctx, cluster, ms, "Scale up")`). | Worker scale-up requested. The Go reconciler runs the preflight gate before creating any new Machine. |
+| MachineSetPreflight | RequestRemediation | internal/controllers/machineset/machineset_controller.go:1493 (`Reconciler.reconcileUnhealthyMachines`); preflight call at line 1633 (`runPreflightChecks(... "Machine remediation")`). | MHC has flagged a worker as unhealthy; preflight gate must pass before MachineOwnerRemediated is flipped. |
+| MachineSetPreflight | EvaluatePreflight | internal/controllers/machineset/machineset_preflight.go:47 (`Reconciler.runPreflightChecks` — orchestrator); :144 (`shouldRun` — per-check skip predicate); :149 (`controlPlaneStablePreflightCheck`); :190 (`kubernetesVersionPreflightCheck`); :206 (`kubeadmVersionPreflightCheck`); :226 (`controlPlaneVersionPreflightCheck`); :236 (`skippedPreflightChecks`). | Runs the four preflight checks against (cpVersion, msVersion, cpUpgradeInProgress). Sets workerPreflightBlocked + workerBlockReason; advances decision to ActionInFlight on pass or ActionBlocked on fail. |
+| MachineSetPreflight | CompleteScaleUp | internal/controllers/machineset/machineset_controller.go:828 (post-preflight branch — when `runPreflightChecks` returns nil errors and empty preflightCheckErrMessages, the controller proceeds to `r.createMachines` at the same call site; the abstract action models the Machine becoming ready and joining workerMachines). | Scale-up Machine joins the MachineSet after preflight admitted the request. |
+| MachineSetPreflight | CompleteRemediation | internal/controllers/machineset/machineset_controller.go:1633 (post-preflight branch in `reconcileUnhealthyMachines`: when preflight returns no errors, the loop falls through to flip MachineOwnerRemediated true and the Machine controller deletes-and-recreates the unhealthy Machine). | Worker remediation completes after preflight admitted the request. Machine flipped from UnhealthyWorker to HealthyWorker. |
+| MachineSetPreflight | WorkerHealthChange | (exogenous fault) — observed via `Machine.status.conditions[NodeHealthy]` flipping; the source of truth is the workload-cluster Node condition reflected by the Machine controller in `internal/controllers/machine/machine_controller_status.go`. | Fault action: a worker flips between HealthyWorker / UnhealthyWorker / UnknownHealthWorker. Drives the RequestRemediation precondition. |
+| MachineSetPreflight | fm33ScaleUpDuringCpUpgradeInit | (initialiser — no Go entry). | FM-33 scenario init: scale-up requested while KCP mid-upgrade (CpUnstable). |
+| MachineSetPreflight | fm33VersionSkewInit | (initialiser — no Go entry). | FM-33 scenario init: MS template version exceeds CP version (KubernetesVersionSkewViolation). |
+| MachineSetPreflight | fm33RemediationDuringUpgradeInit | (initialiser — no Go entry). | FM-33 scenario init: remediation requested while KCP mid-upgrade. |
+
 ## Drift policy
 
 The CI gate requires that every Go reference of the form

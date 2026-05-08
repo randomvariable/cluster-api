@@ -151,6 +151,36 @@ quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
 # Expected: [violation] (~217 ms, 4 steps).
 ```
 
+### FM-33 — Worker-MachineSet preflight (TLC reachability)
+
+```sh
+# Three demonstration runs in MachineSetPreflight.qnt. Each is a
+# deterministic trace; success is "[ok] No violation found".
+
+# Scale-up while CP is mid-upgrade — preflight must block.
+quint run --main=MachineSetPreflight \
+          --init=fm33ScaleUpBlockedRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/MachineSetPreflight.qnt
+# Expected: workerBlockReason: CpUnstable; decision[4]=ActionBlocked.
+
+# Same scenario but KCP finishes the upgrade and preflight admits.
+quint run --main=MachineSetPreflight \
+          --init=fm33ScaleUpAdmittedAfterUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/MachineSetPreflight.qnt
+# Expected: trace ends with workerMachines=Set(1,2,3,4).
+
+# MS template version exceeds CP version.
+quint run --main=MachineSetPreflight \
+          --init=fm33VersionSkewBlockedRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/MachineSetPreflight.qnt
+# Expected: workerBlockReason: KubernetesVersionSkewViolation.
+```
+
+Or, from `formal/`: `make verify-fm33` runs all three.
+
 ### Random-walk safety sweep
 
 Useful for catching obvious safety regressions during
