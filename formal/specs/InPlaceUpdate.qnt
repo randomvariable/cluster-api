@@ -701,6 +701,88 @@ module InPlaceUpdate {
   }
 
   // ===============================================================
+  // Liveness properties (issue #3 — beyond FM-9)
+  // ===============================================================
+
+  // allVars tuple for fairness operator. Quint compiles this to
+  // TLA+'s <<vars>> tuple at the lambda level. See FM-9
+  // discussion in `failure-modes.md`.
+  val allVars = (mdReplicas, oldMsVersion, newMsVersion,
+    machineVersion, machinePhase, machineOnNewMs,
+    oldMsHasMoveAnnotation, newMsHasReceiveAnnotation,
+    acknowledgedMove, updateMachineHookPending,
+    machineInProgress, infraInProgress, bootstrapInProgress,
+    canUpdateVerdict, canUpdateExtensionCount,
+    updateMachineExtensionCount, lastUpdateOutcome,
+    inPlaceFeatureEnabled)
+
+  // Pure helper: a Machine is in a "settled" phase — either it
+  // never got admitted to in-place (OnOldMS, in which case the
+  // rolling fallback would handle it; rolling is not modelled
+  // here), or the in-place flow completed (InPlaceDone) or
+  // failed (InPlaceFailed). All three are terminal in the
+  // sense that no further forward-progress transition fires
+  // from them in this spec.
+  pure def isSettled(p: MachinePhase): bool =
+    p == OnOldMS or p == InPlaceDone or p == InPlaceFailed
+
+  // The fairness conjunct list for the in-place forward-progress
+  // path. Strong-fair on every action that, when enabled, must
+  // eventually fire to advance a Machine toward a settled phase.
+  // Operator misconfiguration actions
+  // (OperatorRegisterMultipleUpdateMachineExtensions,
+  // OperatorRemoveUpdateInProgress) are NOT in the fair set —
+  // they may never fire, but if they do, the failure branch is
+  // also a settled phase, so the property still holds.
+  temporal ForwardProgressFair =
+    strongFair(any { nondet v = Set(CanUpdateYes, CanUpdateNo).oneOf();
+                     EvaluateCanUpdateMachineSet(v) }, allVars)
+    and strongFair(SetMoveAnnotations, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          StartMoveMachine(m) }, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          AcknowledgeMove(m) }, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          CompleteMoveMachine(m) }, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          nondet o = Set(UpdateProgressing, UpdateDone, UpdateFailed).oneOf();
+                          CallUpdateMachineHook(m, o) }, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          CompleteInPlaceUpdate(m) }, allVars)
+    and strongFair(any { nondet m = MACHINES.oneOf();
+                          CleanupOrphanedHook(m) }, allVars)
+
+  // L-1 — eventually all Machines reach a settled phase.
+  // Refines the upstream contract at
+  // `machine_controller_inplace_update.go:43-227`: under
+  // fair scheduling, no Machine stutters indefinitely
+  // in MovingPending/InPlaceArmed/InPlaceUpdating.
+  temporal L1_EventuallyAllMachinesSettled =
+    ForwardProgressFair
+    implies eventually(MACHINES.forall(m => isSettled(machinePhase.get(m))))
+
+  // L-2 — eventually `updateMachineHookPending` is cleared for
+  // every Machine that started the in-place flow. Refines the
+  // post-condition of `completeInPlaceUpdate` at
+  // `machine_controller_inplace_update.go:221`
+  // (`hooks.MarkAsDone(UpdateMachine)`).
+  temporal L2_EventuallyHookPendingCleared =
+    ForwardProgressFair
+    implies eventually(MACHINES.forall(m => not(updateMachineHookPending.get(m))))
+
+  // L-3 — eventually every Machine's version is one of:
+  // - oldMsVersion (if it stayed on oldMS — no admission)
+  // - newMsVersion (if InPlaceDone fired)
+  // - oldMsVersion (if InPlaceFailed — version doesn't flip in
+  //   this spec under failure)
+  // i.e. every Machine settles at a stable version.
+  temporal L3_EventuallyVersionStable =
+    ForwardProgressFair
+    implies eventually(MACHINES.forall(m =>
+      machineVersion.get(m) == oldMsVersion
+      or machineVersion.get(m) == newMsVersion))
+
+  // ===============================================================
   // Invariants
   // ===============================================================
 

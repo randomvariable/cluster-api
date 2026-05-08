@@ -213,6 +213,48 @@ done
 
 Or, from `formal/`: `make verify-e2e`.
 
+### Liveness properties beyond FM-9 (issue #3)
+
+```sh
+# InPlaceUpdate liveness (3 properties, TLC ~3 s each):
+quint verify --main=InPlaceUpdate \
+             --temporal=L1_EventuallyAllMachinesSettled \
+             --backend=tlc --max-steps=8 \
+             formal/specs/InPlaceUpdate.qnt
+quint verify --main=InPlaceUpdate \
+             --temporal=L2_EventuallyHookPendingCleared \
+             --backend=tlc --max-steps=8 \
+             formal/specs/InPlaceUpdate.qnt
+quint verify --main=InPlaceUpdate \
+             --temporal=L3_EventuallyVersionStable \
+             --backend=tlc --max-steps=8 \
+             formal/specs/InPlaceUpdate.qnt
+
+# Topology liveness (1 verified; LT2/LT3 paradox-limited, see spec docstring):
+quint verify --main=Topology \
+             --temporal=LT1_EventuallyPendingHooksClear \
+             --backend=tlc --max-steps=8 \
+             formal/specs/Topology.qnt
+
+# Lifecycle FM-9 fairness recurrence is in the existing
+# verify-fm9-* targets (TLC at 16-conjunct scope; full
+# 65-conjunct tableaus to 0 branches at 16 GB heap — see
+# failure-modes.md FM-9 §"Phase 11d bisection").
+```
+
+Or, from `formal/`: `make verify-liveness`.
+
+KNOWN LIMITATION: the stronger eventual-progress properties in
+Topology (LT2_NotCreatedExitsRecurrent,
+LT3_StepPhaseIdleRecurrent) do NOT hold because of a TLA+
+fairness paradox. The unfair `EvaluateHook(h, HookBlock)` action
+can fire infinitely often, re-flipping `lastHookOutcome[h]` to
+HookBlock between every Reconcile firing. Closing the gap
+requires either (a) refactoring `EvaluateHook` and
+`Reconcile*` into single atomic actions with the outcome as a
+parameter, or (b) Lean 4 deductive proof under a
+no-operator-fault assumption.
+
 ### Cross-spec composition (FM-51, WorkerLifecycle.qnt)
 
 ```sh

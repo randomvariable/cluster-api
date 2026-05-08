@@ -565,6 +565,33 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
+## Liveness properties beyond FM-9 (Issue #3)
+## --------------------------------------
+
+##@ liveness:
+
+.PHONY: verify-inplace-liveness
+verify-inplace-liveness:  ## Verify L1/L2/L3 in InPlaceUpdate (TLC, ~3 s each)
+	@for prop in L1_EventuallyAllMachinesSettled \
+	             L2_EventuallyHookPendingCleared \
+	             L3_EventuallyVersionStable; do \
+	  echo "==> $$prop"; \
+	  $(QUINT) verify --main=InPlaceUpdate --temporal=$$prop \
+	                   --backend=tlc --max-steps=$(MAX_STEPS_TLC) \
+	                   $(INPLACE) || exit 1; \
+	done
+
+.PHONY: verify-topology-liveness
+verify-topology-liveness:  ## Verify LT1 in Topology (TLC, ~30 s; LT2/LT3 documented as paradox-limited)
+	$(QUINT) verify --main=Topology \
+	                 --temporal=LT1_EventuallyPendingHooksClear \
+	                 --backend=tlc --max-steps=$(MAX_STEPS_TLC) \
+	                 $(TOPOLOGY)
+
+.PHONY: verify-liveness
+verify-liveness: verify-inplace-liveness verify-topology-liveness  ## All liveness properties (issue #3)
+
+## --------------------------------------
 ## Worker-lifecycle cross-spec composition (Issue #2, FM-51)
 ## --------------------------------------
 
