@@ -13,6 +13,20 @@ documented absence of one), and a classification:
 | **MODEL-INCOMPLETE** | The model does not yet capture the full controller-runtime behaviour required to recover. The mode is not necessarily a bug; the model needs an additional action. |
 | **TRANSIENT** | The system passes through this state during normal operation; convergence requires only that the rest of the choreography continue. Not a bug. |
 
+Each FM also carries a **Provenance** line marking how the failure
+mode entered this catalogue:
+
+| Provenance tag | Meaning |
+|---|---|
+| **Operational** | Observed by humans operating real clusters — folklore, incident reports, post-mortems, on-call runbooks. Most KCP failure modes. |
+| **LLM-synthesised** | Pattern-recognised during the modelling work by reasoning across components (kubeadm + kubelet + CRI + etcd + KCP + MHC). No specific upstream issue was found; the failure mode is plausible from cross-component knowledge but not yet documented elsewhere. |
+| **Modelling** | Uncovered by the formal model itself — TLC counterexamples, Apalache hopelessness verdicts, type-check forced disambiguation, fairness-bisection cycles. Section refers to the verification artefact that exposed it. |
+| **Upstream issue: <repo#N>** | An explicit issue thread; the pinned link is in the FM's body. |
+
+A given FM may carry multiple provenance tags when sources
+overlap (e.g. operational knowledge corroborated by an upstream
+issue).
+
 Convergence is checked against the `HealthyControlPlane`
 predicate in `Lifecycle.qnt` (every Machine has a NodeRef, the
 voter set has quorum, every voter is Healthy, no learners, leader
@@ -73,6 +87,10 @@ MAX_TERM=2) is parked as future work.
 learner below the leader's match-progress threshold. Promotion
 never fires; kubeadm-join's `wait-control-plane` blocks; KCP
 records `OwnerRemediated=False, reason=InternalError`.
+
+**Provenance.** Operational; corroborated by **upstream cluster-
+api#13221** (matchable-set check refuses remediation when a
+learner has no Node-name match).
 
 **Run (drives system into the bad state).**
 `stuckLearnerScenario` in `Lifecycle.qnt`.
@@ -152,6 +170,11 @@ upstream behaviour gap. See
 
 ## FM-2 — 2-machine cluster with both members unhealthy
 
+**Provenance.** Operational; the scale-down quorum-loss case is
+folklore in the etcd / KCP communities. Apalache-proven hopeless
+under `stepNoRecovery` (this corpus). CAPD e2e reproducer passes
+(`test/e2e/fm2_quorum_loss.go`).
+
 **Trigger.** A 2-machine control plane (a transient state during
 scale-down, post-deletion in a 3-node cluster, or an in-flight
 upgrade) sees both Machines flip to MHC observation
@@ -212,6 +235,9 @@ applies only when both members are unhealthy.
 
 ## FM-3 — Persistent etcd unreachability
 
+**Provenance.** **Upstream cluster-api#8465**; corroborated by
+operational experience.
+
 **Trigger.** All control-plane Machines have their MHC observation
 flip to `UnreachableTimeout` and the cause is exogenous (network-
 partition event isolating the workload cluster from the
@@ -251,6 +277,12 @@ that would worsen the cluster's state.
 
 ## FM-4 — PromoteLearner-before-ResolveNodeRef window
 
+**Provenance.** Modelling — surfaced by tracing the join phase
+sequence against the matchable-set check. The window is too brief
+to easily catch in production without a tap, but the model exposes
+it as the root cause of the matchable-set check returning false
+on transiently-unmatched but otherwise-healthy machines.
+
 **Trigger.** kubeadm-join completes `PromoteLearner` (etcd voter
 exists, `is_learner=false`) before the workload-cluster Node
 controller picks up the Node and KCP's Machine controller resolves
@@ -279,6 +311,10 @@ machines that ARE healthy but transiently un-matched.
 
 ## FM-5 — MHC observation stuck on NoCorrespondingMember
 
+**Provenance.** Operational; surfaces in clusters where a Bootstrap
+controller hangs or fails part-way (e.g. cloud-init delivery
+broken). KCP-side detection logic is the latent gap.
+
 **Trigger.** A Machine entered the cluster (KCP added it) but the
 etcd member was never registered (kubeadm-join failed or never
 ran). MHC's `Observe` returns `NoCorrespondingMember`.
@@ -297,6 +333,10 @@ stuck, KCP does not detect and recreate. The detection logic
 landing in a future increment closes this row.
 
 ## FM-6 — Etcd leader vacancy after term advance
+
+**Provenance.** Operational / etcd folklore (Raft election timing
+is a textbook concern); modelled to make the brief no-leader
+window an explicit transient state in the abstraction.
 
 **Trigger.** `AdvanceTerm` fires (an exogenous event from etcd:
 network blip, leader gracefully steps down). At the new term, no
@@ -322,6 +362,10 @@ without controller intervention.
   * Operator simultaneously restarts a quorum's worth of etcd processes (e.g. via systemd or a faulty rolling restart) without waiting for the cluster to re-elect between restarts.
 
 ## FM-7 — Concurrent unhealthy machines (cascading remediation)
+
+**Provenance.** Operational; the `MaxConcurrent=1` serialisation
+in `Remediation.tla` is the load-bearing assumption, modelled
+explicitly to make the gate visible.
 
 **Trigger.** Two control-plane Machines flip to `UnhealthyMachine`
 in close succession. KCP issues `RequestRemediation` for both;
@@ -353,6 +397,12 @@ quorum invariant under concurrent removals.
 
 ## FM-8 — InformativenessObligation violation
 
+**Provenance.** Modelling (Quint counterexample to the
+`Composition.InformativenessObligation` projection equivalence).
+**Upstream cluster-api#11826** captures the broader gap of
+v1beta2 condition message degradation. Inaugural row in
+`counterexample-log.md`.
+
 **Trigger.** Any observation that flips MHC's v1beta1 message to
 carry `context deadline exceeded` (UnreachableTimeout) or
 `no route to host` (UnreachableNoRoute) is projected by v1beta2
@@ -370,6 +420,23 @@ restore the upstream gRPC error chain in the v1beta2 message,
 mirror the v1beta1 severity-grading distinction.
 
 ## FM-9 — Stuttering / fairness gap
+
+**Provenance.** Modelling. Originally a TLC artefact (no fairness
+on `step` admits stuttering counterexamples to `Convergence`).
+Phase 11d's bisection further surfaced two **real** liveness
+cycles via the modelling work itself:
+
+  - **MachineHealthChange flip-flop** (8-conjunct fairness): under
+    non-deterministic `h` choice, MHC oscillates between
+    Healthy/Unhealthy. Operationally interpretable as
+    "remediation-flap" alerts under intermittent flakiness.
+  - **WebhookRotationFault re-fire** (16-conjunct fairness):
+    cert-manager rotation can fire faster than KCP's reconcile,
+    indefinitely stalling membership changes.
+
+Neither cycle has a dedicated upstream issue (yet); both are
+LLM-synthesised alongside the modelling once the cycle was
+visible.
 
 **Trigger.** None — this is a model-checker artefact. Quint's
 `step` action has no fairness assumption attached, so any
@@ -588,6 +655,10 @@ gap requiring Apalache or Lean to close.
 
 ## FM-11 — Invalid kubelet configuration
 
+**Provenance.** Operational; commonly seen on misconfigured TLS
+bundles, broken container runtime endpoints, or apiserver address
+drift after a CNAME change.
+
 **Trigger.** A control-plane Machine joined as an etcd voter; its
 kubelet was Ready at join time. Subsequently a configuration
 drift (TLS bundle, CA, apiserver address, container runtime
@@ -612,6 +683,9 @@ failure mode explicit and verifiable, not because the
 implementation is broken today.
 
 ## FM-12 — Etcd starts but learner-add times out (slow storage)
+
+**Provenance.** Operational; classic on under-provisioned EBS gp2,
+contended Ceph RBD, or a host with sustained high I/O.
 
 **Trigger.** A joining Machine's etcd container starts, but the
 `Cluster.MemberAddAsLearner` gRPC times out before the leader
@@ -640,6 +714,11 @@ the model; the implementation needs to ensure JoinFailed
 Machines are detected and deleted rather than left in place.
 
 ## FM-13 — apiserver LB proxy broken
+
+**Provenance.** Operational; very common — LB health-probe drift,
+target-group misconfiguration, GSLB DNS TTL issue, kube-vip
+restart, vSphere apiserver IP move during maintenance. Apalache-
+proven hopeless under `stepNoRecovery`.
 
 **Trigger.** KCP reaches the workload-cluster apiserver (and
 through it, etcd's Status RPC) via a load balancer / proxy. When
@@ -680,6 +759,10 @@ and health-rollup transition while the LB is broken.
 
 ## FM-14 — Kubelet up but Node never registers
 
+**Provenance.** Operational; common when kubelet's TLS bootstrap
+client cert is mis-signed or the kubelet-config-bootstrap RBAC
+rules are tampered with.
+
 **Trigger.** A Machine completes `KubeletStarted` (the kubelet
 process is up). Despite that, the kubelet cannot reach the
 workload-cluster apiserver — perhaps because the workload-
@@ -709,6 +792,9 @@ enough — the Machine is technically Healthy from etcd's view
 yet useless for any workload.
 
 ## FM-15 — Upgrade in flight, replacement not yet promoted
+
+**Provenance.** Operational; the rolling-upgrade transient is
+universal in any KCP-managed upgrade.
 
 **Trigger.** The operator bumped `KubeadmControlPlane.spec.template`
 (e.g. to a new Kubernetes version). KCP's rolling-update
@@ -747,6 +833,10 @@ and the cluster returns to a healthy state on the new template.
   * Image-pull failure on the new template's container image — Preflight passes but kubelet never starts the static pods (apiserver, controller-manager, scheduler).
 
 ## FM-16 — Single-node cluster losing its only voter
+
+**Provenance.** Operational; canonical disaster-recovery case for
+1-CP topologies (dev clusters, edge sites). Apalache-proven
+hopeless without operator-driven `RestoreClusterFromSnapshot`.
 
 **Trigger.** A 1-node KCP cluster's only Machine fails
 (kubelet stops, etcd member becomes unreachable). The voter set
@@ -800,6 +890,10 @@ recovery action exists in the model.
 
 ## FM-10 — Conditions race: HealthyMachine while EtcdMemberHealthy=Unknown
 
+**Provenance.** Modelling; surfaced by the v1beta1↔v1beta2
+condition projection's tri-state mismatch under concurrent
+reconcile loops.
+
 **Trigger.** KCP's `MachineHealthChange` action flips a Machine
 to `HealthyMachine` based on Node Ready, while etcd-side
 `MemberHealthChange` has the same Machine as `UnknownHealth`
@@ -828,6 +922,10 @@ fact it is just a race between two reconcile loops.
 
 ## FM-17 — kubeadm-join misconfiguration (kubelet wrong endpoint)
 
+**Provenance.** Operational; commonly seen when KCP rolls a new
+template with a stale apiserver address, kubelet flag drift, or
+mismatched container-runtime endpoint. Apalache-proven hopeless.
+
 **Init**: `kubeadmMisconfigInit`. Kubelet starts with a wrong
 apiserver endpoint baked into `/etc/kubernetes/kubelet.conf`.
 Node never registers; etcd join never starts.
@@ -839,6 +937,10 @@ detects the JoinFailed phase.
 IC-08.
 
 ## FM-18 — Concurrent scale-up + remediation race
+
+**Provenance.** Operational + Modelling; the race is well-known,
+but the `targetEtcdClusterHealthy` gate's correctness was made
+explicit by the model. See `issue-corpus.md` IC-10.
 
 **Init**: `concurrentScaleAndRemediateInit`. KCP wants to scale
 3→5; meanwhile Machine 1 has flipped to UnhealthyMachine.
@@ -862,6 +964,9 @@ membership change at a time.
 
 ## FM-19 — apiserver restart relist storm
 
+**Provenance.** Operational; commonly seen during workload-cluster
+apiserver upgrades or rolls. See `issue-corpus.md` IC-15.
+
 **Init**: `apiserverRestartInit`. Workload-cluster apiserver
 restarted; LB returns errors briefly; KCP's MHC cache stale.
 
@@ -882,6 +987,11 @@ re-populates.
 
 ## FM-20 — Upgrade rollback mid-flight
 
+**Provenance.** LLM-synthesised + Operational; the mixed-template
+state is a plausible operational pattern (operator panicking
+during a bad upgrade) and is now TLC-verified end-to-end via
+`upgradeRollbackRecoveryRun` (IC-11).
+
 **Init**: `upgradeRollbackMidFlightInit`. Operator initiated
 upgrade to template 2; KCP scaled up Machine 4 (template 2);
 operator rolled back to template 1 before promotion. Machine 4
@@ -895,6 +1005,12 @@ explicitly handle "desiredTemplate changed mid-rollout"; the
 model exposes the state. See `issue-corpus.md` IC-11.
 
 ## FM-21 — Five-node cluster losing 2 of 5 voters concurrently
+
+**Provenance.** Operational; correlated rack/power events on
+5-CP topologies. The serialisation of the two remediations
+through `targetEtcdClusterHealthy` is operationally surprising —
+operators expect concurrent remediation given quorum is preserved.
+See `issue-corpus.md` IC-13.
 
 **Init**: `fiveNodeTwoFailuresInit`. 5-CP cluster, members 4 and
 5 simultaneously UnhealthyMachine.
@@ -920,6 +1036,10 @@ replacement.
 
 ## FM-22 — Single-node scale-up race (existing voter dies)
 
+**Provenance.** Modelling; identified as a sub-shape of FM-2 by
+Apalache's symbolic exploration. Operationally relevant to anyone
+running 1-CP→3-CP upgrades.
+
 **Init**: `singleNodeScaleUpFailureInit`. Mid-scale-up from 1 to
 3 (Machine 2 added as etcd learner); the only existing voter
 Machine 1 becomes unhealthy before promotion completes.
@@ -933,6 +1053,11 @@ or operator restore.
 **Classification**: **EXOGENOUS** (FM-2 sub-shape).
 
 ## FM-23 — Drain stuck on PDB during remediation
+
+**Provenance.** **Upstream cluster-api#13508**; operational pain
+point widely reported by users. Apalache safety verdict at
+depth 4 (~278 s) once the `drainBlocked` flag was added in
+Phase 4.
 
 **Init**: `drainStuckInit`. CompleteRemediation removed Machine
 1 from the etcd member set; Machine still in `machines` because
@@ -985,6 +1110,10 @@ captures the FM-23 shape directly.
 
 ## FM-24 — Etcd defrag pause
 
+**Provenance.** Operational / etcd folklore; the bbolt mmap-hold
+during defrag is a known cause of MHC `EtcdMemberHealthy=Unknown`
+flaps. See `issue-corpus.md` IC-12.
+
 **Init**: `etcdDefragPauseInit`. Etcd's bbolt defrag is running
 on the leader; every Status RPC times out for 10–60 s. KCP marks
 every member EtcdMemberHealthy=Unknown but nothing is broken.
@@ -1005,6 +1134,11 @@ flip back.
   * Storage I/O depth exceeds defrag's working set — defrag completes for the leader but every other voter sees a different defrag start within the same KCP reconcile window, observations never simultaneously settle to ReachableHealthy.
 
 ## FM-31 — Custom Node conditions not surfaced on Machine
+
+**Provenance.** **Upstream cluster-api#11826** ("Provide a way to
+surface arbitrary node conditions at machine level"). Modelled
+to make the obligation explicit; not yet a verified verdict
+beyond random-walk safety.
 
 **Trigger.** An operator writes a custom Node condition (e.g.
 via Node Problem Detector) and wants the corresponding Machine to
@@ -1028,6 +1162,12 @@ informativeness obligation).
 
 ## FM-32 — Webhook rotation gap (cert-manager downtime window)
 
+**Provenance.** **Upstream cert-manager#10522** ("Cert-manager
+certificate rotation may lead to downtime of webhooks for up to
+90 s"). Phase 11d's bisection also surfaced the
+`WebhookRotationFault` cycle as a real liveness gap when rotation
+re-fires faster than KCP's reconcile (modelling).
+
 **Trigger.** Cert-manager rotates the CAPI webhook serving cert.
 For up to ~90 s, mutating + validating webhooks are unreachable;
 any KCP / MHC reconcile that hits a webhook fails. If KCP is
@@ -1049,6 +1189,9 @@ hold during the window because gates are pure-state predicates,
 not webhook-mediated checks.
 
 ## FM-34 — MHC controller's stale cluster cache during apiserver restart
+
+**Provenance.** **Upstream cluster-api#12363** ("MachineHealthcheck
+controller fails to get cluster connection from cache").
 
 **Trigger.** The MHC controller maintains a cache-backed client
 for each workload cluster. When the apiserver restarts (e.g. as
@@ -1074,6 +1217,9 @@ captures the LB-broken sub-shape; FM-34 is the more specific
 "cache mis-coherence" framing.
 
 ## FM-37 — Lifecycle hooks skipped under control-plane unavailability
+
+**Provenance.** **Upstream cluster-api#8942** ("BeforeClusterUpgrade
+is not called with cp unavailable").
 
 **Trigger.** CAPI's runtime-extension lifecycle hooks
 (`BeforeClusterUpgrade`, `BeforeControlPlaneUpgrade`, etc.) are
@@ -1162,3 +1308,80 @@ The modelled scenario at
 exhibits FM-1 and FM-8 simultaneously: the stuck learner blocks
 remediation (FM-1) and the v1beta2 condition surface drops the
 diagnostic key that would have explained why (FM-8).
+
+## FM-35 — Self-hosted upgrade deadlock
+
+**Provenance.** **Upstream cluster-api#12886** ("[e2e test]
+Cluster API working on self-hosted clusters using ClusterClass
+failing with timed out error"). Modelled in
+[`specs/SelfHosted.qnt`](./specs/SelfHosted.qnt) rather than
+`Lifecycle.qnt` — see Phase 12 in the work plan.
+
+**Trigger.** A self-hosted CAPI deployment (the management
+cluster IS the workload cluster) reaches a state where KCP must
+upgrade the Node hosting its own pod. KCP pauses the host's Node
+to drain it; KCP can no longer reconcile. The cluster deadlocks
+until the operator manually fails over the KCP pod to a healthy
+non-paused Machine.
+
+**Init.** `selfHostedDeadlockInit` in `SelfHosted.qnt`.
+
+**Recovery.** `KcpReconcileResume` (operator-driven KCP pod
+failover via `kubectl delete pod`).
+
+**Verdict.** quint run on `selfHostedDeadlockTrace` reaches the
+`Deadlocked` invariant; `selfHostedRecoveryTrace` clears it.
+
+**Classification.** **MODEL-EXPANSION.** A faithful
+verification against the full Lifecycle.qnt would require
+per-cluster expansion (every state variable wrapped to
+`ClusterId -> X` and every action gaining a `cluster`
+parameter). The dual-cluster `SelfHosted.qnt` module captures
+the dynamics without that refactor.
+
+## Provenance summary
+
+| FM | Provenance | Upstream issue |
+|---|---|---|
+| 1 | Operational | cluster-api#13221 |
+| 2 | Operational + e2e CAPD pass | — |
+| 3 | Upstream | cluster-api#8465 |
+| 4 | Modelling | — |
+| 5 | Operational | — |
+| 6 | Operational / etcd folklore | — |
+| 7 | Operational | — |
+| 8 | Modelling | cluster-api#11826 (broader gap) |
+| 9 | Modelling (TLC + Phase 11d bisection) | — |
+| 10 | Modelling | — |
+| 11 | Operational | — |
+| 12 | Operational | — |
+| 13 | Operational | — |
+| 14 | Operational | — |
+| 15 | Operational | — |
+| 16 | Operational | — |
+| 17 | Operational | — |
+| 18 | Operational + Modelling | — |
+| 19 | Operational | — |
+| 20 | LLM-synthesised + Operational (IC-11 verified) | — |
+| 21 | Operational | — |
+| 22 | Modelling (Apalache identified FM-2 sub-shape) | — |
+| 23 | Upstream | cluster-api#13508 |
+| 24 | Operational / etcd folklore | — |
+| 31 | Upstream | cluster-api#11826 |
+| 32 | Upstream + Modelling (Phase 11d cycle) | cert-manager#10522 |
+| 34 | Upstream | cluster-api#12363 |
+| 35 | Upstream | cluster-api#12886 |
+| 37 | Upstream | cluster-api#8942 |
+
+Counts:
+- 7 FMs traced to a specific upstream issue.
+- 6 FMs surfaced by the modelling itself (FM-4, 8, 9, 10, 22,
+  plus the Phase 11d cycles inside FM-9 and FM-32).
+- 13 FMs derived from operational experience.
+- 1 FM (FM-20) primarily LLM-synthesised across components.
+
+The corpus is dominated by operational provenance — the formal
+work largely codifies and verifies what experienced operators
+already know, with modelling-original findings concentrated in
+the layered abstraction's seams (condition projection, fairness,
+phase-ordering windows).
