@@ -1006,6 +1006,14 @@ test-e2e: $(GINKGO) generate-e2e-templates ## Run the end-to-end tests
 		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
 		--e2e.use-existing-cluster=$(USE_EXISTING_CLUSTER)
 
+.PHONY: test-race
+test-race: ## Run the trace + chaos packages under -race (issue #12)
+	go test -race -count=1 ./internal/trace/... ./internal/chaos/...
+
+.PHONY: test-race-chaos
+test-race-chaos: ## Like test-race but with a fixed CHAOS_SEED for reproducible failures
+	CHAOS_SEED=$${CHAOS_SEED:-1} go test -race -count=1 ./internal/trace/... ./internal/chaos/...
+
 .PHONY: verify-trace-replay
 verify-trace-replay: ## Generate random Quint traces and replay through internal/trace/checkers (issue #11)
 	$(ROOT_DIR)/hack/tools/trace-replay-sweep.sh --total-traces 50 --max-steps 15
