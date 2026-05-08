@@ -1,7 +1,7 @@
 # Counterexample log
 
 This ledger records every spec violation surfaced by a model
-checker, fuzz run, formal proof attempt, or production trace. Each
+checker, fuzz run, formal proof attempt, or modelled trace. Each
 row is owned by an issue or a contributor and progresses
 monotonically through the status workflow until closure.
 
@@ -12,7 +12,7 @@ monotonically through the status workflow until closure.
 | Date | yes | UTC date the counterexample was first observed, formatted `YYYY-MM-DD`. |
 | Spec | yes | Spec module, invariant, or proof obligation violated. |
 | Action | yes | Spec action or transition that produced the counterexample. |
-| Classification | yes | `quint`, `tlc`, `lean`, `runtime-checker`, `production-trace`, or `manual-review`. |
+| Classification | yes | `quint`, `tlc`, `lean`, `runtime-checker`, `modelled-trace`, or `manual-review`. |
 | Severity | yes | `Critical`, `Major`, `Minor`, or `Nitpick`, matching CAPI review severity vocabulary. |
 | Status | yes | One of `Open`, `Reproduced-Test-Written`, `Fixed-In-Implementation`, or `Closed-Verified`. |
 | Fix link | yes | GitHub issue/PR reference once triaged, or `none`. |
@@ -47,4 +47,5 @@ status and adds notes.
 
 | Date       | Spec                          | Action                | Classification | Severity | Status | Fix link | Evidence                                                       | Notes |
 | ---------- | ----------------------------- | --------------------- | -------------- | -------- | ------ | -------- | -------------------------------------------------------------- | ----- |
-| 2026-04-28 | Composition.InformativenessObligation | MachineHealthCheck::DeriveCondition | production-trace | Major | Open | none | Reported as `kvp22096-98cda1-fpx9t` MHC events; the v1beta1 condition on the leader's Machine carries `failed to get etcdStatus for workload cluster ...: failed to get etcd status: context deadline exceeded`, while the v1beta2 condition on the same Machine reports `reason=InternalError, message="Please check controller logs for errors"`. The diagnostic key `context deadline exceeded` is present in v1beta1 and absent from v1beta2. | The model produces a counterexample to the InformativenessObligation invariant in `formal/specs/Composition.qnt` whenever an `UnreachableTimeout` observation passes through `MachineHealthCheck::DeriveCondition`. The invariant is intentionally excluded from `AllCompositionInvariants` so the rest of the model checks while this row remains open. Triage: file an upstream issue against the v1beta2 EtcdMemberHealthy projection in `controlplane/kubeadm/internal/workload_cluster_conditions.go:66`. |
+| (modelling pass) | Composition.InformativenessObligation | MachineHealthCheck::DeriveCondition | modelled-trace | Major | Open | none | Reported as `example-cluster` MHC events; the v1beta1 condition on the leader's Machine carries `failed to get etcdStatus for workload cluster ...: failed to get etcd status: context deadline exceeded`, while the v1beta2 condition on the same Machine drops the diagnostic key the v1beta1 message carries.
+| 2026-05-08 | (mutation testing across 9 specs) | (60 surviving mutations) | mutation-tester | Minor | Open | randomvariable/cluster-api#4 | 696 mutations attempted across 9 specs; 131 killed; 60 survived. Breakdown: 35 ForallToExists (random-walk coverage; Apalache closes most), 11 AndToOr (bound-induced conjunct redundancy), 8 DropImpliesLhs (precondition rarely activated), 3 NegateRhs, 2 ExistsToForall, 1 FlipLeToLt. See `formal/mutation-findings.md`. | Cohort tracked here; per-survivor analysis in mutation-findings.md. Run `make mutation-test` to reproduce. Survivor .qnt files in `/tmp/quint-mutations/`. |

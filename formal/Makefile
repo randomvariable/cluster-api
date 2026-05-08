@@ -565,6 +565,36 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
+## Mutation testing (Issue #4)
+## --------------------------------------
+
+##@ mutation-testing:
+
+.PHONY: mutation-test
+mutation-test:  ## Run mutation testing across all spec modules (~10 min)
+	@$(PYTHON) ../hack/tools/quint-mutation-tester.py --help >/dev/null 2>&1 || { echo "ERR: quint-mutation-tester.py missing"; exit 1; }
+	@for spec in ControllerRuntime InPlaceUpdate MachineSetPreflight \
+	             Topology ClusterE2E WorkerLifecycle SelfHosted \
+	             TopologyRefined InPlaceUpdateRefined \
+	             MachineSetPreflightRefined; do \
+	  if [ -f $(SPECS_DIR)/$$spec.qnt ]; then \
+	    echo "##### $$spec #####"; \
+	    $(PYTHON) ../hack/tools/quint-mutation-tester.py \
+	      $(SPECS_DIR)/$$spec.qnt --main=$$spec \
+	      --max-samples=300 --max-steps=40 --timeout=60 \
+	      --workdir=/tmp/quint-mutations || true; \
+	  fi; \
+	done
+
+.PHONY: mutation-test-spec
+mutation-test-spec:  ## Run mutation testing against one spec (use SPEC=<name>)
+	@test -n "$(SPEC)" || { echo "Usage: make mutation-test-spec SPEC=<ModuleName>"; exit 1; }
+	$(PYTHON) ../hack/tools/quint-mutation-tester.py \
+	  $(SPECS_DIR)/$(SPEC).qnt --main=$(SPEC) \
+	  --max-samples=300 --max-steps=40 --timeout=60 \
+	  --workdir=/tmp/quint-mutations
+
+## --------------------------------------
 ## Liveness properties beyond FM-9 (Issue #3)
 ## --------------------------------------
 
