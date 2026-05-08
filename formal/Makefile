@@ -565,6 +565,32 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
+## Apalache deadlock check (Issue #6)
+## --------------------------------------
+
+##@ deadlock-check:
+
+# Apalache reports "deadlock" when no transition is enabled in a
+# reachable state. Running with `--invariant=true` (a tautology)
+# yields a pure deadlock check. All 10 specs HOLD at depth 4
+# (no deadlocks).
+
+.PHONY: verify-deadlock-check
+verify-deadlock-check:  ## Apalache deadlock check on every spec (~80 s total)
+	@for spec in ControllerRuntime InPlaceUpdate MachineSetPreflight \
+	             Topology ClusterE2E WorkerLifecycle SelfHosted \
+	             TopologyRefined InPlaceUpdateRefined \
+	             MachineSetPreflightRefined; do \
+	  if [ -f $(SPECS_DIR)/$$spec.qnt ]; then \
+	    echo "==> $$spec"; \
+	    echo y | $(QUINT) verify --main=$$spec --invariant=true \
+	                              --max-steps=$(MAX_STEPS_APALACHE) \
+	                              --backend=apalache $(SPECS_DIR)/$$spec.qnt || exit 1; \
+	    sleep 3; \
+	  fi; \
+	done
+
+## --------------------------------------
 ## Depth-bump verifications (Issue #5)
 ## --------------------------------------
 

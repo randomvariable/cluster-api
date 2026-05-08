@@ -65,6 +65,11 @@ module TopologyRefined {
   pure val IDLE_KEY: Key = 0
   pure val CLUSTER_KEY: Key = 1                  // the one key
 
+  // MAX_VERSION bounds the operator-bump range. Apalache requires
+  // a constant-bounded set instead of `(cpVersion + 1).to(topologyVersion)`.
+  pure val MAX_VERSION: int = 40
+  pure val ALL_VERSIONS: Set[int] = 1.to(MAX_VERSION)
+
   var managerStarted: bool
   var leaderElected: bool
   var leaderRunnablesStarted: bool
@@ -490,7 +495,8 @@ module TopologyRefined {
     cpVersion > 0,
     cpVersion < topologyVersion,
     cpUpgradePlan.length() == 0,
-    cpUpgradePlan'      = (cpVersion + 1).to(topologyVersion).fold([], (acc, v) => acc.append(v)),
+    // Apalache-compatible: filter over a constant-bounded set.
+    cpUpgradePlan'      = ALL_VERSIONS.filter(v => v > cpVersion and v <= topologyVersion).fold([], (acc, v) => acc.append(v)),
     clusterPhase'       = Upgrading,
     managerStarted'           = managerStarted,
     leaderElected'            = leaderElected,
