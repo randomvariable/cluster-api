@@ -172,6 +172,52 @@ dimension differs.
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
 | SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
 
+### ClusterE2E.qnt
+
+End-to-end cluster lifecycle: bring-up (InfraCluster → CP →
+workers) plus topology hooks, in-place vs rolling upgrade
+strategies. Anchors recovered via gopls + grep on
+`internal/controllers/cluster/`,
+`internal/controllers/machine/`,
+`controlplane/kubeadm/internal/controllers/`,
+`internal/controllers/topology/cluster/`,
+`exp/topology/desiredstate/`.
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| ClusterE2E | FireBeforeClusterCreate | internal/controllers/topology/cluster/cluster_controller.go:441 (`callBeforeClusterCreateHook`). | Topology controller fires BeforeClusterCreate; advances cluster from NotCreated to InfraProvisioning. |
+| ClusterE2E | InfraClusterProvision | (external infra provider — refines the contract at internal/contract/infrastructurecluster.go via `provisioned` getter; observable side-effect of provider's controller). | Infra provider flips InfraCluster.status.ready=true and sets controlPlaneEndpoint. |
+| ClusterE2E | ClusterControllerObservesInfraReady | internal/controllers/cluster/cluster_controller_phases.go:141 (`reconcileInfrastructure`); :185-190 (provisioned read); :219 (controlPlaneEndpoint copy); :245 (InfrastructureProvisioned=true). | Cluster controller observes InfraCluster.status; sets Cluster.status.initialization.infrastructureProvisioned and copies the endpoint into Cluster.spec. |
+| ClusterE2E | KcpInitializeControlPlane | controlplane/kubeadm/internal/controllers/scale.go:43 (`initializeControlPlane`); gate at controller.go:296. | KCP creates the first CP Machine (via cloneConfigsAndGenerateMachine). |
+| ClusterE2E | BootstrapProviderProvisions | internal/controllers/machine/machine_controller_phases.go:148 (`reconcileBootstrap`); :179, :239 (BootstrapDataSecretCreated=true). | Bootstrap provider (e.g. KubeadmConfig controller) generates cloud-init and sets BootstrapConfig.status.dataSecretName. |
+| ClusterE2E | InfraProviderProvisions | internal/controllers/machine/machine_controller_phases.go:244 (`reconcileInfrastructure`); :296 (provisioned read); :375 (InfrastructureProvisioned=true). | Infra provider provisions the per-Machine VM and flips InfraMachine.status.ready=true. |
+| ClusterE2E | KubeletRegistersNode | (refines kubelet's local Node registration; cross-spec — already grounded at pkg/kubelet/kubelet_node_status.go:52 in KubeadmJoin.qnt). | Kubelet creates the Node object; Machine controller sets nodeRef. |
+| ClusterE2E | CpMachineJoinsEtcd | (refines the kubeadm-join etcd-add-learner + promote-learner sequence — already grounded in EtcdMembership.qnt and KubeadmJoin.qnt at finer grain). | CP Machine becomes part of the etcd member set. |
+| ClusterE2E | CpMachineMarkReady | (KCP marking the Machine ready via UpdateMachineConditions — observable via Machine.status.conditions). | CP Machine reaches MachineReady. |
+| ClusterE2E | KcpScaleUpControlPlane | controlplane/kubeadm/internal/controllers/scale.go:67 (`scaleUpControlPlane`); :81 (preflightChecks gate). | KCP creates the next CP Machine after the first is healthy. |
+| ClusterE2E | KcpMarkInitialized | (refines KCP setting `KCP.status.initialization.controlPlaneInitialized=true`; the contract is tested at controlplane/kubeadm/internal/contract/controlplane.go via `Initialized().Get`). | KCP marks itself Initialized once the first CP Machine joins etcd. |
+| ClusterE2E | ClusterControllerObservesCpInitialised | internal/controllers/cluster/cluster_controller_phases.go:251 (`reconcileControlPlane`); :289 (Initialized read); :347 (ControlPlaneInitialized=true). | Cluster controller observes ControlPlane.status.initialization.controlPlaneInitialized and propagates to Cluster.status. |
+| ClusterE2E | FireAfterControlPlaneInitialized | internal/controllers/topology/cluster/reconcile_state.go:188 (`callAfterControlPlaneInitialized`). | Topology fires AfterControlPlaneInitialized hook; enables the MD controller. |
+| ClusterE2E | MdCreateWorker | internal/controllers/machinedeployment/machinedeployment_controller.go (gated by Cluster.Status.Initialization.ControlPlaneInitialized). | MD controller creates a worker Machine. |
+| ClusterE2E | WorkerMarkReady | (refines worker Machine reaching ready after kubelet registers and Node becomes Ready). | Worker Machine reaches MachineReady. |
+| ClusterE2E | OperatorBumpVersion | (operator-driven — `Cluster.spec.topology.version`); also stamps the upgrade strategy choice. | Triggers an upgrade sequence. |
+| ClusterE2E | FireBeforeClusterUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:39 (`callBeforeClusterUpgradeHook`). | Topology fires BeforeClusterUpgrade. |
+| ClusterE2E | CpUpgradeRolling | controlplane/kubeadm/internal/controllers/scale.go:106 (`scaleDownControlPlane`) plus the upgrade orchestrator that sequences delete-and-recreate. | CP Machine rolled to next-step version via delete/recreate. |
+| ClusterE2E | CpUpgradeInPlace | internal/controllers/machine/machine_controller_inplace_update.go:43-227 (the in-place update flow already grounded in InPlaceUpdate.qnt). | CP Machine version bumped in place via UpdateMachine hook. |
+| ClusterE2E | CpStepCompletes | (transition observable when all CP at nextStepVersion). | All CP Machines at the new step version. |
+| ClusterE2E | FireAfterControlPlaneUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:184 (`callAfterControlPlaneUpgradeHook`). | Topology fires AfterControlPlaneUpgrade. |
+| ClusterE2E | FireBeforeWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:248 (`callBeforeWorkersUpgradeHook`). | Topology fires BeforeWorkersUpgrade. |
+| ClusterE2E | WorkerUpgrade | (rolling or in-place; refines MD upgrade orchestrator + InPlaceUpdate flow). | Worker Machine bumped to next-step version. |
+| ClusterE2E | WorkerStepCompletes | (transition observable when all workers at nextStepVersion). | All workers at the new step version. |
+| ClusterE2E | FireAfterWorkersUpgrade | exp/topology/desiredstate/lifecycle_hooks.go:314 (`callAfterWorkersUpgradeHook`). | Topology fires AfterWorkersUpgrade. |
+| ClusterE2E | FireAfterClusterUpgrade | internal/controllers/topology/cluster/reconcile_state.go:229 (`callAfterClusterUpgrade`); precondition cascade at :235-250 (full quiescence). | Topology fires AfterClusterUpgrade; cluster returns to Stable. |
+| ClusterE2E | cpMachinesCreated (helper) | (model-only). | Pure predicate. |
+| ClusterE2E | cpMachinesReady (helper) | (model-only). | Pure predicate. |
+| ClusterE2E | workerMachinesReady (helper) | (model-only). | Pure predicate. |
+| ClusterE2E | allCpAtVersion (helper) | (model-only). | Pure predicate. |
+| ClusterE2E | allWorkersAtVersion (helper) | (model-only). | Pure predicate. |
+| ClusterE2E | kcpEntryGateOpen (helper) | controlplane/kubeadm/internal/controllers/controller.go:296 (the `!InfrastructureProvisioned \|\| !ControlPlaneEndpoint.IsValid()` short-circuit). | Pure predicate. |
+
 ### ControllerRuntime.qnt
 
 The substrate model. Refines the core mechanics of

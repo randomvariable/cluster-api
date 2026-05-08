@@ -151,6 +151,38 @@ quint run --main=Lifecycle --init=upgradeRollbackRecoveryRun \
 # Expected: [violation] (~217 ms, 4 steps).
 ```
 
+### End-to-end cluster lifecycle (FM-48/49/50)
+
+```sh
+# Three demonstration runs cover the full bring-up plus
+# rolling and in-place upgrade strategies.
+
+quint run --main=ClusterE2E --init=happyBringUpRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ClusterE2E.qnt
+
+quint run --main=ClusterE2E --init=happyRollingUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ClusterE2E.qnt
+
+quint run --main=ClusterE2E --init=happyInPlaceUpgradeRun --step=step \
+          --invariant=AllSafetyInvariants --max-steps=0 \
+          formal/specs/ClusterE2E.qnt
+
+# Random-walk every cross-cutting ordering invariant.
+for inv in AllSafetyInvariants FM48_NoCpBeforeInfraReady \
+           FM49_NoWorkersBeforeCpInit FM50_EndpointMonotonic \
+           BootstrapBeforeInfra ClusterCpInitializedRequiresKcp \
+           MdEnabledRequiresCpInit BeforeClusterUpgradeOrdering \
+           AfterClusterUpgradeAtTarget; do
+  quint run --main=ClusterE2E --invariant=$inv \
+            --max-samples=300 --max-steps=60 \
+            formal/specs/ClusterE2E.qnt
+done
+```
+
+Or, from `formal/`: `make verify-e2e`.
+
 ### controller-runtime substrate (FM-45/46/47)
 
 ```sh

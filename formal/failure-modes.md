@@ -1409,6 +1409,112 @@ across all deterministic runs and 200×30 random walks.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
+## FM-48 — KCP must not create CP Machines before InfraCluster is ready
+
+**Provenance.** **Upstream** — encoded in
+`controlplane/kubeadm/internal/controllers/controller.go:296`:
+
+```go
+if !ptr.Deref(cluster.Status.Initialization.InfrastructureProvisioned, false) ||
+   !cluster.Spec.ControlPlaneEndpoint.IsValid() {
+    // ... return early without creating any CP Machine
+}
+```
+
+**Trigger.** A racing or misimplemented infra provider could
+flip `InfraCluster.status.ready=true` without setting
+`controlPlaneEndpoint`, OR KCP could ignore the gate and start
+creating Machines. Either way, CP Machines provisioned without
+a known endpoint cannot join etcd or accept kubeadm-join.
+
+**Init / scenarios.** `happyBringUpRun` walks the correct
+ordering: BeforeClusterCreate → InfraClusterProvision →
+ClusterControllerObservesInfraReady (sets
+infrastructureProvisioned + controlPlaneEndpointSet) →
+KcpInitializeControlPlane.
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| KCP entry-gate (early return) | `controlplane/kubeadm/internal/controllers/controller.go` | 296 |
+| `Reconciler.reconcileInfrastructure` | `internal/controllers/cluster/cluster_controller_phases.go` | 141 |
+| InfraCluster.provisioned read | same | 185-190 |
+| ControlPlaneEndpoint copy | same | 219 |
+| `Cluster.Status.Initialization.InfrastructureProvisioned = true` | same | 245 |
+| `KubeadmControlPlaneReconciler.initializeControlPlane` | `controlplane/kubeadm/internal/controllers/scale.go` | 43 |
+| `KubeadmControlPlaneReconciler.scaleUpControlPlane` | same | 67 |
+
+**Verdict.** `FM48_NoCpBeforeInfraReady` holds across all
+demos and 300×60 random walk.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
+## FM-49 — MachineDeployment must not create workers before ControlPlaneInitialized
+
+**Provenance.** **Upstream** — encoded in the MD controller's
+gate on `Cluster.Status.Initialization.ControlPlaneInitialized`,
+itself set by the Cluster controller at
+`internal/controllers/cluster/cluster_controller_phases.go:347`
+after reading the ControlPlane object's
+`status.initialization.controlPlaneInitialized` field.
+
+**Trigger.** Workers spawned before any CP Machine is up have
+no API server to bootstrap against. The kubeadm-join would
+fail; the MachineSet controller would loop on preflight (FM-33)
+in the best case, leak Machines in the worst.
+
+**Init / scenarios.** The model encodes this as the precondition
+of `MdCreateWorker`: `mdEnabled` must be true, which is only
+flipped by `FireAfterControlPlaneInitialized` (which itself
+requires `controlPlaneInitialised`).
+
+**LSP grounding.** Anchors recovered via gopls + grep:
+
+| Go entry point | File | Line |
+|---|---|---|
+| Cluster controller `reconcileControlPlane` | `internal/controllers/cluster/cluster_controller_phases.go` | 251 |
+| Initialized read | same | 289 |
+| `Cluster.Status.Initialization.ControlPlaneInitialized = true` | same | 347 |
+| Topology `callAfterControlPlaneInitialized` | `internal/controllers/topology/cluster/reconcile_state.go` | 188 |
+
+**Verdict.** `FM49_NoWorkersBeforeCpInit` holds across all
+demos and 300×60 random walk.
+
+**Classification.** **MODELLING** (verifies upstream contract).
+
+## FM-50 — ControlPlaneEndpoint monotonicity
+
+**Provenance.** **Upstream** — by inspection: no code path in
+`Reconciler.reconcileInfrastructure` (or anywhere in the cluster
+controller) ever clears
+`Cluster.Spec.ControlPlaneEndpoint` once set. Workers and KCP
+both depend on this stability — a regressing endpoint would
+break in-flight kubeadm-join calls and leave CP Machines
+unable to find each other.
+
+**Trigger.** A misimplemented infra provider that re-tenants a
+cluster's LB to a new IP could change the endpoint mid-flight.
+The Cluster controller has no machinery to re-thread that
+change through KCP / MD; the model surfaces this as a
+monotonicity requirement.
+
+**Init / scenarios.** State invariant: once the cluster has
+progressed past `InfraProvisioning`, `controlPlaneEndpointSet`
+remains true.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Endpoint copy from InfraCluster | `internal/controllers/cluster/cluster_controller_phases.go` | 219 |
+| (No clear path — verified by inspection.) | | |
+
+**Verdict.** `FM50_EndpointMonotonic` holds across all demos
+and 300×60 random walk.
+
+**Classification.** **MODELLING** (verifies upstream invariant).
+
 ## FM-45 — Per-key reconcile serialisation
 
 **Provenance.** **Upstream** — encoded in
@@ -1750,6 +1856,9 @@ reason that the operator can read.
 | FM-45 | Per-key reconcile serialisation under multi-worker | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` + 3 refinement modules (`FM45_PerKeySerialisation`) |
 | FM-46 | TerminalError suppresses requeue | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM46_TerminalErrorNoRequeue`) |
 | FM-47 | Cache lags API server | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM47_CacheBehindAPI`) |
+| FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM48_NoCpBeforeInfraReady`) |
+| FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM49_NoWorkersBeforeCpInit`) |
+| FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM50_EndpointMonotonic`) |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus
@@ -1874,6 +1983,9 @@ covers the FM-35-relevant subset (etcd membership + kubeadm join
 | 45 | Upstream (controller-runtime) | — |
 | 46 | Upstream (controller-runtime) | — |
 | 47 | Upstream (controller-runtime) | — |
+| 48 | Upstream (KCP entry-gate) | — |
+| 49 | Upstream (MD gate on CP-init) | — |
+| 50 | Upstream (by inspection) | — |
 | 35 | Upstream | cluster-api#12886 |
 | 37 | Upstream | cluster-api#8942 |
 

@@ -58,6 +58,7 @@ CRRUNTIME     := $(SPECS_DIR)/ControllerRuntime.qnt
 TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 INPLACE_REFINED := $(SPECS_DIR)/InPlaceUpdateRefined.qnt
 MSPREFLIGHT_REFINED := $(SPECS_DIR)/MachineSetPreflightRefined.qnt
+E2E           := $(SPECS_DIR)/ClusterE2E.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -561,6 +562,50 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 
 .PHONY: verify-refinements
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
+
+## --------------------------------------
+## End-to-end cluster lifecycle (FM-48/49/50)
+## --------------------------------------
+
+##@ end-to-end:
+
+.PHONY: verify-e2e-bringup
+verify-e2e-bringup:  ## Drive happyBringUpRun (full cluster bring-up)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterE2E --init=happyBringUpRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(E2E)
+
+.PHONY: verify-e2e-rolling
+verify-e2e-rolling:  ## Drive happyRollingUpgradeRun (rolling upgrade)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterE2E --init=happyRollingUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(E2E)
+
+.PHONY: verify-e2e-inplace
+verify-e2e-inplace:  ## Drive happyInPlaceUpgradeRun (in-place upgrade)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterE2E --init=happyInPlaceUpgradeRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(E2E)
+
+.PHONY: verify-e2e-random
+verify-e2e-random:  ## Random-walk every E2E ordering invariant (300x60)
+	@for inv in AllSafetyInvariants FM48_NoCpBeforeInfraReady \
+	            FM49_NoWorkersBeforeCpInit FM50_EndpointMonotonic \
+	            BootstrapBeforeInfra NodeRefAfterProvisioned \
+	            EtcdJoinOnlyForCp KcpInitializedRequiresFirstCp \
+	            ClusterCpInitializedRequiresKcp MdEnabledRequiresCpInit \
+	            BeforeClusterUpgradeOrdering AfterClusterUpgradeAtTarget; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterE2E \
+	               --invariant=$$inv --max-samples=300 --max-steps=60 \
+	               $(E2E) || exit 1; \
+	done
+
+.PHONY: verify-e2e
+verify-e2e: verify-e2e-bringup verify-e2e-rolling verify-e2e-inplace verify-e2e-random  ## Full E2E suite
 
 ## --------------------------------------
 ## Meta

@@ -64,6 +64,9 @@ Worthwhile but lower operational priority.
 | FM-45 | MODELLING (closed) | Per-key reconcile serialisation under multi-worker (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` + 3 refinement modules |
 | FM-46 | MODELLING (closed) | TerminalError suppresses requeue (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` |
 | FM-47 | MODELLING (closed) | Cache lags API server (controller-runtime substrate); verified in `specs/ControllerRuntime.qnt` |
+| FM-48 | MODELLING (closed) | KCP must not create CP Machines before InfraCluster ready (E2E ordering); verified in `specs/ClusterE2E.qnt` |
+| FM-49 | MODELLING (closed) | MD must not create workers before ControlPlaneInitialized (E2E ordering); verified in `specs/ClusterE2E.qnt` |
+| FM-50 | MODELLING (closed) | ControlPlaneEndpoint monotonicity (E2E invariant); verified in `specs/ClusterE2E.qnt` |
 | FM-37 | KCP-BUG (latent) | Lifecycle hook skipped when CP unavailable |
 
 ### Won't
