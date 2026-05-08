@@ -71,6 +71,23 @@ and the seL4 functional-correctness convention
 | KCPReconcile | RequestRemediation | controlplane/kubeadm/internal/controllers/remediation.go:54 (`reconcileUnhealthyMachines` entry) | KCP flips a Machine into remediation-requested. |
 | KCPReconcile | ResolveNodeRef | internal/controllers/machine/machine_controller_noderef.go (Machine controller; refinement is upstream of KCP) | Machine controller sets `Machine.status.nodeRef`. |
 
+### Drain & PDB
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| Lifecycle | BeginDrain | internal/controllers/machine/machine_controller.go:841 (`Reconciler.drainNode`); internal/controllers/machine/drain/drain.go (`Helper.CordonNode`, `Helper.GetPodsForEviction`, `Helper.EvictPods`). | KCP's Machine controller initiates drain. If a PDB refuses an eviction, drainBlocked sticks. Refines the upstream `Cluster.spec.controlPlane.machineDrainTimeout`. Contract: D-DRAIN-TIMEOUT. |
+| Lifecycle | DrainTimeout | internal/controllers/machine/machine_controller.go:712 (`Reconciler.nodeDrainTimeoutExceeded`). The Machine controller force-deletes once the timeout elapses. | `nodeDrainTimeout` elapsed; force-delete bypasses PDB. Clears drainBlocked + preflightBlocked. Contract: D-DRAIN-TIMEOUT. |
+
+### Apiserver ↔ etcd
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| Lifecycle | ApiserverEtcdConnect | k8s.io/apiserver/pkg/storage/etcd3/preflight/checks.go:56 (`EtcdConnection.CheckEtcdServers`); the etcd v3 client connection state in `apiserver/pkg/storage/etcd3/store.go` (Get:238, Create:274, Delete:342, Watch:968, GetList:736, GetCurrentResourceVersion:704). | apiserver-on-this-Machine establishes its etcd client connection. Pre-condition for apiserver readiness. |
+| Lifecycle | ApiserverEtcdDisconnect | etcd3 client returning `rpctypes.ErrGRPCNoLeader` / `ErrGRPCConnectFailed`; observable through apiserver readyz failure. | Fault: apiserver loses its etcd connection. Forces apiserver readiness probe to fail. |
+| Lifecycle | ApiserverReadinessOk | k8s.io/apiserver/pkg/server/healthz/healthz.go (the `readyz` endpoint and registered checks). | Apiserver `readyz` returns 200; LB will route traffic. |
+| Lifecycle | EtcdCompactionStart | k8s.io/apiserver/pkg/storage/etcd3/compact.go:52 (`StartCompactorPerEndpoint`); also the etcd-side auto-compaction loop (`server/etcdserver/server.go::compactor`). | Etcd auto-compaction begins. Bbolt mmap held; gRPC reads spike to 10–60s of latency. Models the FM-24 shape's underlying mechanism. |
+| Lifecycle | EtcdCompactionDone | (etcd-side; compactor finishes). | Compaction completes; Status RPCs return to baseline latency. Recovery action. |
+
 ### MachineHealthCheck.qnt
 
 | Spec | Action | Go reference | Purpose |

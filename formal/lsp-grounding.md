@@ -55,6 +55,27 @@ still sound.
 | `MachineHealthCheck` driver | [`machinehealthcheck.Reconciler.Reconcile`](../internal/controllers/machinehealthcheck/machinehealthcheck_controller.go#L175) | Top of the MHC reconcile loop. |
 | MHC `needsRemediation` predicate | [`healthCheckTarget.needsRemediation`](../internal/controllers/machinehealthcheck/machinehealthcheck_targets.go#L80) | The function that decides whether MHC should label a Machine as unhealthy. The model abstracts this to `MachineHealthChange(m, UnhealthyMachine)`. |
 
+## Refinement anchors — Machine controller (drain & deletion)
+
+| Quint action | Go entry point | Notes |
+|---|---|---|
+| `Lifecycle.BeginDrain` | [`Reconciler.drainNode`](../internal/controllers/machine/machine_controller.go#L841); [`drain.Helper.CordonNode`](../internal/controllers/machine/drain/drain.go); [`drain.Helper.GetPodsForEviction`](../internal/controllers/machine/drain/drain.go); [`drain.Helper.EvictPods`](../internal/controllers/machine/drain/drain.go) | The CAPI Machine controller's drain step. Cordons the Node, picks Pods to evict (filters honour `MachineDrainRule` exclusions), evicts them. PDB-violating evictions surface as `evictionResult.PodsFailedEviction` and gate `drainBlocked = true` in the model. |
+| `Lifecycle.DrainTimeout` | [`Reconciler.nodeDrainTimeoutExceeded`](../internal/controllers/machine/machine_controller.go#L712); [`MachineSpecDeletion.NodeDrainTimeoutSeconds`](../api/core/v1beta2/machine_types.go) | Force-delete after `nodeDrainTimeout` elapses. Refers to `Machine.Status.Deletion.NodeDrainStartTime` for elapsed-time computation. |
+| `Lifecycle.RestoreNodeReachability` (NodeReachable transition) | [`noderefutil.IsNodeUnreachable`](../internal/util/noderefutil/util.go) (referenced by `drainNode` line ~870–890 to set `SkipWaitForDeleteTimeoutSeconds=1`). | When the Node is unreachable, drain uses a 1s grace period and ignores stalled Pods. The model abstracts this to `nodeReachable[m]` flipping false. |
+
+## Refinement anchors — kube-apiserver ↔ etcd
+
+The kube-apiserver is the point of contact between the management
+cluster (KCP) and the workload cluster's etcd via the LB. The model
+captures three facts about this layer.
+
+| Quint action | Go entry point | Notes |
+|---|---|---|
+| `Lifecycle.ApiserverEtcdConnect` | `staging/src/k8s.io/apiserver/pkg/storage/etcd3/preflight/checks.go:56` (`EtcdConnection.CheckEtcdServers`); `staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go` (etcd v3 client used by Get:238, Create:274, Delete:342, Watch:968, GetList:736, GetCurrentResourceVersion:704, RequestWatchProgress:102). | Apiserver-on-this-Machine connects to its configured etcd backend (`--etcd-servers`). Pre-condition for apiserver readiness. |
+| `Lifecycle.ApiserverEtcdDisconnect` | The etcd v3 client returning `rpctypes.ErrGRPCNoLeader` / `ErrGRPCConnectFailed` from any storage op; the apiserver's readyz endpoint then fails. | Fault — apiserver loses its etcd connection (local etcd pod crashed, network glitch, cert rotation). |
+| `Lifecycle.ApiserverReadinessOk` | `staging/src/k8s.io/apiserver/pkg/server/healthz/healthz.go` (the readyz endpoint and registered checks). | apiserver `readyz` returns 200; the LB will route traffic to it. |
+| `Lifecycle.EtcdCompactionStart` / `Lifecycle.EtcdCompactionDone` | `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go:52` (`StartCompactorPerEndpoint`); `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go::compactor.compactIfNeeded`. | Apiserver-driven etcd auto-compaction. Holds the bbolt mmap; gRPC reads spike to 10–60s. The FM-24 mechanism. |
+
 ## Status-rollup anchors (conditions ↔ KCP scaling decisions)
 
 | Quint side | Go entry point | Notes |

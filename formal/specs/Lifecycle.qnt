@@ -176,6 +176,40 @@ module Lifecycle {
   // but Node never joins".
   var nodeReachable: MachineId -> bool
 
+  // -- Drain & PDB ----------------------------------------------
+  // True when KCP has begun draining the Machine but kubelet drain
+  // has stalled — typically because of a PodDisruptionBudget
+  // violation. Sticky: only DrainTimeout (force-delete) clears it.
+  // Refines `controlplane/kubeadm/internal/controllers/scale.go`
+  // (`scaleDownControlPlane`) calling `internal/util/collections.HasUnhealthyMachines`
+  // and the upstream `Cluster.spec.controlPlane.machineDrainTimeout`.
+  var drainBlocked: MachineId -> bool
+  // True when a PodDisruptionBudget refused an eviction during
+  // drain. The model uses this to gate `BeginDrain` ⇒ `drainBlocked`.
+  var pdbViolatedFor: MachineId -> bool
+
+  // -- Apiserver ↔ etcd interactions ----------------------------
+  // The kube-apiserver static pod's etcd backend connectivity.
+  // True iff the apiserver process on this Machine can reach its
+  // configured etcd backend (typically an etcd pod on the same
+  // Machine via `127.0.0.1:2379`, or any peer in `--etcd-servers`).
+  // Refines `staging/src/k8s.io/apiserver/pkg/storage/etcd3/preflight/checks.go::CheckEtcdServers`
+  // and the etcd v3 client connection state inside
+  // `staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go`.
+  var apiserverEtcdReachable: MachineId -> bool
+  // The kube-apiserver pod's readiness. Apiserver readiness gates
+  // are: storage backend reachable (apiserverEtcdReachable),
+  // bootstrap secrets present, post-start hooks complete,
+  // server certs valid. Refines
+  // `staging/src/k8s.io/apiserver/pkg/server/healthz/healthz.go`.
+  var apiserverReady: MachineId -> bool
+  // Etcd auto-compaction is in progress. During compaction the
+  // bbolt mmap is held; gRPC reads can spike to 10–60 s of latency
+  // and Status RPCs may time out. Refines
+  // `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go::StartCompactorPerEndpoint`
+  // and etcd's own auto-compaction loop.
+  var etcdCompactionInProgress: bool
+
   // ===============================================================
   // Initial state
   // ===============================================================
@@ -237,6 +271,11 @@ module Lifecycle {
     // Network
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // ── Topology variants — singleNode / threeNode / fiveNode ────
@@ -274,6 +313,11 @@ module Lifecycle {
     observation' = Map(1 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true),
+    drainBlocked'  = Map(1 -> false),
+    pdbViolatedFor'  = Map(1 -> false),
+    apiserverEtcdReachable'  = Map(1 -> true),
+    apiserverReady'  = Map(1 -> true),
+    etcdCompactionInProgress'  = false,
   }
 
   action threeNodeInit = init  // alias
@@ -316,6 +360,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // ===============================================================
@@ -436,6 +485,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action AdvanceTerm: bool = all {
@@ -460,6 +514,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action AddLearner(id: MachineId): bool = all {
@@ -487,6 +546,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action ObserveLearnerProgress(id: MachineId, p: LearnerProgress): bool = all {
@@ -517,6 +581,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action PromoteLearner(id: MachineId): bool = all {
@@ -545,6 +614,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action RemoveMember(id: MachineId): bool = all {
@@ -552,6 +626,7 @@ module Lifecycle {
     voters(members.exclude(Set(id)), learners.exclude(Set(id))).size() >= 1,
     hasLeader(leaderAt, currentTerm),
     leaderAt.get(currentTerm) != id,
+    not(drainBlocked.keys().contains(id) and drainBlocked.get(id)),
     members'  = members.exclude(Set(id)),
     learners' = learners.exclude(Set(id)),
     progress' = progress, memberHealth' = memberHealth,
@@ -573,6 +648,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // LeaderStepDown — the current leader steps down because its
@@ -612,6 +692,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // TransferLeadership — KCP's pre-scale-down optimisation. Refines
@@ -656,6 +741,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // MemberHealthChange — KCP refreshes its memberHealth view by
@@ -707,6 +797,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // Fault action — exogenous.
@@ -734,6 +829,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -763,6 +863,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action PreflightPass(m: MachineId): bool = all {
@@ -788,6 +893,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // DownloadCertsSucceeded — control-plane-prepare phase succeeded.
@@ -818,6 +928,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EnterEtcdHealthCheck — kubeadm-join enters check-etcd phase.
@@ -845,6 +960,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // CheckEtcdHealth — check-etcd phase succeeded; existing etcd
@@ -873,6 +993,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // KubeletStarted — kubelet-start/start: kubeadm has written kubelet
@@ -905,6 +1030,11 @@ module Lifecycle {
     staticPodManifestsWritten' = staticPodManifestsWritten,
     kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // KubeletTLSBootstrap — kubelet-start/wait-bootstrap: kubelet has
@@ -938,6 +1068,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // RegisterLocalNode — kubelet performs local Node registration
@@ -973,6 +1108,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EnterEtcdAddLearner — kubeadm enters the etcd-add-learner phase
@@ -1003,6 +1143,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EtcdAddLearnerSucceeded reaches into EtcdMembership to actually
@@ -1038,6 +1183,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EtcdQuorumReady fires after PromoteLearner — kubeadm-join
@@ -1070,6 +1220,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // MarkAsControlPlane — control-plane-join/mark-control-plane:
@@ -1100,6 +1255,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // UploadKubeadmConfig — control-plane-join/uploadconfig: kubeadm
@@ -1129,6 +1289,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action MarkReady(m: MachineId): bool = all {
@@ -1154,6 +1319,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action JoinFailedAt(m: MachineId, r: JoinFailureReason): bool = all {
@@ -1181,6 +1351,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -1219,6 +1394,11 @@ module Lifecycle {
     staticPodManifestsWritten' = staticPodManifestsWritten,
     kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action ResolveNodeRef(m: MachineId): bool = all {
@@ -1255,6 +1435,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action MachineHealthChange(m: MachineId, h: MachineHealth): bool = all {
@@ -1278,6 +1463,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action RequestRemediation(m: MachineId): bool = all {
@@ -1305,6 +1495,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EvaluateCanSafelyRemediate mirrors KCP's
@@ -1358,6 +1553,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // CompleteRemediation is the success path: the failed machine is
@@ -1401,6 +1601,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -1456,6 +1661,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   action LoseEtcdMember(m: MachineId): bool = all {
@@ -1481,6 +1691,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -1511,6 +1726,11 @@ module Lifecycle {
     template' = template, desiredTemplate' = desiredTemplate,
     observation' = observation,
     lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ScaleUpControlPlane: KCP creates a Machine because actual
@@ -1553,6 +1773,11 @@ module Lifecycle {
     staticPodManifestsWritten' = staticPodManifestsWritten,
     kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ScaleDownControlPlane: KCP gracefully removes a healthy Machine
@@ -1591,6 +1816,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     observation' = observation,
     lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // InitiateUpgrade: the operator updates KCP's spec.template
@@ -1618,6 +1848,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     observation' = observation,
     lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -1649,6 +1884,11 @@ module Lifecycle {
     staticPodManifestsWritten' = staticPodManifestsWritten,
     kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // EtcdJoinTimeout — the etcd Add Learner gRPC call timed out
@@ -1678,6 +1918,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate, observation' = observation,
     lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // LbBroken — the apiserver LB proxy fails. KCP reaches the
@@ -1708,6 +1953,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // NodeNeverJoins — the kubelet started, but the Node never
@@ -1737,6 +1987,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate, observation' = observation,
     lbHealthy' = lbHealthy,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // ===============================================================
@@ -1773,6 +2028,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate, observation' = observation,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // RestoreClusterFromSnapshot — the operator's disaster-recovery
@@ -1830,6 +2090,11 @@ module Lifecycle {
     staticPodManifestsWritten' = staticPodManifestsWritten,
     kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // RestoreNodeReachability — the workload-cluster apiserver
@@ -1855,6 +2120,11 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate, observation' = observation,
     lbHealthy' = lbHealthy,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
 
@@ -1889,6 +2159,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // DeleteFailedMachine: KCP detects a JoinFailed Machine and
@@ -1919,6 +2194,11 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
   }
 
   // HealEtcdReachability: an UnreachableTimeout / UnreachableNoRoute
@@ -1950,6 +2230,270 @@ module Lifecycle {
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
     nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // ============================================================
+  // Drain & PDB actions
+  // ============================================================
+
+  // BeginDrain — KCP starts draining a Machine that's been
+  // RemediationInFlight. If a PodDisruptionBudget refused an
+  // eviction, drainBlocked sticks; only DrainTimeout (force-delete)
+  // clears it. Refines `controlplane/kubeadm/internal/controllers/scale.go`
+  // (`scaleDownControlPlane`) and the Machine controller's drain
+  // sequence.
+  // Contract: D-DRAIN-TIMEOUT.
+  action BeginDrain(m: MachineId): bool = all {
+    machines.contains(m),
+    decision.keys().contains(m),
+    decision.get(m) == RemediationInFlight,
+    drainBlocked.keys().contains(m),
+    not(drainBlocked.get(m)),
+    pdbViolatedFor.keys().contains(m),
+    pdbViolatedFor.get(m),                            // PDB refusal triggers stuck drain
+    drainBlocked' = drainBlocked.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // DrainTimeout — `nodeDrainTimeout` elapses, KCP force-deletes
+  // the Machine bypassing PDB. Clears drainBlocked,
+  // preflightBlocked, and advances the decision to Remediated.
+  // Refines the upstream `Cluster.spec.controlPlane.machineDrainTimeout`
+  // and `internal/controllers/machine/drain` package.
+  // Contract: D-DRAIN-TIMEOUT.
+  action DrainTimeout(m: MachineId): bool = all {
+    drainBlocked.keys().contains(m),
+    drainBlocked.get(m),
+    decision.keys().contains(m),
+    drainBlocked' = drainBlocked.put(m, false),
+    decision' = decision.put(m, RemediationInFlight),  // remediation now unblocked
+    preflightBlocked' = false,
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel,
+    blockReason' = blockReason,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // ============================================================
+  // Apiserver ↔ etcd actions
+  // ============================================================
+
+  // ApiserverEtcdConnect — kube-apiserver static pod's etcd v3
+  // client reaches its configured etcd backend. Refines
+  // `staging/src/k8s.io/apiserver/pkg/storage/etcd3/preflight/checks.go::CheckEtcdServers`.
+  // Pre-condition: the underlying etcd member exists and the
+  // network path is up (lbHealthy isn't strictly required since
+  // apiserver typically talks to its local 127.0.0.1:2379).
+  action ApiserverEtcdConnect(m: MachineId): bool = all {
+    machines.contains(m),
+    apiserverEtcdReachable.keys().contains(m),
+    not(apiserverEtcdReachable.get(m)),
+    members.contains(m) or members.size() > 0,        // some etcd member must exist
+    apiserverEtcdReachable' = apiserverEtcdReachable.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // ApiserverEtcdDisconnect — fault: apiserver's etcd connection
+  // drops (etcd member crashed, network glitch, certificate
+  // mismatch). Apiserver immediately fails its readiness probe
+  // because the storage backend is unreachable. Refines the
+  // failure path of `apiserver-pkg-storage-etcd3-store.go` ops
+  // returning `rpctypes.ErrGRPCNoLeader` /
+  // `rpctypes.ErrGRPCConnectFailed`.
+  action ApiserverEtcdDisconnect(m: MachineId): bool = all {
+    machines.contains(m),
+    apiserverEtcdReachable.keys().contains(m),
+    apiserverEtcdReachable.get(m),
+    apiserverReady.keys().contains(m),
+    apiserverEtcdReachable' = apiserverEtcdReachable.put(m, false),
+    apiserverReady' = apiserverReady.put(m, false),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // ApiserverReadinessOk — kube-apiserver's readiness probe passes.
+  // Refines `staging/src/k8s.io/apiserver/pkg/server/healthz/healthz.go`
+  // (the readyz endpoint).
+  action ApiserverReadinessOk(m: MachineId): bool = all {
+    apiserverEtcdReachable.keys().contains(m),
+    apiserverEtcdReachable.get(m),
+    apiserverReady.keys().contains(m),
+    not(apiserverReady.get(m)),
+    apiserverReady' = apiserverReady.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+  }
+
+  // EtcdCompactionStart — etcd auto-compaction begins. Holds the
+  // bbolt mmap; gRPC reads spike to 10–60s. Refines
+  // `staging/src/k8s.io/apiserver/pkg/storage/etcd3/compact.go::StartCompactorPerEndpoint`
+  // and etcd's own auto-compaction loop. Marks all members as
+  // UnknownHealth from the leader's view (mimicking FM-24's shape).
+  action EtcdCompactionStart: bool = all {
+    not(etcdCompactionInProgress),
+    etcdCompactionInProgress' = true,
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+  }
+
+  // EtcdCompactionDone — auto-compaction completes; latency
+  // returns to baseline. Recovery action.
+  action EtcdCompactionDone: bool = all {
+    etcdCompactionInProgress,
+    etcdCompactionInProgress' = false,
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
   }
 
   // ===============================================================
@@ -2021,6 +2565,15 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); EtcdJoinTimeout(m),
     LbBroken,
     nondet m = MACHINES.oneOf(); NodeNeverJoins(m),
+    // Drain
+    nondet m = MACHINES.oneOf(); BeginDrain(m),
+    nondet m = MACHINES.oneOf(); DrainTimeout(m),
+    // Apiserver ↔ etcd
+    nondet m = MACHINES.oneOf(); ApiserverEtcdConnect(m),
+    nondet m = MACHINES.oneOf(); ApiserverEtcdDisconnect(m),
+    nondet m = MACHINES.oneOf(); ApiserverReadinessOk(m),
+    EtcdCompactionStart,
+    EtcdCompactionDone,
     // Recovery
     nondet m = MACHINES.oneOf(); RemoveStuckLearner(m),
     nondet m = MACHINES.oneOf(); DeleteFailedMachine(m),
@@ -2097,8 +2650,12 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); EtcdJoinTimeout(m),
     LbBroken,
     nondet m = MACHINES.oneOf(); NodeNeverJoins(m),
-    // No RemoveStuckLearner, DeleteFailedMachine, HealEtcdReachability,
-    // HealLb, or RestoreNodeReachability.
+    nondet m = MACHINES.oneOf(); BeginDrain(m),
+    nondet m = MACHINES.oneOf(); ApiserverEtcdDisconnect(m),
+    EtcdCompactionStart,
+    // No DrainTimeout, ApiserverEtcdConnect, ApiserverReadinessOk,
+    // EtcdCompactionDone, RemoveStuckLearner, DeleteFailedMachine,
+    // HealEtcdReachability, HealLb, or RestoreNodeReachability.
   }
 
   // stepRemediation — minimal step relation that includes only
@@ -2361,6 +2918,11 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'   = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'   = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'   = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'   = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'   = false,
   }
 
   // 4-machine KCP set, but machine 4 is registered with KCP only
@@ -2406,6 +2968,11 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'   = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'   = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'   = false,
   }
 
   // Bootstrapped 3-machine cluster with a leader, a stuck learner
@@ -2443,6 +3010,11 @@ module Lifecycle {
     desiredTemplate' = 1,
     lbHealthy'       = true,
     nodeReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'   = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'   = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'   = false,
   }
 
   // -------------------------------------------------------------
@@ -2517,6 +3089,11 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    drainBlocked'  = Map(1 -> false, 2 -> false),
+    pdbViolatedFor'  = Map(1 -> false, 2 -> false),
+    apiserverEtcdReachable'  = Map(1 -> true, 2 -> true),
+    apiserverReady'  = Map(1 -> true, 2 -> true),
+    etcdCompactionInProgress'  = false,
   }
 
   // -------------------------------------------------------------
@@ -2600,6 +3177,11 @@ module Lifecycle {
                        4 -> NoCorrespondingMember),
     lbHealthy'      = true,    // the LB itself is fine
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    etcdCompactionInProgress'  = false,
   }
 
   // -------------------------------------------------------------
@@ -2731,6 +3313,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-12 — Etcd join times out due to slow storage. Machine 4 is
@@ -2769,6 +3356,11 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-13 / FM-14 — apiserver LB proxy broken. KCP's etcd client
@@ -2804,6 +3396,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-15 — Kubelet started but Node never registers. Machine 4
@@ -2840,6 +3437,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-16 — Upgrade in progress: desiredTemplate has been bumped
@@ -2879,6 +3481,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // -------------------------------------------------------------
@@ -2917,6 +3524,11 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false),
+    drainBlocked'  = Map(1 -> false),
+    pdbViolatedFor'  = Map(1 -> false),
+    apiserverEtcdReachable'  = Map(1 -> false),
+    apiserverReady'  = Map(1 -> false),
+    etcdCompactionInProgress'  = false,
   }
 
   // 5-node cluster with a stuck learner being promoted — same
@@ -2953,6 +3565,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3, 4, 5).mapBy(_ => ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // -------------------------------------------------------------
@@ -3004,6 +3621,11 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false).put(4, false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-18 — concurrent scale-up + remediation race. KCP wants to
@@ -3040,6 +3662,11 @@ module Lifecycle {
     observation' = Map(1 -> ReachableUnhealthy, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-19 — apiserver restart relist storm. The workload-cluster
@@ -3078,6 +3705,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = false,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-20 — upgrade rollout abort mid-flight. Operator initiated
@@ -3118,6 +3750,11 @@ module Lifecycle {
                      .put(4, NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-21 — five-node cluster losing two voters concurrently
@@ -3157,6 +3794,11 @@ module Lifecycle {
                        4 -> UnreachableTimeout, 5 -> UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-22 — single-node cluster scale-up race. The 1-node cluster
@@ -3192,6 +3834,11 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> NoCorrespondingMember),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> true, 2 -> true),
+    drainBlocked'  = Map(1 -> false, 2 -> false),
+    pdbViolatedFor'  = Map(1 -> false, 2 -> false),
+    apiserverEtcdReachable'  = Map(1 -> true, 2 -> true),
+    apiserverReady'  = Map(1 -> true, 2 -> true),
+    etcdCompactionInProgress'  = false,
   }
 
   // FM-23 — Drain stuck on PDB. A Machine is being deleted
@@ -3231,6 +3878,11 @@ module Lifecycle {
     observation' = Map(1 -> UnreachableTimeout, 2 -> ReachableHealthy, 3 -> ReachableHealthy),
     lbHealthy'      = true,
     nodeReachable'  = Map(1 -> false, 2 -> true, 3 -> true),
+    drainBlocked'   = Map(1 -> true, 2 -> false, 3 -> false),
+    pdbViolatedFor' = Map(1 -> true, 2 -> false, 3 -> false),
+    apiserverEtcdReachable' = Map(1 -> false, 2 -> true, 3 -> true),
+    apiserverReady' = Map(1 -> false, 2 -> true, 3 -> true),
+    etcdCompactionInProgress' = false,
   }
 
   // FM-24 — etcd defrag pause. Etcd's defrag operation
@@ -3268,6 +3920,11 @@ module Lifecycle {
     observation' = Set(1, 2, 3).mapBy(_ => UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // leaderRemovalRaceInit — Machine 1 is the current etcd leader and
@@ -3319,6 +3976,11 @@ module Lifecycle {
                       .put(1, UnreachableTimeout),
     lbHealthy'      = true,
     nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked'  = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor'  = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress'  = false,
   }
 
   // -------------------------------------------------------------
@@ -3356,7 +4018,11 @@ module Lifecycle {
                 desiredReplicas' = desiredReplicas,
                 template' = template, desiredTemplate' = desiredTemplate,
                 observation' = observation,
-                lbHealthy' = lbHealthy, nodeReachable' = nodeReachable })
+                lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+                drainBlocked' = drainBlocked, pdbViolatedFor' = pdbViolatedFor,
+                apiserverEtcdReachable' = apiserverEtcdReachable,
+                apiserverReady' = apiserverReady,
+                etcdCompactionInProgress' = etcdCompactionInProgress })
 
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,

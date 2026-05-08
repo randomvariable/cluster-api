@@ -18,9 +18,9 @@ for v1beta2 — and states an `InformativenessObligation` that the
 v1beta2 projection MUST be at least as informative as the v1beta1
 projection.
 
-The user-reported incident at
-`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`
-(2026-04-28) is a counterexample to that obligation. This
+The modelled scenario at
+`example-cluster`
+((modelling pass)) is a counterexample to that obligation. This
 contract pins the projection's normative shape so that future
 work can either:
 
@@ -142,3 +142,66 @@ The counterexample-log row inaugurated alongside this contract
 records the violation; closure requires either restoring the
 diagnostic content in the v1beta2 message or documenting a
 narrowly-scoped exception here with rationale.
+
+## 6. Drain & PDB obligations
+
+The Machine controller's drain step is gated on the
+`Cluster.spec.controlPlane.machineDrainTimeout` (and per-Machine
+`Spec.Deletion.NodeDrainTimeoutSeconds`) timer.
+
+- **D-DRAIN-TIMEOUT** — When `drainBlocked` is true (a kubelet
+  drain has stalled — typically a PodDisruptionBudget refusing an
+  eviction) and `nodeDrainTimeout` elapses, the Machine
+  controller MUST force-delete the Machine bypassing PDB. Refines:
+  - `internal/controllers/machine/machine_controller.go:712`
+    (`Reconciler.nodeDrainTimeoutExceeded`) — checks elapsed time.
+  - `internal/controllers/machine/machine_controller.go:841`
+    (`Reconciler.drainNode`) — the drain entry point.
+  - `internal/controllers/machine/drain/drain.go`
+    (`Helper.CordonNode`, `Helper.GetPodsForEviction`,
+    `Helper.EvictPods`, `EvictionResult.DrainCompleted`) —
+    eviction loop primitives.
+  - `Spec.Deletion.NodeDrainTimeoutSeconds` field at
+    `api/core/v1beta2/machine_types.go::MachineSpecDeletionSpec`.
+  - The model encodes `BeginDrain(m)` (sets `drainBlocked=true`)
+    and `DrainTimeout(m)` (clears `drainBlocked`, advances
+    `decision[m]=RemediationInFlight`, clears `preflightBlocked`).
+  - Without `DrainTimeout`, no remaining action clears
+    `drainBlocked` — the Machine deletion is permanently stuck.
+  - This obligation is the load-bearing assumption of FM-23's
+    Apalache hopelessness proof: the model under `stepNoRecovery`
+    omits `DrainTimeout`, so `HealthyControlPlane` is unreachable.
+
+## 7. Apiserver readiness and etcd-backend obligations
+
+KCP's MHC observation is mediated by the workload-cluster apiserver,
+which itself depends on etcd. The model captures three facts the
+implementation depends on:
+
+- **AS-READYZ** — Apiserver `readyz` MUST return 200 only when its
+  storage backend (etcd) is reachable. Refines
+  `staging/src/k8s.io/apiserver/pkg/server/healthz/healthz.go` and
+  the etcd-storage health checks at
+  `staging/src/k8s.io/apiserver/pkg/storage/etcd3/healthcheck.go::EtcdHealthCheck`,
+  `staging/src/k8s.io/apiserver/pkg/storage/etcd3/preflight/checks.go:56::CheckEtcdServers`.
+  The model encodes `ApiserverReadinessOk` requiring
+  `apiserverEtcdReachable`.
+- **AS-COMPACT** — During etcd auto-compaction
+  (`apiserver/pkg/storage/etcd3/compact.go:52::StartCompactorPerEndpoint`
+  and the etcd-side `server/etcdserver/server.go::compactor` loop),
+  `Status` RPCs may time out for 10–60s. KCP's MHC observation MUST
+  treat this as a transient `Unknown` rather than `Unhealthy`.
+  This is FM-24's underlying mechanism. The model encodes
+  `EtcdCompactionStart` / `EtcdCompactionDone` and the FM-24 init
+  composes them with the observation projection.
+- **AS-DISCONNECT** — On etcd disconnect (local etcd pod crashes,
+  network partition between apiserver and its configured etcd
+  backends), apiserver readiness MUST flip false. KCP's LB will
+  remove the apiserver from the backend set; KCP's etcd client
+  (which separately probes etcd directly) rotates to a different
+  member. The model encodes `ApiserverEtcdDisconnect` setting both
+  `apiserverEtcdReachable` and `apiserverReady` to false in one
+  atomic step. Refines the etcd v3 client failure modes in
+  `staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go` (Get,
+  Create, Delete, GetList, Watch — each can return
+  `rpctypes.ErrGRPCNoLeader` / `ErrGRPCConnectFailed`).
