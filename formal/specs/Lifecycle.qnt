@@ -210,6 +210,15 @@ module Lifecycle {
   // and etcd's own auto-compaction loop.
   var etcdCompactionInProgress: bool
 
+  // -- FM-34 — MHC stale cluster cache --------------------------
+  // The MHC controller maintains a cache-backed client for each
+  // workload cluster. When the apiserver restarts (e.g. as part of
+  // an upgrade), the cache holds a stale connection or returns
+  // "cluster not found" briefly. While stale, MHC's `needsRemediation`
+  // predicate cannot reach the workload-cluster apiserver and may
+  // mis-flag a Machine as unhealthy. Refines cluster-api#12363.
+  var mhcCacheStale: bool
+
   // -- FM-32 — Webhook rotation gap -----------------------------
   // Cert-manager rotates the CAPI webhook serving cert. For up to
   // ~90s, mutating + validating webhooks are unreachable; any KCP
@@ -336,6 +345,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // ── Topology variants — singleNode / threeNode / fiveNode ────
@@ -384,6 +394,7 @@ module Lifecycle {
     apiserverReady'  = Map(1 -> true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   action threeNodeInit = init  // alias
@@ -437,6 +448,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // ===============================================================
@@ -568,6 +580,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action AdvanceTerm: bool = all {
@@ -603,6 +616,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action AddLearner(id: MachineId): bool = all {
@@ -641,6 +655,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action ObserveLearnerProgress(id: MachineId, p: LearnerProgress): bool = all {
@@ -682,6 +697,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action PromoteLearner(id: MachineId): bool = all {
@@ -721,6 +737,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action RemoveMember(id: MachineId): bool = all {
@@ -761,6 +778,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // LeaderStepDown — the current leader steps down because its
@@ -811,6 +829,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // TransferLeadership — KCP's pre-scale-down optimisation. Refines
@@ -866,6 +885,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // MemberHealthChange — KCP refreshes its memberHealth view by
@@ -928,6 +948,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // Fault action — exogenous.
@@ -966,6 +987,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -1006,6 +1028,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action PreflightPass(m: MachineId): bool = all {
@@ -1042,6 +1065,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // DownloadCertsSucceeded — control-plane-prepare phase succeeded.
@@ -1083,6 +1107,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EnterEtcdHealthCheck — kubeadm-join enters check-etcd phase.
@@ -1121,6 +1146,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // CheckEtcdHealth — check-etcd phase succeeded; existing etcd
@@ -1160,6 +1186,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // KubeletStarted — kubelet-start/start: kubeadm has written kubelet
@@ -1203,6 +1230,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // KubeletTLSBootstrap — kubelet-start/wait-bootstrap: kubelet has
@@ -1247,6 +1275,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // RegisterLocalNode — kubelet performs local Node registration
@@ -1293,6 +1322,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EnterEtcdAddLearner — kubeadm enters the etcd-add-learner phase
@@ -1334,6 +1364,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EtcdAddLearnerSucceeded reaches into EtcdMembership to actually
@@ -1380,6 +1411,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EtcdQuorumReady fires after PromoteLearner — kubeadm-join
@@ -1423,6 +1455,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // MarkAsControlPlane — control-plane-join/mark-control-plane:
@@ -1464,6 +1497,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // UploadKubeadmConfig — control-plane-join/uploadconfig: kubeadm
@@ -1504,6 +1538,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action MarkReady(m: MachineId): bool = all {
@@ -1540,6 +1575,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action JoinFailedAt(m: MachineId, r: JoinFailureReason): bool = all {
@@ -1578,6 +1614,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -1627,6 +1664,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action ResolveNodeRef(m: MachineId): bool = all {
@@ -1674,6 +1712,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action MachineHealthChange(m: MachineId, h: MachineHealth): bool = all {
@@ -1708,6 +1747,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action RequestRemediation(m: MachineId): bool = all {
@@ -1746,6 +1786,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EvaluateCanSafelyRemediate mirrors KCP's
@@ -1810,6 +1851,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // CompleteRemediation is the success path: the failed machine is
@@ -1864,6 +1906,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -1930,6 +1973,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   action LoseEtcdMember(m: MachineId): bool = all {
@@ -1966,6 +2010,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -2007,6 +2052,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ScaleUpControlPlane: KCP creates a Machine because actual
@@ -2060,6 +2106,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ScaleDownControlPlane: KCP gracefully removes a healthy Machine
@@ -2109,6 +2156,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // InitiateUpgrade: the operator updates KCP's spec.template
@@ -2147,6 +2195,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -2189,6 +2238,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EtcdJoinTimeout — the etcd Add Learner gRPC call timed out
@@ -2229,6 +2279,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // LbBroken — the apiserver LB proxy fails. KCP reaches the
@@ -2270,6 +2321,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // NodeNeverJoins — the kubelet started, but the Node never
@@ -2310,6 +2362,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -2357,6 +2410,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // RestoreClusterFromSnapshot — the operator's disaster-recovery
@@ -2425,6 +2479,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // RestoreNodeReachability — the workload-cluster apiserver
@@ -2461,6 +2516,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
 
@@ -2506,6 +2562,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // DeleteFailedMachine: KCP detects a JoinFailed Machine and
@@ -2547,6 +2604,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // HealEtcdReachability: an UnreachableTimeout / UnreachableNoRoute
@@ -2589,6 +2647,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ============================================================
@@ -2640,6 +2699,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // DrainTimeout — `nodeDrainTimeout` elapses, KCP force-deletes
@@ -2684,6 +2744,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ============================================================
@@ -2731,6 +2792,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ApiserverEtcdDisconnect — fault: apiserver's etcd connection
@@ -2775,6 +2837,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ApiserverReadinessOk — kube-apiserver's readiness probe passes.
@@ -2815,6 +2878,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EtcdCompactionStart — etcd auto-compaction begins. Holds the
@@ -2854,6 +2918,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ============================================================
@@ -2898,6 +2963,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ContainerdCrash — fault: containerd process exits or its CRI
@@ -2938,6 +3004,7 @@ module Lifecycle {
     etcdCompactionInProgress' = etcdCompactionInProgress,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // PullStaticPodImages — kubelet calls CRI's PullImage for the
@@ -2981,6 +3048,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ImagePullFailed — fault: containerd cannot pull a static-pod
@@ -3027,6 +3095,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // CreatePodSandbox — kubelet calls CRI's RunPodSandbox to create
@@ -3069,6 +3138,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // StartStaticPodContainers — kubelet calls CRI's CreateContainer
@@ -3109,6 +3179,86 @@ module Lifecycle {
     criRuntimeReady' = criRuntimeReady,
     criImagesPulled' = criImagesPulled,
     criPodSandboxRunning' = criPodSandboxRunning,
+    customCondition' = customCondition,
+    webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
+  }
+
+  // ============================================================
+  // FM-34 — MHC stale cluster cache
+  // ============================================================
+
+  // MhcCacheStale — fault: MHC controller's cache-backed client
+  // for the workload cluster goes stale during apiserver restart.
+  // Refines cluster-api#12363.
+  action MhcCacheStale: bool = all {
+    not(mhcCacheStale),
+    mhcCacheStale' = true,
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
+    customCondition' = customCondition,
+    webhooksAvailable' = webhooksAvailable,
+  }
+
+  // MhcCacheRefresh — recovery: MHC controller refreshes its cache
+  // for the workload cluster.
+  action MhcCacheRefresh: bool = all {
+    mhcCacheStale,
+    mhcCacheStale' = false,
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    phase' = phase, failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    drainBlocked' = drainBlocked,
+    pdbViolatedFor' = pdbViolatedFor,
+    apiserverEtcdReachable' = apiserverEtcdReachable,
+    apiserverReady' = apiserverReady,
+    etcdCompactionInProgress' = etcdCompactionInProgress,
+    criRuntimeReady' = criRuntimeReady,
+    criImagesPulled' = criImagesPulled,
+    criPodSandboxRunning' = criPodSandboxRunning,
+    criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
   }
@@ -3152,6 +3302,7 @@ module Lifecycle {
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // WebhookHeal — cert-manager rotation completes; webhooks back
@@ -3188,6 +3339,7 @@ module Lifecycle {
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ============================================================
@@ -3237,6 +3389,7 @@ module Lifecycle {
     criPodSandboxRunning' = criPodSandboxRunning,
     criContainersRunning' = criContainersRunning,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ObservationRefresh — MHC's next reconcile picks up a fresh
@@ -3290,6 +3443,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // EtcdCompactionDone — auto-compaction completes; latency
@@ -3326,6 +3480,7 @@ module Lifecycle {
     criContainersRunning' = criContainersRunning,
     customCondition' = customCondition,
     webhooksAvailable' = webhooksAvailable,
+    mhcCacheStale' = mhcCacheStale,
   }
 
   // ===============================================================
@@ -3426,6 +3581,8 @@ module Lifecycle {
       CustomConditionObserved(m, k),
     WebhookRotationFault,
     WebhookHeal,
+    MhcCacheStale,
+    MhcCacheRefresh,
   }
 
   // stepNoRecovery — same as step but with the three recovery
@@ -3501,6 +3658,7 @@ module Lifecycle {
     nondet m = MACHINES.oneOf(); ContainerdCrash(m),
     nondet m = MACHINES.oneOf(); ImagePullFailed(m),
     WebhookRotationFault,
+    MhcCacheStale,
     // No DrainTimeout, ApiserverEtcdConnect, ApiserverReadinessOk,
     // EtcdCompactionDone, ContainerdReady, PullStaticPodImages,
     // CreatePodSandbox, StartStaticPodContainers, RemoveStuckLearner,
@@ -3779,6 +3937,7 @@ module Lifecycle {
     apiserverReady'   = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'   = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // 4-machine KCP set, but machine 4 is registered with KCP only
@@ -3835,6 +3994,7 @@ module Lifecycle {
     apiserverReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'   = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // Bootstrapped 3-machine cluster with a leader, a stuck learner
@@ -3883,6 +4043,7 @@ module Lifecycle {
     apiserverReady'   = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'   = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -3968,6 +4129,7 @@ module Lifecycle {
     apiserverReady'  = Map(1 -> true, 2 -> true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -4062,6 +4224,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -4204,6 +4367,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-12 — Etcd join times out due to slow storage. Machine 4 is
@@ -4253,6 +4417,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-13 / FM-14 — apiserver LB proxy broken. KCP's etcd client
@@ -4299,6 +4464,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-15 — Kubelet started but Node never registers. Machine 4
@@ -4346,6 +4512,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-16 — Upgrade in progress: desiredTemplate has been bumped
@@ -4396,6 +4563,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -4445,6 +4613,7 @@ module Lifecycle {
     apiserverReady'  = Map(1 -> false),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // 5-node cluster with a stuck learner being promoted — same
@@ -4492,6 +4661,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -4554,6 +4724,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-18 — concurrent scale-up + remediation race. KCP wants to
@@ -4601,6 +4772,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-19 — apiserver restart relist storm. The workload-cluster
@@ -4650,6 +4822,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-20 — upgrade rollout abort mid-flight. Operator initiated
@@ -4701,6 +4874,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-21 — five-node cluster losing two voters concurrently
@@ -4751,6 +4925,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-22 — single-node cluster scale-up race. The 1-node cluster
@@ -4797,6 +4972,7 @@ module Lifecycle {
     apiserverReady'  = Map(1 -> true, 2 -> true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-23 — Drain stuck on PDB. A Machine is being deleted
@@ -4847,6 +5023,7 @@ module Lifecycle {
     apiserverReady' = Map(1 -> false, 2 -> true, 3 -> true),
     etcdCompactionInProgress' = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // FM-24 — etcd defrag pause. Etcd's defrag operation
@@ -4895,6 +5072,7 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // leaderRemovalRaceInit — Machine 1 is the current etcd leader and
@@ -4957,6 +5135,54 @@ module Lifecycle {
     apiserverReady'  = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress'  = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
+  }
+
+  // FM-34 — MHC stale cluster cache.
+  // 3-CP cluster healthy; workload-cluster apiserver has just
+  // restarted; MHC's cache for this cluster is stale.
+  // Refines cluster-api#12363.
+  action mhcCacheStaleInit = all {
+    members'      = Set(1, 2, 3),
+    learners'     = Set(),
+    leaderAt'     = Map(1 -> 1),
+    currentTerm'  = 1,
+    progress'     = Map(),
+    memberHealth' = Set(1, 2, 3).mapBy(_ => Healthy),
+    phase'                = Set(1, 2, 3).mapBy(_ => JoinComplete),
+    failureReason'        = Map(),
+    etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
+    kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'      = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady' = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'= Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten' = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane' = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'= Set(1, 2, 3).mapBy(_ => true),
+    machines'    = Set(1, 2, 3),
+    nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
+    machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine),
+    decision'    = Set(1, 2, 3).mapBy(_ => NoRemediationNeeded),
+    blockReason' = Map(),
+    preflightBlocked' = false,
+    desiredReplicas' = 3,
+    template'        = Set(1, 2, 3).mapBy(_ => 1),
+    desiredTemplate' = 1,
+    observation' = Set(1, 2, 3).mapBy(_ => ReachableHealthy),
+    lbHealthy'      = false,                          // apiserver mid-restart
+    nodeReachable'  = Set(1, 2, 3).mapBy(_ => true),
+    customCondition' = Set(1, 2, 3).mapBy(_ => Set()),
+    criRuntimeReady' = Set(1, 2, 3).mapBy(_ => true),
+    criImagesPulled' = Set(1, 2, 3).mapBy(_ => true),
+    criPodSandboxRunning' = Set(1, 2, 3).mapBy(_ => true),
+    criContainersRunning' = Set(1, 2, 3).mapBy(_ => true),
+    drainBlocked' = Set(1, 2, 3).mapBy(_ => false),
+    pdbViolatedFor' = Set(1, 2, 3).mapBy(_ => false),
+    apiserverEtcdReachable' = Set(1, 2, 3).mapBy(_ => true),
+    apiserverReady' = Set(1, 2, 3).mapBy(_ => true),
+    etcdCompactionInProgress' = false,
+    webhooksAvailable' = true,
+    mhcCacheStale' = true,
   }
 
   // FM-32 — Webhook rotation gap.
@@ -5008,6 +5234,7 @@ module Lifecycle {
     apiserverReady' = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress' = false,
     webhooksAvailable' = false,
+    mhcCacheStale' = false,
   }
 
   // FM-31 — Custom Node conditions surfacing.
@@ -5056,6 +5283,7 @@ module Lifecycle {
     apiserverReady' = Set(1, 2, 3).mapBy(_ => true),
     etcdCompactionInProgress' = false,
     webhooksAvailable' = true,
+    mhcCacheStale' = false,
   }
 
   // -------------------------------------------------------------
@@ -5103,7 +5331,8 @@ module Lifecycle {
                 criPodSandboxRunning' = criPodSandboxRunning,
                 criContainersRunning' = criContainersRunning,
                 customCondition' = customCondition,
-                webhooksAvailable' = webhooksAvailable })
+                webhooksAvailable' = webhooksAvailable,
+                mhcCacheStale' = mhcCacheStale })
 
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,
