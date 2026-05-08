@@ -1370,6 +1370,10 @@ be re-fired (refines `lifecycle_hooks.go:42`).
 deterministic). Random walk (200 samples × 30 steps) holds
 `AllSafetyInvariants`, `FM39_BeforeClusterUpgradeIdempotent`,
 `FM40_AnnotationGatesCp`, `FM41_AfterClusterUpgradeAtSteadyState`.
+**Apalache hopelessness proven** (depth 4, ~10 s per invariant) —
+`FM39_BeforeClusterUpgradeIdempotent` is unreachable from any
+state where it would falsify, in any extension of the model. See
+`make verify-topology-apalache`.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1394,6 +1398,8 @@ deterministic runs and 200×30 random walks. The model
 demonstrates the gate is honoured: while the annotation is set
 AND `AfterClusterUpgrade` is not pending, `stepPhase` remains
 `StepIdle` (no CP version pickup occurred).
+**Apalache hopelessness proven** (depth 4, ~11 s) — under any
+reachable state.
 
 **Classification.** **MODELLING** (verifies operator-facing
 contract).
@@ -1427,6 +1433,7 @@ empty, the cluster must be in the steady state.
 
 **Verdict.** `FM41_AfterClusterUpgradeAtSteadyState` holds
 across all deterministic runs and 200×30 random walks.
+**Apalache hopelessness proven** (depth 4, ~11 s).
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1468,6 +1475,8 @@ KcpInitializeControlPlane.
 
 **Verdict.** `FM48_NoCpBeforeInfraReady` holds across all
 demos and 300×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~10 s) — see
+`make verify-e2e-apalache`.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1501,6 +1510,7 @@ requires `controlPlaneInitialised`).
 
 **Verdict.** `FM49_NoWorkersBeforeCpInit` holds across all
 demos and 300×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~9 s).
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1533,6 +1543,7 @@ remains true.
 
 **Verdict.** `FM50_EndpointMonotonic` holds across all demos
 and 300×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~9 s).
 
 **Classification.** **MODELLING** (verifies upstream invariant).
 
@@ -1574,6 +1585,11 @@ after `Done` clears the locked set).
 demo runs in `ControllerRuntime.qnt` (500×60 random walk) and
 across the three refinement modules (`TopologyRefined`,
 `InPlaceUpdateRefined`, `MachineSetPreflightRefined`).
+**Apalache hopelessness proven** at depth 4 (~6 s) AND depth 8
+(~190 s) — the per-key serialisation invariant cannot be
+violated under any reachable interleaving up to 8 reconcile
+steps with multi-worker (WORKERS = 1.to(2)). See
+`make verify-cr-apalache`.
 
 **Classification.** **MODELLING** (verifies upstream
 invariant under multi-worker substrate semantics).
@@ -1606,6 +1622,7 @@ re-added during the in-flight window).
 
 **Verdict.** `FM46_TerminalErrorNoRequeue` holds across the
 demo run and 500×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~6 s).
 
 **Classification.** **MODELLING** (verifies upstream
 invariant).
@@ -1643,6 +1660,7 @@ synced, queue is re-driven).
 
 **Verdict.** `FM47_CacheBehindAPI` holds across all CR demo
 runs and 500×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~6 s).
 
 **Classification.** **MODELLING** (verifies upstream
 invariant).
@@ -1685,6 +1703,8 @@ oldMsHasMoveAnnotation implies canUpdateInPlace(canUpdateVerdict)
 
 **Verdict.** `FM42_PrematureInPlaceAdmission` holds across all
 five demo runs and 2000×80 random walks.
+**Apalache hopelessness proven** at depth 4 (~3 s) AND depth 8
+(~17 s). See `make verify-inplace-apalache`.
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1734,6 +1754,7 @@ machinePhase[m] == InPlaceUpdating
 
 **Verdict.** `FM43_UpdateMachineIdempotenceGate` holds across
 all five demo runs and 2000×80 random walks.
+**Apalache hopelessness proven** (depth 4, ~3 s).
 
 **Classification.** **MODELLING** (verifies upstream contract).
 
@@ -1780,6 +1801,7 @@ behaviour without controller involvement.
 
 **Verdict.** `FM44_MultiExtensionBlocksProgress` holds across
 all five demo runs and 2000×80 random walks.
+**Apalache hopelessness proven** (depth 4, ~3 s).
 
 **Classification.** **MODELLING** (verifies upstream contract).
 

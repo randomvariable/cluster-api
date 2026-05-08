@@ -173,6 +173,14 @@ module Topology {
   pure val MD_NAMES: Set[str] = Set("md-a", "md-b")
   pure val MAX_UPGRADE_CONCURRENCY: int = 1
 
+  // MAX_VERSION bounds the operator-bump range. Used to give the
+  // upgrade-plan filter a CONSTANT-bound set so Apalache can
+  // process it (Apalache does not support dynamic integer
+  // ranges like `(cpVersion + 1).to(topologyVersion)` — see
+  // <https://apalache-mc.org/docs/apalache/known-issues.html>).
+  pure val MAX_VERSION: int = 40
+  pure val ALL_VERSIONS: Set[int] = 1.to(MAX_VERSION)
+
   // Upgrade concurrency limit refines
   // `WorkerUpgradeTracker.UpgradeConcurrencyReached` at
   // `exp/topology/scope/upgradetracker.go:261`. Default in CAPI
@@ -564,8 +572,11 @@ module Topology {
     cpVersion < topologyVersion,
     cpUpgradePlan.length() == 0,
     // Build the plan from cpVersion+1 to topologyVersion inclusive.
-    cpUpgradePlan'      = (cpVersion + 1).to(topologyVersion).fold([], (acc, v) => acc.append(v)),
-    workerUpgradePlan'  = (cpVersion + 1).to(topologyVersion).fold([], (acc, v) => acc.append(v)),
+    // Note: filter over a constant-bounded set rather than using
+    // a dynamic range (cpVersion + 1).to(topologyVersion), so
+    // Apalache can process it. See MAX_VERSION docstring.
+    cpUpgradePlan'      = ALL_VERSIONS.filter(v => v > cpVersion and v <= topologyVersion).fold([], (acc, v) => acc.append(v)),
+    workerUpgradePlan'  = ALL_VERSIONS.filter(v => v > cpVersion and v <= topologyVersion).fold([], (acc, v) => acc.append(v)),
     clusterPhase'       = Upgrading,
     pendingHooks'       = pendingHooks,
     // Frame:

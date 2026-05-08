@@ -102,13 +102,13 @@ For a contributor adding a new failure mode:
 
 | Spec module | Demo runs | Random-walk sweep | Apalache | CAPD e2e |
 |---|---|---|---|---|
-| Lifecycle.qnt | 19 inits | 5000×30 across SafetyInvariants | 6 hopelessness verdicts | 1 PASS |
-| Topology.qnt | 5 | 200×30 | — | — |
+| Lifecycle.qnt | 19 inits | 5000×30 across SafetyInvariants | 6 hopelessness verdicts (FM-2/3/13/16/17/23) | 1 PASS |
+| Topology.qnt | 5 | 200×30 | **10/10 invariants** at depth 4 | — |
 | MachineSetPreflight.qnt | 3 | (deterministic) | — | — |
-| InPlaceUpdate.qnt | 5 | 2000×80 | — | — |
-| ControllerRuntime.qnt | 6 | 500×60 | — | — |
+| InPlaceUpdate.qnt | 5 | 2000×80 | **9/9 invariants** at depth 4 (FM-42 also at depth 8) | — |
+| ControllerRuntime.qnt | 6 | 500×60 | **7/7 invariants** at depth 4 (FM-45 also at depth 8) | — |
 | 3 refined modules | 6 | 300×40 each | — | — |
-| ClusterE2E.qnt | 3 | 300×60 | — | — |
+| ClusterE2E.qnt | 3 | 300×60 | **11/11 invariants** at depth 4 | — |
 
 Total: ~50 demo runs, ~3000 actions covered by random walks, 178
 abstraction-mapping rows under the drift check.
@@ -137,6 +137,7 @@ The corpus has progressed through several phases of expansion:
 | 15 | FM-42/43/44 in-place machine updates (`InPlaceUpdate.qnt`) |
 | 16 | FM-45/46/47 controller-runtime substrate (`ControllerRuntime.qnt`) + 3 refinement modules |
 | 17 | FM-48/49/50 end-to-end cluster lifecycle (`ClusterE2E.qnt`) |
+| 18 | Apalache hopelessness on the four newer specs (issue #1): 37 invariants verified at depth 4. Refactor to `Topology.qnt` to replace dynamic `(cpV+1).to(tV)` with constant-bounded filter (Apalache parser limitation). Make targets `verify-{cr,topology,inplace,e2e}-apalache`. |
 
 Plus apiserver↔etcd modelling (`apiserverEtcdReachable`,
 `apiserverReady`, `etcdCompactionInProgress`, etc.) and

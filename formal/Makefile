@@ -564,6 +564,75 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
+## Apalache hopelessness on the new specs (Issue #1)
+## --------------------------------------
+
+##@ apalache-new-specs:
+
+# Run Apalache against every safety invariant in a spec module.
+# Each invariant takes ~10-30 s at depth 4. Sleep between runs
+# avoids the bundled Apalache server's port-bind race on rapid
+# successive invocations.
+
+.PHONY: verify-cr-apalache
+verify-cr-apalache:  ## Apalache hopelessness across ControllerRuntime invariants
+	@for inv in FM45_PerKeySerialisation FM46_TerminalErrorNoRequeue \
+	            FM47_CacheBehindAPI LeaderElectionGate \
+	            WorkerSentinelConsistency InFlightHasWorker \
+	            RateLimitBounded; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=ControllerRuntime \
+	                            --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                            --backend=apalache $(CRRUNTIME) || exit 1; \
+	  sleep 5; \
+	done
+
+.PHONY: verify-topology-apalache
+verify-topology-apalache:  ## Apalache hopelessness across Topology invariants
+	@for inv in FM39_BeforeClusterUpgradeIdempotent FM40_AnnotationGatesCp \
+	            FM41_AfterClusterUpgradeAtSteadyState PendingHookConsistency \
+	            CpVersionWithinPlan WorkerVersionLeqCp HookFireOrderInvariant \
+	            BeforeClusterUpgradeBlockedByAnnotation OkToDeleteAfterUnblock \
+	            PlanMonotonic; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=Topology \
+	                            --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                            --backend=apalache $(TOPOLOGY) || exit 1; \
+	  sleep 5; \
+	done
+
+.PHONY: verify-inplace-apalache
+verify-inplace-apalache:  ## Apalache hopelessness across InPlaceUpdate invariants
+	@for inv in FM42_PrematureInPlaceAdmission FM43_UpdateMachineIdempotenceGate \
+	            FM44_MultiExtensionBlocksProgress TwoWayHandshakeAnnotations \
+	            MovingPendingShape UpdateMachineHookShape MoveAckBeforeArmed \
+	            DoneImpliesVersionFlipped InProgressTrioConsistency; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=InPlaceUpdate \
+	                            --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                            --backend=apalache $(INPLACE) || exit 1; \
+	  sleep 5; \
+	done
+
+.PHONY: verify-e2e-apalache
+verify-e2e-apalache:  ## Apalache hopelessness across ClusterE2E invariants
+	@for inv in FM48_NoCpBeforeInfraReady FM49_NoWorkersBeforeCpInit \
+	            FM50_EndpointMonotonic BootstrapBeforeInfra \
+	            NodeRefAfterProvisioned EtcdJoinOnlyForCp \
+	            KcpInitializedRequiresFirstCp ClusterCpInitializedRequiresKcp \
+	            MdEnabledRequiresCpInit BeforeClusterUpgradeOrdering \
+	            AfterClusterUpgradeAtTarget; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=ClusterE2E \
+	                            --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                            --backend=apalache $(E2E) || exit 1; \
+	  sleep 5; \
+	done
+
+.PHONY: verify-apalache-new-specs
+verify-apalache-new-specs: verify-cr-apalache verify-topology-apalache verify-inplace-apalache verify-e2e-apalache  ## All four new-spec Apalache batteries (~15 min)
+
+## --------------------------------------
 ## End-to-end cluster lifecycle (FM-48/49/50)
 ## --------------------------------------
 

@@ -127,6 +127,36 @@ invariant holds, so `HealthyControlPlane` is unreachable). The
 `Summary table` rows give Apalache timing (typically 20–80 s per
 FM at max-steps=4).
 
+### Apalache hopelessness across the new specs
+
+Issue #1 verified every safety invariant in `Topology.qnt` (10),
+`InPlaceUpdate.qnt` (9), `ControllerRuntime.qnt` (7), and
+`ClusterE2E.qnt` (11) — 37 invariants total — under Apalache at
+depth 4. All HOLD; no counterexamples found.
+
+```sh
+# Per-spec batteries (each takes ~2-3 min):
+make -C formal verify-cr-apalache         # ControllerRuntime
+make -C formal verify-topology-apalache   # Topology
+make -C formal verify-inplace-apalache    # InPlaceUpdate
+make -C formal verify-e2e-apalache        # ClusterE2E
+
+# All four (~15 min total):
+make -C formal verify-apalache-new-specs
+```
+
+The `MAX_STEPS_APALACHE` variable bumps depth (default 4):
+
+```sh
+make -C formal verify-cr-apalache MAX_STEPS_APALACHE=8
+```
+
+Note: Apalache rejects dynamic integer ranges like
+`(cpVersion + 1).to(topologyVersion)`. The corpus's
+`Topology.qnt` was refactored to use a constant-bounded filter
+(`ALL_VERSIONS.filter(v => v > cpVersion and v <= topologyVersion)`)
+so it parses under Apalache.
+
 ### FM-9 — ConvergenceFair temporal verification
 
 ```sh
