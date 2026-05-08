@@ -85,7 +85,10 @@ run_quint_runs() {
     [ -e "$f" ] || continue
     if grep -qE '^[[:space:]]*run[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$f"; then
       echo "  $f"
-      if ! quint run --max-samples 100 "$f" >/dev/null; then
+      # Use the typescript backend: the rust evaluator hits a
+      # recursion limit on Lifecycle.qnt's per-action ConvergenceFair
+      # temporal expression (Phase 11b's 70-conjunct fairness).
+      if ! quint run --backend=typescript --max-samples 100 "$f" >/dev/null; then
         fail "quint run failed for $f"
       fi
     fi
