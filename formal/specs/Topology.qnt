@@ -1228,7 +1228,12 @@ module Topology {
      and not(pendingHooks.contains(AfterClusterUpgrade)))
       implies stepPhase == StepIdle
 
-  // FM-41: AfterClusterUpgrade fires only when ALL of:
+  // FM-41: AfterClusterUpgrade fires only when the cluster has
+  // reached "full quiescence" — upstream calls this "fully
+  // upgraded" in the doc-comment at
+  // `reconcile_state.go:237-241`. We use "quiescence" because
+  // the predicate is broader than version-equality; both terms
+  // refer to the same precondition cascade. ALL of:
   //  - CP at the upgrade-plan target (cpVersion equals last
   //    consumed plan element)
   //  - no MD upgrading

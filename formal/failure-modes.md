@@ -1379,6 +1379,14 @@ contract).
 
 ## FM-41 — AfterClusterUpgrade fires only at full quiescence
 
+> **Note on terminology.** Upstream calls this state "fully
+> upgraded" in the doc-comment at
+> `internal/controllers/topology/cluster/reconcile_state.go:237-241`.
+> The model uses "quiescence" because the predicate is broader
+> than version-equality — it also requires no in-flight
+> reconciles, no deferred MDs, and no pending creates. Both
+> terms refer to the same precondition cascade.
+
 **Provenance.** **Upstream** — encoded in
 `internal/controllers/topology/cluster/reconcile_state.go:235-250`.
 
