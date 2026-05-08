@@ -641,10 +641,27 @@ reference but TLC cannot evaluate it non-vacuously.
    scope and still found the MachineHealthChange flip-flop —
    recurrence alone doesn't fix the structural cycle, but with
    the deterministic-MHC fix it would.
-3. **Manual proof** in Lean 4 against the parametric carrier
-   in `formal/proofs/ControlPlane/`. Produces a deductive verdict
-   independent of TLC's capacity. The Lean carrier is set up;
-   the temporal forms haven't been stated.
+3. ✅ **Lean 4 deductive proof — Phase 11e closes this**.
+   `formal/proofs/ControlPlane/Convergence.lean` discharges
+   recurrence at the parametric carrier with five theorems, all
+   compiling cleanly with no `sorry`:
+
+   | Theorem | Hypothesis shape | Conclusion |
+   |---|---|---|
+   | `recurrence_under_some_healing_io_enabled` | Some healing action is enabled infinitely often AND every step under it reaches P | `Recurrent P t` |
+   | `recurrence_under_single_strong_fair` | Fixed action `a` always enabled AND every step under `a` reaches P | `Recurrent P t` |
+   | `recurrence_under_universal_healing` | `a` always has a successor AND every successor under `a` satisfies P | `Recurrent P t` |
+   | `recurrence_under_deterministic_healing` | `a` deterministic + universal P-restoration | `Recurrent P t` |
+   | `reach_zero_via_strict_decrease` | Strictly-decreasing measure on states | Reaches the zero (= P) state in `μ(t 0)` steps |
+
+   The Lean 4 verdict is **independent of TLC's tableau capacity**
+   and **independent of Apalache's "fairness not supported"**
+   limitation. It says: *if the model's reachability hypothesis
+   holds at one of the shapes above, recurrence of P holds along
+   every fair trace.* The Quint model's TLC verdicts (FM-2
+   hopelessness, IC-11 reachability, etc.) supply the
+   reachability hypotheses; the Lean theorem lifts them into the
+   unbounded carrier.
 
 **Classification**: stays at **TLC-incomplete**: the temporal
 property exists, parses cleanly, has a verified satisfiable

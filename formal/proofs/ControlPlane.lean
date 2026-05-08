@@ -20,6 +20,11 @@ the model checkers in `../specs/`:
                            counterexample; see counterexample-log.)
   * Safety.lean          — `canSafelyRemediate ⇒ post-remediation
                            voter quorum is preserved`.
+  * Convergence.lean     — FM-9 fairness recurrence: under per-
+                           action fairness, P is visited
+                           infinitely often. Closes the gap that
+                           TLC's tableau and Apalache's temporal
+                           pass cannot reach.
 
 The submodules expose definitions, lemmas, and theorems but do
 NOT auto-discharge proofs at the scaffold stage. Open obligations
@@ -30,3 +35,4 @@ abstraction-mapping table.
 import ControlPlane.Refinement
 import ControlPlane.Informativeness
 import ControlPlane.Safety
+import ControlPlane.Convergence
