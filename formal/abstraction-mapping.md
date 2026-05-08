@@ -45,12 +45,20 @@ and the seL4 functional-correctness convention
 | Spec | Action | Go reference | Purpose |
 | ---- | ------ | -------------- | ------- |
 | KubeadmJoin | BeginJoin | (stub) — observed indirectly through `Machine.status.bootstrapReady` flipping true. | Bootstrap controller signals join start. |
+| KubeadmJoin | CheckEtcdHealth | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/checketcd.go | kubeadm's check-etcd phase: verifies the existing etcd cluster is reachable and healthy from this Machine before joining. |
+| KubeadmJoin | DownloadCertsSucceeded | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/controlplaneprepare.go (control-plane-prepare phase: download-certs, certs, kubeconfig, control-plane sub-phases). | Folds the four control-plane-prepare sub-phases into one observable transition. Sets staticPodManifestsWritten. |
+| KubeadmJoin | EnterEtcdAddLearner | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/controlplanejoin.go (`runEtcdJoinPhase`). | kubeadm enters the control-plane-join/etcd phase — about to call Cluster.MemberAddAsLearner. K2 ordering: NodeRegistered MUST precede this. |
+| KubeadmJoin | EnterEtcdHealthCheck | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/checketcd.go | kubeadm enters the check-etcd phase. |
 | KubeadmJoin | EtcdAddLearnerSucceeded | (stub) — observed when `MemberList` first reports the new member. | kubeadm-join called Cluster.MemberAddAsLearner. |
 | KubeadmJoin | EtcdQuorumReady | (stub) — observed when `is_learner` flips false on `MemberList`. | Learner promoted, quorum reached. |
 | KubeadmJoin | JoinFailedAt | (stub) — observed through `Machine.status.failureMessage`. | Join failed at some phase. |
-| KubeadmJoin | KubeletStarted | (stub) — observed via Node Ready condition. | NewKubeletStartPhase complete. |
+| KubeadmJoin | KubeletStarted | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/kubelet.go (`runKubeletStartJoinPhase`, ~line 217-233 — `WriteConfigToDisk`, `WriteKubeletDynamicEnvFile`, `TryStartKubelet`). | kubelet-start/start phase: kubeadm has written kubelet config and started the kubelet process. Sets kubeletReady. |
+| KubeadmJoin | KubeletTLSBootstrap | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/kubelet.go (`runKubeletWaitBootstrapPhase`, ~line 241-292; `waitForTLSBootstrappedClient` line 296-309). | kubelet-start/wait-bootstrap phase: kubelet's TLS Bootstrap completes, transforming bootstrap-kubelet.conf into kubelet.conf. Sets tlsBootstrapped, kubeletManifestReady. |
+| KubeadmJoin | MarkAsControlPlane | k8s.io/kubernetes/cmd/kubeadm/app/phases/markcontrolplane (`MarkControlPlane`). | control-plane-join/mark-control-plane phase: applies the node-role.kubernetes.io/control-plane label and NoSchedule taint. Sets kubeadmMarkedAsControlPlane. |
 | KubeadmJoin | MarkReady | (stub) — observed via `KubeadmControlPlane.status.ready`. | Final phase: KCP marks the new control plane ready. |
-| KubeadmJoin | PreflightPass | (stub) — kubeadm-internal; observed only by the absence of a JoinFailedAt(PreflightCheckFailed) transition. | kubeadm preflight passed. |
+| KubeadmJoin | PreflightPass | k8s.io/kubernetes/cmd/kubeadm/app/cmd/phases/join/preflight.go (`runPreflightPhase`). | kubeadm preflight checks passed. |
+| KubeadmJoin | RegisterLocalNode | k8s.io/kubernetes/pkg/kubelet/kubelet_node_status.go:52 (`Kubelet.registerWithAPIServer`); :90 (`Kubelet.tryRegisterWithAPIServer` calls `Nodes().Create()`); :303 (`Kubelet.initialNode`). | Kubelet performs local Node registration: creates the workload-cluster Node object via the kubelet-config-bootstrap RBAC bundle. Sets nodeLocallyRegistered. May complete before the apiserver static pod on this Machine is fully serving — kubelet uses the LB endpoint or another existing CP. K2 contract. |
+| KubeadmJoin | UploadKubeadmConfig | k8s.io/kubernetes/cmd/kubeadm/app/phases/uploadconfig (`UploadConfiguration`, `UploadKubeletConfig`). | control-plane-join/uploadconfig phase: uploads ClusterConfiguration / KubeletConfiguration to kubeadm-config and kubelet-config ConfigMaps. Sets kubeadmConfigUploaded. |
 
 ### KCPReconcile.qnt
 

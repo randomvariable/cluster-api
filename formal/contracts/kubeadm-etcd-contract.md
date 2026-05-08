@@ -53,18 +53,43 @@ The KCP-relevant invariants are:
 
 - **K1** — `kubelet-start` MUST complete before `control-plane-join
   / etcd` runs the `Cluster.MemberAddAsLearner` RPC. The
-  `KubeadmJoin.qnt` model captures this with the
-  `KubeletStarted` action transitioning to `EtcdJoinAddLearner`.
-- **K2** — A successful `Cluster.MemberAddAsLearner` MUST be
+  `KubeadmJoin.qnt` model captures this with the chain
+  `KubeletStarted → KubeletTLSBootstrap → RegisterLocalNode →
+  EnterEtcdAddLearner → EtcdAddLearnerSucceeded`.
+- **K2** — Static-pod manifests MUST be present on disk before
+  kubelet starts the apiserver. Kubelet local Node registration MAY
+  occur before kubeadm's apiserver static pod is fully ready —
+  kubelet uses the workload-cluster LB endpoint or another existing
+  CP to register; KCP MUST tolerate a NodeRef that exists with
+  `apiserver-not-ready` on the local Machine. Refines kubelet's
+  `registerWithAPIServer` at `pkg/kubelet/kubelet_node_status.go:52`
+  and `tryRegisterWithAPIServer` at line 90 (which calls
+  `Nodes().Create()`). The model captures this through the
+  `RegisterLocalNode` action and the `nodeLocallyRegistered` flag.
+- **K3** — The Node corresponding to the joining Machine MUST
+  register with the workload-cluster apiserver before
+  `wait-control-plane` returns. Until that happens KCP cannot
+  match the Machine to an etcd member by node name. Closes the
+  matchable-set check in
+  `controlplane/kubeadm/internal/workload_cluster_conditions.go`
+  (`compareMachinesAndMembers`).
+- **K4** — A successful `Cluster.MemberAddAsLearner` MUST be
   followed by either (a) a successful `Cluster.MemberPromote` and
   the run progressing to `wait-control-plane`, or (b) a join
   failure on the joining Machine. There is no observable phase
   that registers an etcd member without subsequently promoting it
   in the same join run.
-- **K3** — The Node corresponding to the joining Machine MUST
-  register with the workload-cluster apiserver before
-  `wait-control-plane` returns. Until that happens KCP cannot
-  match the Machine to an etcd member by node name.
+- **K5** — Local Node registration MUST precede the
+  `etcd-add-learner` phase. Kubeadm orders these phases this way in
+  recent versions, and KCP's matchable-set check assumes the Node
+  exists by the time a corresponding etcd member is registered.
+  The model encodes this by gating `EnterEtcdAddLearner` on
+  `phase == NodeRegistered`.
+
+Each K-obligation that can break leaves the cluster requiring
+manual operator intervention (kubeadm reset on the failing
+Machine, plus any cluster-side cleanup such as removing an
+orphaned etcd member).
 
 Cited from `cmd/kubeadm/app/cmd/join.go::newCmdJoin` at the SHA
 in [`commits.yaml`](./commits.yaml).
@@ -220,10 +245,10 @@ phases. The mapping is:
 Cited from `cmd/kubeadm/app/cmd/join.go` and the underlying
 phase implementations at the pinned SHA.
 
-## 6. The user-reported incident in this vocabulary
+## 6. The modelled scenario in this vocabulary
 
 The incident under
-`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`
+`example-cluster`
 exhibits a join run that reached `kubelet-start`,
 successfully ran `Cluster.MemberAddAsLearner`, and then stalled.
 The corresponding `KubeadmJoin.qnt` trace is:

@@ -51,9 +51,17 @@ module Lifecycle {
   type Phase =
     | NotStarted
     | Preflight
+    | DownloadCerts
+    | StaticPodManifestsWritten
+    | EtcdHealthCheck
     | KubeletStart
+    | KubeletTLSBootstrapped
+    | KubeletManifestReady
+    | NodeRegistered
     | EtcdJoinAddLearner
     | WaitForEtcdQuorum
+    | KubeadmMarkControlPlane
+    | KubeadmUploadConfig
     | MarkControlPlaneReady
     | JoinComplete
     | JoinFailed
@@ -63,6 +71,13 @@ module Lifecycle {
     | KubeletNotReady
     | PreflightCheckFailed
     | EtcdJoinAddLearnerFailed
+    | DownloadCertsFailed
+    | StaticPodManifestWriteFailed
+    | EtcdHealthCheckFailed
+    | TLSBootstrapTimeout
+    | LocalNodeRegistrationFailed
+    | KubeadmMarkControlPlaneFailed
+    | KubeadmUploadConfigFailed
     | OtherJoinFailure
 
   // -- KCPReconcile ----------------------------------------------
@@ -125,6 +140,12 @@ module Lifecycle {
   var failureReason: MachineId -> JoinFailureReason
   var etcdMemberRegistered: MachineId -> bool
   var kubeletReady: MachineId -> bool
+  var tlsBootstrapped: MachineId -> bool
+  var kubeletManifestReady: MachineId -> bool
+  var nodeLocallyRegistered: MachineId -> bool
+  var staticPodManifestsWritten: MachineId -> bool
+  var kubeadmMarkedAsControlPlane: MachineId -> bool
+  var kubeadmConfigUploaded: MachineId -> bool
 
   // -- KCPReconcile ----------------------------------------------
   var machines:    Set[MachineId]
@@ -188,6 +209,18 @@ module Lifecycle {
                               .put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
     // KCPReconcile — three machines bootstrapped. Machine 4 not
     // yet known to KCP.
     machines'    = Set(1, 2, 3),
@@ -223,6 +256,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Map(1 -> true, 2 -> false),
     kubeletReady'         = Map(1 -> true, 2 -> false),
+    tlsBootstrapped'         = Map(1 -> true, 2 -> false),
+    kubeletManifestReady'         = Map(1 -> true, 2 -> false),
+    nodeLocallyRegistered'         = Map(1 -> true, 2 -> false),
+    staticPodManifestsWritten'         = Map(1 -> true, 2 -> false),
+    kubeadmMarkedAsControlPlane'         = Map(1 -> true, 2 -> false),
+    kubeadmConfigUploaded'         = Map(1 -> true, 2 -> false),
     machines'    = Set(1),
     nodeRefSet'  = Map(1 -> true),
     machineHealthLabel' = Map(1 -> HealthyMachine),
@@ -252,6 +291,18 @@ module Lifecycle {
     etcdMemberRegistered' = Set(1, 2, 3, 4, 5).mapBy(_ => true)
                               .put(6, false),
     kubeletReady'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    tlsBootstrapped'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    kubeletManifestReady'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
+                              .put(6, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4, 5).mapBy(_ => true)
                               .put(6, false),
     machines'    = Set(1, 2, 3, 4, 5),
     nodeRefSet'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
@@ -370,6 +421,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -388,6 +445,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -409,6 +472,12 @@ module Lifecycle {
     leaderAt' = leaderAt, currentTerm' = currentTerm,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -433,6 +502,12 @@ module Lifecycle {
     currentTerm' = currentTerm, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -455,6 +530,12 @@ module Lifecycle {
     progress' = progress,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -477,6 +558,12 @@ module Lifecycle {
     leaderAt' = leaderAt, currentTerm' = currentTerm,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -510,6 +597,12 @@ module Lifecycle {
     memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -548,6 +641,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -593,6 +692,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -614,6 +719,12 @@ module Lifecycle {
     currentTerm' = currentTerm,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -637,6 +748,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -651,11 +768,17 @@ module Lifecycle {
   action PreflightPass(m: MachineId): bool = all {
     phase.keys().contains(m),
     phase.get(m) == Preflight,
-    phase' = phase.put(m, KubeletStart),
+    phase' = phase.put(m, DownloadCerts),
     members' = members, learners' = learners, leaderAt' = leaderAt,
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -667,15 +790,210 @@ module Lifecycle {
     nodeReachable' = nodeReachable,
   }
 
+  // DownloadCertsSucceeded — control-plane-prepare phase succeeded.
+  // Folds the download-certs, certs (per-Machine generation),
+  // kubeconfig (write CP kubeconfigs), and control-plane (static-pod
+  // manifest write) sub-phases. Sets staticPodManifestsWritten.
+  // Refines `cmd/kubeadm/app/cmd/phases/join/controlplaneprepare.go`.
+  action DownloadCertsSucceeded(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == DownloadCerts,
+    phase' = phase.put(m, StaticPodManifestsWritten),
+    staticPodManifestsWritten' = staticPodManifestsWritten.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // EnterEtcdHealthCheck — kubeadm-join enters check-etcd phase.
+  // Refines `cmd/kubeadm/app/cmd/phases/join/checketcd.go`.
+  action EnterEtcdHealthCheck(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == StaticPodManifestsWritten,
+    phase' = phase.put(m, EtcdHealthCheck),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // CheckEtcdHealth — check-etcd phase succeeded; existing etcd
+  // cluster is reachable and healthy from this Machine. Advances
+  // to KubeletStart.
+  action CheckEtcdHealth(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == EtcdHealthCheck,
+    phase' = phase.put(m, KubeletStart),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // KubeletStarted — kubelet-start/start: kubeadm has written kubelet
+  // config + dynamic env file (`WriteConfigToDisk`,
+  // `WriteKubeletDynamicEnvFile`) and called `TryStartKubelet`. The
+  // kubelet process is running with bootstrap creds; TLS bootstrap
+  // not yet complete.
+  // Refines `cmd/kubeadm/app/cmd/phases/join/kubelet.go:217-233`.
   action KubeletStarted(m: MachineId): bool = all {
     phase.keys().contains(m),
     phase.get(m) == KubeletStart,
-    phase' = phase.put(m, EtcdJoinAddLearner),
+    phase' = phase.put(m, KubeletTLSBootstrapped),
     kubeletReady' = kubeletReady.put(m, true),
     members' = members, learners' = learners, leaderAt' = leaderAt,
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+  }
+
+  // KubeletTLSBootstrap — kubelet-start/wait-bootstrap: kubelet has
+  // performed the TLS Bootstrap (transforming
+  // /etc/kubernetes/bootstrap-kubelet.conf into /etc/kubernetes/kubelet.conf
+  // with a CA-signed client cert). Sets tlsBootstrapped and
+  // kubeletManifestReady (kubelet picks up the static-pod manifests
+  // it found on disk).
+  // Refines `waitForTLSBootstrappedClient` at
+  // `cmd/kubeadm/app/cmd/phases/join/kubelet.go:296`.
+  action KubeletTLSBootstrap(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == KubeletTLSBootstrapped,
+    phase' = phase.put(m, KubeletManifestReady),
+    tlsBootstrapped' = tlsBootstrapped.put(m, true),
+    kubeletManifestReady' = kubeletManifestReady.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // RegisterLocalNode — kubelet performs local Node registration
+  // by calling Nodes().Create() against the workload-cluster
+  // apiserver, using the kubelet-config-bootstrap RBAC bundle.
+  // The Node may exist before the apiserver static pod is fully
+  // serving — kubelet uses the workload-cluster apiserver
+  // endpoint that may already be served by other CP nodes.
+  // Refines `Kubelet.registerWithAPIServer` at
+  // `pkg/kubelet/kubelet_node_status.go:52` and
+  // `Kubelet.tryRegisterWithAPIServer` at
+  // `pkg/kubelet/kubelet_node_status.go:90`.
+  action RegisterLocalNode(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == KubeletManifestReady,
+    phase' = phase.put(m, NodeRegistered),
+    nodeLocallyRegistered' = nodeLocallyRegistered.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // EnterEtcdAddLearner — kubeadm enters the etcd-add-learner phase
+  // (control-plane-join/etcd). Pre-condition tightened (K2): the
+  // local Node MUST be registered before kubeadm-join's
+  // etcd-add-learner phase runs.
+  // Refines `cmd/kubeadm/app/cmd/phases/join/controlplanejoin.go`.
+  action EnterEtcdAddLearner(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == NodeRegistered,
+    phase' = phase.put(m, EtcdJoinAddLearner),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -705,6 +1023,12 @@ module Lifecycle {
     memberHealth' = memberHealth.put(m, UnknownHealth),
     leaderAt' = leaderAt, currentTerm' = currentTerm,
     failureReason' = failureReason, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -718,16 +1042,84 @@ module Lifecycle {
 
   // EtcdQuorumReady fires after PromoteLearner — kubeadm-join
   // unblocks once is_learner flips to false on its MemberList.
+  // Advances to KubeadmMarkControlPlane (recent kubeadm flow runs
+  // mark-control-plane and uploadconfig phases after etcd quorum
+  // is reached and before declaring the join complete).
   action EtcdQuorumReady(m: MachineId): bool = all {
     phase.keys().contains(m),
     phase.get(m) == WaitForEtcdQuorum,
     not(learners.contains(m)),
     members.contains(m),
-    phase' = phase.put(m, MarkControlPlaneReady),
+    phase' = phase.put(m, KubeadmMarkControlPlane),
     members' = members, learners' = learners, leaderAt' = leaderAt,
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // MarkAsControlPlane — control-plane-join/mark-control-plane:
+  // kubeadm applies the node-role.kubernetes.io/control-plane label
+  // and node-role.kubernetes.io/control-plane:NoSchedule taint to
+  // the new Node.
+  // Refines `cmd/kubeadm/app/phases/markcontrolplane`.
+  action MarkAsControlPlane(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == KubeadmMarkControlPlane,
+    phase' = phase.put(m, KubeadmUploadConfig),
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
+    machines' = machines, nodeRefSet' = nodeRefSet,
+    machineHealthLabel' = machineHealthLabel, decision' = decision,
+    blockReason' = blockReason, preflightBlocked' = preflightBlocked,
+    observation' = observation,
+    desiredReplicas' = desiredReplicas,
+    template' = template,
+    desiredTemplate' = desiredTemplate,
+    lbHealthy' = lbHealthy,
+    nodeReachable' = nodeReachable,
+  }
+
+  // UploadKubeadmConfig — control-plane-join/uploadconfig: kubeadm
+  // uploads the ClusterConfiguration / KubeletConfiguration to the
+  // kube-system/kubeadm-config and kubelet-config ConfigMaps.
+  // Refines `cmd/kubeadm/app/phases/uploadconfig`.
+  action UploadKubeadmConfig(m: MachineId): bool = all {
+    phase.keys().contains(m),
+    phase.get(m) == KubeadmUploadConfig,
+    phase' = phase.put(m, MarkControlPlaneReady),
+    kubeadmConfigUploaded' = kubeadmConfigUploaded.put(m, true),
+    members' = members, learners' = learners, leaderAt' = leaderAt,
+    currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
+    failureReason' = failureReason,
+    etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -747,6 +1139,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -768,6 +1166,12 @@ module Lifecycle {
     members' = members, learners' = learners, leaderAt' = leaderAt,
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -809,6 +1213,12 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas,
     desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
   }
 
   action ResolveNodeRef(m: MachineId): bool = all {
@@ -831,6 +1241,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, machineHealthLabel' = machineHealthLabel,
     decision' = decision, blockReason' = blockReason,
     preflightBlocked' = preflightBlocked, observation' = observation,
@@ -848,6 +1264,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     decision' = decision, blockReason' = blockReason,
     preflightBlocked' = preflightBlocked, observation' = observation,
@@ -869,6 +1291,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, blockReason' = blockReason,
     preflightBlocked' = preflightBlocked, observation' = observation,
@@ -916,6 +1344,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel,
     observation' = observation,
@@ -955,6 +1389,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     observation' = observation,
     desiredReplicas' = desiredReplicas,
     template' = template,
@@ -1002,6 +1442,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1021,6 +1467,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1047,6 +1499,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1089,6 +1547,12 @@ module Lifecycle {
     observation' = observation,
     desiredReplicas' = desiredReplicas, desiredTemplate' = desiredTemplate,
     lbHealthy' = lbHealthy,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
   }
 
   // ScaleDownControlPlane: KCP gracefully removes a healthy Machine
@@ -1116,6 +1580,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate,
@@ -1136,6 +1606,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1167,6 +1643,12 @@ module Lifecycle {
     desiredReplicas' = desiredReplicas, template' = template,
     desiredTemplate' = desiredTemplate, observation' = observation,
     lbHealthy' = lbHealthy, nodeReachable' = nodeReachable,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
   }
 
   // EtcdJoinTimeout — the etcd Add Learner gRPC call timed out
@@ -1184,6 +1666,12 @@ module Lifecycle {
     members' = members, learners' = learners, leaderAt' = leaderAt,
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1208,6 +1696,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1231,6 +1725,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1261,6 +1761,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1318,6 +1824,12 @@ module Lifecycle {
     currentTerm'  = currentTerm,
     desiredReplicas' = desiredReplicas,
     desiredTemplate' = desiredTemplate,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
   }
 
   // RestoreNodeReachability — the workload-cluster apiserver
@@ -1331,6 +1843,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1356,6 +1874,12 @@ module Lifecycle {
     progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1381,6 +1905,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress, memberHealth' = memberHealth,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     nodeRefSet' = nodeRefSet, machineHealthLabel' = machineHealthLabel,
     decision' = decision, blockReason' = blockReason,
     preflightBlocked' = preflightBlocked, observation' = observation,
@@ -1406,6 +1936,12 @@ module Lifecycle {
     currentTerm' = currentTerm, progress' = progress,
     phase' = phase, failureReason' = failureReason,
     etcdMemberRegistered' = etcdMemberRegistered, kubeletReady' = kubeletReady,
+    tlsBootstrapped' = tlsBootstrapped,
+    kubeletManifestReady' = kubeletManifestReady,
+    nodeLocallyRegistered' = nodeLocallyRegistered,
+    staticPodManifestsWritten' = staticPodManifestsWritten,
+    kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+    kubeadmConfigUploaded' = kubeadmConfigUploaded,
     machines' = machines, nodeRefSet' = nodeRefSet,
     machineHealthLabel' = machineHealthLabel, decision' = decision,
     blockReason' = blockReason, preflightBlocked' = preflightBlocked,
@@ -1441,13 +1977,26 @@ module Lifecycle {
     // KubeadmJoin
     nondet m = MACHINES.oneOf(); BeginJoin(m),
     nondet m = MACHINES.oneOf(); PreflightPass(m),
+    nondet m = MACHINES.oneOf(); DownloadCertsSucceeded(m),
+    nondet m = MACHINES.oneOf(); EnterEtcdHealthCheck(m),
+    nondet m = MACHINES.oneOf(); CheckEtcdHealth(m),
     nondet m = MACHINES.oneOf(); KubeletStarted(m),
+    nondet m = MACHINES.oneOf(); KubeletTLSBootstrap(m),
+    nondet m = MACHINES.oneOf(); RegisterLocalNode(m),
+    nondet m = MACHINES.oneOf(); EnterEtcdAddLearner(m),
     nondet m = MACHINES.oneOf(); EtcdAddLearnerSucceeded(m),
     nondet m = MACHINES.oneOf(); EtcdQuorumReady(m),
+    nondet m = MACHINES.oneOf(); MarkAsControlPlane(m),
+    nondet m = MACHINES.oneOf(); UploadKubeadmConfig(m),
     nondet m = MACHINES.oneOf(); MarkReady(m),
     nondet m = MACHINES.oneOf();
       nondet r = Set(LearnerStuckOnPromote, KubeletNotReady,
                      PreflightCheckFailed, EtcdJoinAddLearnerFailed,
+                     DownloadCertsFailed, StaticPodManifestWriteFailed,
+                     EtcdHealthCheckFailed, TLSBootstrapTimeout,
+                     LocalNodeRegistrationFailed,
+                     KubeadmMarkControlPlaneFailed,
+                     KubeadmUploadConfigFailed,
                      OtherJoinFailure).oneOf();
       JoinFailedAt(m, r),
     // KCPReconcile
@@ -1508,13 +2057,26 @@ module Lifecycle {
     nondet id = MACHINES.oneOf(); LearnerStuck(id),
     nondet m = MACHINES.oneOf(); BeginJoin(m),
     nondet m = MACHINES.oneOf(); PreflightPass(m),
+    nondet m = MACHINES.oneOf(); DownloadCertsSucceeded(m),
+    nondet m = MACHINES.oneOf(); EnterEtcdHealthCheck(m),
+    nondet m = MACHINES.oneOf(); CheckEtcdHealth(m),
     nondet m = MACHINES.oneOf(); KubeletStarted(m),
+    nondet m = MACHINES.oneOf(); KubeletTLSBootstrap(m),
+    nondet m = MACHINES.oneOf(); RegisterLocalNode(m),
+    nondet m = MACHINES.oneOf(); EnterEtcdAddLearner(m),
     nondet m = MACHINES.oneOf(); EtcdAddLearnerSucceeded(m),
     nondet m = MACHINES.oneOf(); EtcdQuorumReady(m),
+    nondet m = MACHINES.oneOf(); MarkAsControlPlane(m),
+    nondet m = MACHINES.oneOf(); UploadKubeadmConfig(m),
     nondet m = MACHINES.oneOf(); MarkReady(m),
     nondet m = MACHINES.oneOf();
       nondet r = Set(LearnerStuckOnPromote, KubeletNotReady,
                      PreflightCheckFailed, EtcdJoinAddLearnerFailed,
+                     DownloadCertsFailed, StaticPodManifestWriteFailed,
+                     EtcdHealthCheckFailed, TLSBootstrapTimeout,
+                     LocalNodeRegistrationFailed,
+                     KubeadmMarkControlPlaneFailed,
+                     KubeadmUploadConfigFailed,
                      OtherJoinFailure).oneOf();
       JoinFailedAt(m, r),
     nondet m = MACHINES.oneOf(); AddMachine(m),
@@ -1727,13 +2289,21 @@ module Lifecycle {
     .then(ElectLeader(1))                                   // term 1 leader
     .then(AddMachine(4))                                    // KCP creates Machine 4
     .then(BeginJoin(4))                                     // Bootstrap signals
-    .then(PreflightPass(4))
-    .then(KubeletStarted(4))
+    .then(PreflightPass(4))                                 // → DownloadCerts
+    .then(DownloadCertsSucceeded(4))                        // → StaticPodManifestsWritten
+    .then(EnterEtcdHealthCheck(4))                          // → EtcdHealthCheck
+    .then(CheckEtcdHealth(4))                               // → KubeletStart
+    .then(KubeletStarted(4))                                // → KubeletTLSBootstrapped
+    .then(KubeletTLSBootstrap(4))                           // → KubeletManifestReady
+    .then(RegisterLocalNode(4))                             // → NodeRegistered
+    .then(EnterEtcdAddLearner(4))                           // → EtcdJoinAddLearner
     .then(EtcdAddLearnerSucceeded(4))                       // joins as learner
     .then(ObserveLearnerProgress(4, Eligible))              // catches up
     .then(PromoteLearner(4))                                // is_learner -> false
-    .then(EtcdQuorumReady(4))                               // kubeadm unblocks
-    .then(MarkReady(4))                                     // join complete
+    .then(EtcdQuorumReady(4))                               // → KubeadmMarkControlPlane
+    .then(MarkAsControlPlane(4))                            // → KubeadmUploadConfig
+    .then(UploadKubeadmConfig(4))                           // → MarkControlPlaneReady
+    .then(MarkReady(4))                                     // → JoinComplete
     .then(ResolveNodeRef(4))                                // node registers
     .then(MachineHealthChange(4, HealthyMachine))           // KCP rolls health up
 
@@ -1767,6 +2337,18 @@ module Lifecycle {
                               .put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine),
@@ -1797,6 +2379,18 @@ module Lifecycle {
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -1830,6 +2424,12 @@ module Lifecycle {
     failureReason'        = Map(4 -> LearnerStuckOnPromote),
     etcdMemberRegistered' = Set(1, 2, 3, 4).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -1899,6 +2499,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Map(1 -> true, 2 -> true, 3 -> false),
     kubeletReady'         = Map(1 -> true, 2 -> true, 3 -> false),
+    tlsBootstrapped'         = Map(1 -> true, 2 -> true, 3 -> false),
+    kubeletManifestReady'         = Map(1 -> true, 2 -> true, 3 -> false),
+    nodeLocallyRegistered'         = Map(1 -> true, 2 -> true, 3 -> false),
+    staticPodManifestsWritten'         = Map(1 -> true, 2 -> true, 3 -> false),
+    kubeadmMarkedAsControlPlane'         = Map(1 -> true, 2 -> true, 3 -> false),
+    kubeadmConfigUploaded'         = Map(1 -> true, 2 -> true, 3 -> false),
     machines'    = Set(1, 2),
     nodeRefSet'  = Map(1 -> true, 2 -> true),
     machineHealthLabel' = Map(1 -> UnhealthyMachine, 2 -> UnhealthyMachine),
@@ -1957,6 +2563,22 @@ module Lifecycle {
     failureReason'        = Map(4 -> LearnerStuckOnPromote),
     etcdMemberRegistered' = Set(1, 2, 3, 4).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    // FM-1: kubelet up, TLS-bootstrapped, manifests applied,
+    // etcd-add-learner succeeded — but Node never registered and
+    // mark-control-plane / uploadconfig phases never ran because
+    // kubeadm-join hung at WaitForEtcdQuorum.
+    tlsBootstrapped'             = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, true),
+    kubeletManifestReady'        = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, true),
+    nodeLocallyRegistered'       = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, false),  // FM-1 shape: Node never registered
+    staticPodManifestsWritten'   = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, true),
+    kubeadmMarkedAsControlPlane' = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, false),  // never reached mark-cp
+    kubeadmConfigUploaded'       = Set(1, 2, 3).mapBy(_ => true)
+                                     .put(4, false),  // never reached uploadconfig
     // KCP — Machine 4 is in machines but has no NodeRef
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
@@ -1993,7 +2615,13 @@ module Lifecycle {
     .then(AddMachine(4))
     .then(BeginJoin(4))
     .then(PreflightPass(4))
+    .then(DownloadCertsSucceeded(4))
+    .then(EnterEtcdHealthCheck(4))
+    .then(CheckEtcdHealth(4))
     .then(KubeletStarted(4))
+    .then(KubeletTLSBootstrap(4))
+    .then(RegisterLocalNode(4))
+    .then(EnterEtcdAddLearner(4))
     .then(EtcdAddLearnerSucceeded(4))
     .then(LearnerStuck(4))
     .then(JoinFailedAt(4, LearnerStuckOnPromote))
@@ -2013,11 +2641,19 @@ module Lifecycle {
     .then(AddMachine(4))
     .then(BeginJoin(4))
     .then(PreflightPass(4))
+    .then(DownloadCertsSucceeded(4))
+    .then(EnterEtcdHealthCheck(4))
+    .then(CheckEtcdHealth(4))
     .then(KubeletStarted(4))
+    .then(KubeletTLSBootstrap(4))
+    .then(RegisterLocalNode(4))
+    .then(EnterEtcdAddLearner(4))
     .then(EtcdAddLearnerSucceeded(4))
     .then(ObserveLearnerProgress(4, Eligible))
     .then(PromoteLearner(4))
     .then(EtcdQuorumReady(4))
+    .then(MarkAsControlPlane(4))
+    .then(UploadKubeadmConfig(4))
     .then(MarkReady(4))
     // ResolveNodeRef not yet fired — voter without NodeRef.
 
@@ -2076,6 +2712,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3, 4).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2107,6 +2749,12 @@ module Lifecycle {
     failureReason'        = Map(4 -> EtcdJoinAddLearnerFailed),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     kubeletReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2138,6 +2786,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine),
@@ -2167,6 +2821,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3, 4).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2200,6 +2860,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2233,6 +2899,12 @@ module Lifecycle {
     failureReason'        = Map(1 -> KubeletNotReady),
     etcdMemberRegistered' = Map(1 -> false),
     kubeletReady'         = Map(1 -> false),
+    tlsBootstrapped'         = Map(1 -> false),
+    kubeletManifestReady'         = Map(1 -> false),
+    nodeLocallyRegistered'         = Map(1 -> false),
+    staticPodManifestsWritten'         = Map(1 -> false),
+    kubeadmMarkedAsControlPlane'         = Map(1 -> false),
+    kubeadmConfigUploaded'         = Map(1 -> false),
     machines'    = Set(1),
     nodeRefSet'  = Map(1 -> false),
     machineHealthLabel' = Map(1 -> UnhealthyMachine),
@@ -2262,6 +2934,12 @@ module Lifecycle {
     failureReason'        = Map(6 -> LearnerStuckOnPromote),
     etcdMemberRegistered' = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4, 5, 6).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4, 5, 6),
     nodeRefSet'  = Set(1, 2, 3, 4, 5).mapBy(_ => true).put(6, false),
     machineHealthLabel' = Set(1, 2, 3, 4, 5).mapBy(_ => HealthyMachine)
@@ -2306,6 +2984,12 @@ module Lifecycle {
     failureReason'        = Map(4 -> KubeletNotReady),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2338,6 +3022,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
     machineHealthLabel' = Map(1 -> UnhealthyMachine, 2 -> HealthyMachine, 3 -> HealthyMachine),
@@ -2370,6 +3060,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => UnknownHealthMachine),
@@ -2402,6 +3098,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3, 4).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true).put(4, false),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine)
@@ -2433,6 +3135,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     machines'    = Set(1, 2, 3, 4, 5),
     nodeRefSet'  = Set(1, 2, 3, 4, 5).mapBy(_ => true),
     machineHealthLabel' = Map(1 -> HealthyMachine, 2 -> HealthyMachine,
@@ -2466,6 +3174,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Map(1 -> true, 2 -> true),
     kubeletReady'         = Map(1 -> true, 2 -> true),
+    tlsBootstrapped'         = Map(1 -> true, 2 -> true),
+    kubeletManifestReady'         = Map(1 -> true, 2 -> true),
+    nodeLocallyRegistered'         = Map(1 -> true, 2 -> true),
+    staticPodManifestsWritten'         = Map(1 -> true, 2 -> true),
+    kubeadmMarkedAsControlPlane'         = Map(1 -> true, 2 -> true),
+    kubeadmConfigUploaded'         = Map(1 -> true, 2 -> true),
     machines'    = Set(1, 2),
     nodeRefSet'  = Map(1 -> true, 2 -> false),
     machineHealthLabel' = Map(1 -> UnhealthyMachine, 2 -> UnknownHealthMachine),
@@ -2499,6 +3213,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Map(1 -> false, 2 -> true, 3 -> true),
     kubeletReady'         = Map(1 -> false, 2 -> true, 3 -> true),
+    tlsBootstrapped'         = Map(1 -> false, 2 -> true, 3 -> true),
+    kubeletManifestReady'         = Map(1 -> false, 2 -> true, 3 -> true),
+    nodeLocallyRegistered'         = Map(1 -> false, 2 -> true, 3 -> true),
+    staticPodManifestsWritten'         = Map(1 -> false, 2 -> true, 3 -> true),
+    kubeadmMarkedAsControlPlane'         = Map(1 -> false, 2 -> true, 3 -> true),
+    kubeadmConfigUploaded'         = Map(1 -> false, 2 -> true, 3 -> true),
     machines'    = Set(1, 2, 3),                   // 1 still in machine set, deletion stuck
     nodeRefSet'  = Map(1 -> true, 2 -> true, 3 -> true),
     machineHealthLabel' = Map(1 -> UnhealthyMachine, 2 -> HealthyMachine, 3 -> HealthyMachine),
@@ -2530,6 +3250,12 @@ module Lifecycle {
     failureReason'        = Map(),
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
     machineHealthLabel' = Set(1, 2, 3).mapBy(_ => HealthyMachine),
@@ -2565,6 +3291,18 @@ module Lifecycle {
     etcdMemberRegistered' = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
     kubeletReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    tlsBootstrapped'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeletManifestReady'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    nodeLocallyRegistered'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    staticPodManifestsWritten'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmMarkedAsControlPlane'         = Set(1, 2, 3).mapBy(_ => true)
+                              .put(4, false),
+    kubeadmConfigUploaded'         = Set(1, 2, 3).mapBy(_ => true)
                               .put(4, false),
     machines'    = Set(1, 2, 3),
     nodeRefSet'  = Set(1, 2, 3).mapBy(_ => true),
@@ -2605,6 +3343,12 @@ module Lifecycle {
                 phase' = phase, failureReason' = failureReason,
                 etcdMemberRegistered' = etcdMemberRegistered,
                 kubeletReady' = kubeletReady,
+                tlsBootstrapped' = tlsBootstrapped,
+                kubeletManifestReady' = kubeletManifestReady,
+                nodeLocallyRegistered' = nodeLocallyRegistered,
+                staticPodManifestsWritten' = staticPodManifestsWritten,
+                kubeadmMarkedAsControlPlane' = kubeadmMarkedAsControlPlane,
+                kubeadmConfigUploaded' = kubeadmConfigUploaded,
                 machines' = machines, nodeRefSet' = nodeRefSet,
                 machineHealthLabel' = machineHealthLabel,
                 decision' = decision, blockReason' = blockReason,
@@ -2622,7 +3366,13 @@ module Lifecycle {
     .then(AddMachine(4))
     .then(BeginJoin(4))
     .then(PreflightPass(4))
+    .then(DownloadCertsSucceeded(4))
+    .then(EnterEtcdHealthCheck(4))
+    .then(CheckEtcdHealth(4))
     .then(KubeletStarted(4))
+    .then(KubeletTLSBootstrap(4))
+    .then(RegisterLocalNode(4))
+    .then(EnterEtcdAddLearner(4))
     .then(EtcdAddLearnerSucceeded(4))
     .then(LearnerStuck(4))                                  // exogenous fault
     .then(JoinFailedAt(4, LearnerStuckOnPromote))
@@ -2631,11 +3381,19 @@ module Lifecycle {
     .then(AddMachine(4))                                    // recovery: recreate Machine
     .then(BeginJoin(4))
     .then(PreflightPass(4))
+    .then(DownloadCertsSucceeded(4))
+    .then(EnterEtcdHealthCheck(4))
+    .then(CheckEtcdHealth(4))
     .then(KubeletStarted(4))
+    .then(KubeletTLSBootstrap(4))
+    .then(RegisterLocalNode(4))
+    .then(EnterEtcdAddLearner(4))
     .then(EtcdAddLearnerSucceeded(4))
     .then(ObserveLearnerProgress(4, Eligible))
     .then(PromoteLearner(4))
     .then(EtcdQuorumReady(4))
+    .then(MarkAsControlPlane(4))
+    .then(UploadKubeadmConfig(4))
     .then(MarkReady(4))
     .then(ResolveNodeRef(4))
     .then(MachineHealthChange(4, HealthyMachine))
