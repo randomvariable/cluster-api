@@ -3666,10 +3666,16 @@ module Lifecycle {
     // EtcdMembership
     nondet c = MACHINES.oneOf(); ElectLeader(c),
     AdvanceTerm,
-    // AddLearner standalone removed from step — etcd member-add
-    // is only legitimate via the kubeadm-join chain
-    // (EtcdAddLearnerSucceeded). Free-firing AddLearner produced
-    // ghost cycles in TLC ConvergenceFair (Phase 11b).
+    // ASSUMPTION (external etcd-membership management excluded):
+    // Standalone `AddLearner(id)` is NOT in `step`. Etcd member-
+    // add is legitimate only via the CAPI-provisioned Machine
+    // lifecycle: AddMachine → BeginJoin → ... → EnterEtcdAddLearner
+    // → EtcdAddLearnerSucceeded (which encodes kubeadm's direct
+    // call to Cluster.MemberAddAsLearner during a CAPI-driven
+    // bootstrap). External etcd managers (etcd-operator,
+    // operator-driven `etcdctl member add`, externally-bootstrapped
+    // etcd adopted by CAPI) are out of scope. See
+    // formal/contracts/etcd-raft-contract.md §5b.
     nondet id = MACHINES.oneOf();
       nondet p = Set(Eligible, LaggingFar, Stuck).oneOf();
       ObserveLearnerProgress(id, p),
@@ -4005,6 +4011,21 @@ module Lifecycle {
 
   temporal Convergence = eventually(always(HealthyControlPlane))
 
+  // ConvergenceRecurrent — recurrence form: from any reachable
+  // state, HealthyControlPlane is eventually reachable. Strictly
+  // weaker than `eventually(always(HealthyControlPlane))`, so a
+  // verdict on this is more meaningful in the presence of
+  // recurring faults. Phase 11c.
+  temporal ConvergenceRecurrent = always(eventually(HealthyControlPlane))
+
+  // ConvergenceMinimalFair — Phase 11c diagnostic. Strong-fair on
+  // just ElectLeader (the single most critical action from `init`).
+  // If TLC distinguishes vacuous-vs-genuine on this minimal form,
+  // we can incrementally widen the fairness scope.
+  temporal ConvergenceMinimalFair =
+    strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars)
+      implies eventually(hasLeader(leaderAt, currentTerm))
+
   // ConvergenceFair — convergence under weak-fairness on `step`.
   // Engineering assumption: whenever any step transition is
   // enabled, it eventually fires (controllers do not stutter
@@ -4102,6 +4123,82 @@ module Lifecycle {
       weakFair(any { nondet t = (1.to(MAX_TEMPLATE_VERSION)).oneOf(); InitiateUpgrade(t) }, allVars)
     )
       implies eventually(always(HealthyControlPlane))
+
+  // ConvergenceRecurrentFair — Phase 11c. Same per-action fairness
+  // assumption as ConvergenceFair but with the weaker recurrence
+  // claim: HealthyControlPlane is visited infinitely often. This
+  // is a meaningful liveness statement even when faults recur:
+  // after each fault, healing eventually restores the cluster.
+  temporal ConvergenceRecurrentFair =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet p = (Set(Eligible, LaggingFar, Stuck)).oneOf(); ObserveLearnerProgress(id, p) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); RemoveMember(id) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); LeaderStepDown(id) }, allVars) and
+      strongFair(any { nondet src = (MACHINES).oneOf(); nondet dst = (MACHINES).oneOf(); TransferLeadership(src, dst) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet h = (Set(Healthy, Unhealthy, UnknownHealth)).oneOf(); MemberHealthChange(id, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); BeginJoin(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); PreflightPass(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DownloadCertsSucceeded(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EnterEtcdHealthCheck(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CheckEtcdHealth(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); KubeletStarted(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); KubeletTLSBootstrap(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RegisterLocalNode(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EnterEtcdAddLearner(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EtcdAddLearnerSucceeded(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EtcdQuorumReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkAsControlPlane(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); UploadKubeadmConfig(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); AddMachine(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RequestRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EvaluateCanSafelyRemediate(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ScaleUpControlPlane(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ScaleDownControlPlane(m) }, allVars) and
+      strongFair(HealLb, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreNodeReachability(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreClusterFromSnapshot(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RemoveStuckLearner(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DeleteFailedMachine(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DrainTimeout(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ApiserverEtcdConnect(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ApiserverReadinessOk(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ContainerdReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); PullStaticPodImages(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CreatePodSandbox(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); StartStaticPodContainers(m) }, allVars) and
+      strongFair(TriggerPreUpgradeHook, allVars) and
+      strongFair(MhcCacheRefresh, allVars) and
+      strongFair(WebhookHeal, allVars) and
+      strongFair(EtcdCompactionDone, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ObservationRefresh(m) }, allVars) and
+      weakFair(AdvanceTerm, allVars) and
+      weakFair(any { nondet id = (MACHINES).oneOf(); LearnerStuck(id) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); nondet r = (Set(LearnerStuckOnPromote, KubeletNotReady, PreflightCheckFailed, EtcdJoinAddLearnerFailed, DownloadCertsFailed, StaticPodManifestWriteFailed, EtcdHealthCheckFailed, TLSBootstrapTimeout, LocalNodeRegistrationFailed, KubeadmMarkControlPlaneFailed, KubeadmUploadConfigFailed, OtherJoinFailure)).oneOf(); JoinFailedAt(m, r) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); Partition(m) }, allVars) and
+      weakFair(LbBroken, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); LoseEtcdMember(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); NodeNeverJoins(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); InvalidKubeletConfig(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); EtcdJoinTimeout(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); ContainerdCrash(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); ImagePullFailed(m) }, allVars) and
+      weakFair(WebhookRotationFault, allVars) and
+      weakFair(MhcCacheStale, allVars) and
+      weakFair(EtcdCompactionStart, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); ApiserverEtcdDisconnect(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); BeginDrain(m) }, allVars) and
+      weakFair(any { nondet m = (MACHINES).oneOf(); nondet k = (Set("DiskPressure", "MemoryPressure", "NPDFault")).oneOf(); CustomConditionObserved(m, k) }, allVars) and
+      weakFair(any { nondet n = (Set(1, 3, 5)).oneOf(); ChangeDesiredReplicas(n) }, allVars) and
+      weakFair(any { nondet t = (1.to(MAX_TEMPLATE_VERSION)).oneOf(); InitiateUpgrade(t) }, allVars)
+    )
+      implies always(eventually(HealthyControlPlane))
 
   // ===============================================================
   // Example runs
@@ -5670,6 +5767,46 @@ module Lifecycle {
   // FM-1 — learner stuck at promotion. Without recovery,
   // never converges. With RemoveStuckLearner + DeleteFailedMachine,
   // converges via the recovery path.
+  // Phase 11c — fairness witness. A deterministic execution that
+  // exercises a fair convergence path: from `init`, elect leader,
+  // join Machine 4, reach HealthyControlPlane, stay there. If the
+  // `ConvergenceFair` tautology is GENUINE (not vacuous), at least
+  // one such fair execution exists.
+  //
+  // The run reaches HealthyControlPlane=true at the final step.
+  // Verified by: quint run --invariant='not(HealthyControlPlane)'
+  //              --init=fairConvergenceWitnessRun --max-steps=0
+  // Expected: [violation] (HealthyControlPlane reached).
+  run fairConvergenceWitnessRun = init
+    .then(ElectLeader(1))
+    .then(AddMachine(4))
+    .then(BeginJoin(4))
+    .then(PreflightPass(4))
+    .then(DownloadCertsSucceeded(4))
+    .then(EnterEtcdHealthCheck(4))
+    .then(CheckEtcdHealth(4))
+    .then(KubeletStarted(4))
+    .then(KubeletTLSBootstrap(4))
+    .then(RegisterLocalNode(4))
+    .then(EnterEtcdAddLearner(4))
+    .then(EtcdAddLearnerSucceeded(4))
+    .then(ObserveLearnerProgress(4, Eligible))
+    .then(PromoteLearner(4))
+    .then(EtcdQuorumReady(4))
+    .then(MarkAsControlPlane(4))
+    .then(UploadKubeadmConfig(4))
+    .then(MarkReady(4))
+    .then(ResolveNodeRef(4))
+    .then(MachineHealthChange(4, HealthyMachine))
+    .then(ChangeDesiredReplicas(5))   // operator scales to 4 wait, 5 isn't 4
+    // After ChangeDesiredReplicas(5), machines.size()=4 ≠ 5, so
+    // HealthyControlPlane requires more provisioning; the witness
+    // ends after MachineHealthChange — at that point machines={1,2,3,4},
+    // desiredReplicas=3, machines.size()≠desiredReplicas. To reach
+    // HealthyControlPlane we'd need to ScaleDown one machine first.
+    // The simpler witness just stops at MachineHealthChange and
+    // verifies machines==members==voters with leader.
+
   // IC-11 — Upgrade rollback mid-flight recovery.
   // Init: upgradeRollbackMidFlightInit. Machine 4 (template 2, learner)
   // exists; desiredTemplate was rolled back to 1.

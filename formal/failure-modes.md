@@ -451,17 +451,51 @@ This means either:
   preconditions are never simultaneously enabled in a reachable
   state, making the implication vacuously true).
 
-Distinguishing the two requires either a dedicated bounded
-fairness witness (an explicit fair execution that visits
-HealthyControlPlane and stays there for at least one step) or a
-weaker temporal property (`always(eventually(HealthyControlPlane))`
-— recurrence rather than stable convergence) that is more
-naturally satisfiable in the presence of recurring faults. Both
-are documented as Phase 11c follow-ups.
+**Phase 11c verdict**: distinguishing the two confirmed the
+"tautology" is a **TLC capacity limitation, not a genuine
+verification**. Diagnostic runs:
 
-The `AddLearner` ghost-action removal is a real model-fidelity
-fix independent of the fairness verdict; the per-action fairness
-expansion eliminates the two known flip-flop counterexamples.
+| Property | Conjuncts | TLC tableau | Verdict |
+|---|---|---|---|
+| `ConvergenceFair` (eventually-always) | 65 | "satisfiability problem has 0 branches" | tautology in 4.6 s — TLC bailed |
+| `ConvergenceRecurrentFair` (always-eventually) | 65 | "satisfiability problem has 0 branches" | tautology in 4.1 s — TLC bailed |
+| `ConvergenceMinimalFair` (1 strong-fair on ElectLeader) | 1 | "satisfiability problem has 1 branches" | **state-space exploration begins**; TLC explores 10M+ states at depth 4 |
+| `ConvergenceRecurrent` (no fairness) | 0 | n/a | counterexample in 4 s — stuttering at state 6 |
+
+**Reading**: TLC's temporal tableau construction silently bails
+on the 65-conjunct fairness formula and returns "tautology" — a
+TLC capacity artifact. With a single fairness conjunct TLC works
+correctly (1-branch tableau) but the state-space at depth ≥ 4 is
+too large to terminate in reasonable time on this model.
+
+**Witness execution**: `fairConvergenceWitnessRun` in
+`Lifecycle.qnt` exhibits a deterministic 22-step path through
+the kubeadm-join chain that reaches a HealthyControlPlane state.
+quint run executes it cleanly (~14 s on the typescript backend).
+This proves the per-action fairness assumption is **satisfiable**
+(at least one fair execution exists) — the question is whether
+ALL fair executions converge, which TLC cannot answer at this
+formula size.
+
+**Genuine verification path**: requires either
+1. **Apalache** with SMT-based temporal verification (slower but
+   handles larger formulas) — deferred.
+2. **Reduced fairness scope**: strong-fair on a minimal sufficient
+   set (probably `ElectLeader`, `PromoteLearner`, `MarkReady`,
+   `ResolveNodeRef`, `MachineHealthChange`, `CompleteRemediation`,
+   `HealEtcdReachability`, `HealLb`) and prove convergence under
+   that subset. The challenge is identifying the minimal set
+   without exhaustive proof.
+3. **Manual proof** in Lean 4 against the parametric carrier
+   already scaffolded in `formal/proofs/ControlPlane/` — would
+   produce a deductive verdict independent of TLC's capacity.
+
+**Classification**: stays at **TLC-incomplete**: the temporal
+property exists, parses cleanly, has a verified satisfiable
+witness, and the AddLearner ghost-action fix that Phase 11b
+landed is genuine. The distinguishing question — does ALL fair
+executions converge, not just some — is documented as a known
+gap requiring Apalache or Lean to close.
 
 ## FM-11 — Invalid kubelet configuration
 

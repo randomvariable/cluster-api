@@ -133,6 +133,54 @@ the leader is partitioned away from a quorum:
 
 P1 + P2 are the etcd-side shape of the modelled scenario.
 
+### 5b. Out-of-band etcd-membership management is out of scope
+
+The model excludes etcd-membership operations that bypass the
+CAPI-provisioned Machine lifecycle. The legitimate path is:
+
+```
+KCP scaleUp → Machine created (AddMachine)
+            → Bootstrap controller delivers cloud-init / ignition
+            → kubeadm-join runs on the new Machine
+            → kubeadm's etcd client calls Cluster.MemberAddAsLearner
+            → etcd member registered
+```
+
+Kubeadm calls `MemberAddAsLearner` directly via its embedded
+etcd v3 client — but it does so **as part of CAPI's
+provisioning**, on a Machine CAPI created. The model collapses
+the whole chain into `EtcdAddLearnerSucceeded(m)`, gated on
+`phase[m] == EtcdJoinAddLearner`. The phase machine guarantees
+the Machine was created by `AddMachine(m)` first, so kubeadm's
+direct etcd call IS in scope.
+
+What's **out of scope**: etcd-membership operations that don't
+trace back to a CAPI-provisioned Machine. Examples:
+
+- A separate etcd manager (etcd-operator, etcd-druid, etcdadm
+  running outside CAPI) issuing `MemberAddAsLearner` for members
+  that have no corresponding CAPI Machine.
+- An operator running `etcdctl member add` against a CAPI-
+  managed cluster.
+- A workflow that bootstraps an etcd cluster external to CAPI
+  and then asks CAPI to "adopt" the existing members.
+
+**Why**: the abstraction is a refinement of *KCP's* behaviour;
+the assumption that every etcd member corresponds to a CAPI
+Machine (verifiable via the matchable-set check in
+`compareMachinesAndMembers`) is load-bearing. The Phase 11b TLC
+verification found a counterexample where allowing free
+`AddLearner` permitted orphan etcd members faster than KCP's
+reaper could drain them — a real-world problem if external
+managers run alongside KCP, but not a KCP bug.
+
+**Re-enabling**: a future verification round modelling external
+etcd managers must (a) re-add `AddLearner(id)` to `step`, AND
+(b) strengthen KCP's reaper (`RemoveStuckLearner` /
+`ReconcileEtcdMembers`) with strong-fair fairness to break the
+AddLearner-vs-Reaper race — OR add an explicit fault-budget
+constraint capping the number of external AddLearner firings.
+
 ## 5a. Leadership transfer and step-down
 
 Etcd's runtime refuses to remove the current leader. The
