@@ -78,23 +78,53 @@ IC-11 (upgrade rollback mid-flight) is now TLC-verified end-to-end
 via the deterministic `upgradeRollbackRecoveryRun` reaching
 `HealthyControlPlane` in 4 steps.
 
-## Outstanding gaps
+## Closed gaps (Phases 1–12)
+
+The following gaps have been closed as part of the Phase 1–12
+expansion:
+
+| Phase | Closure |
+|---|---|
+| 1 | Transient bounds (start / end / infrastructure causes) for FM-4, 6, 7, 10, 15, 18, 19, 21, 24 |
+| 2 | Etcd leader-following: `LeaderStepDown`, `TransferLeadership`, `RemoveMember` gated on leader ≠ id |
+| 3 | Kubeadm join phases expanded from 7 to 16; kubelet local Node registration; CRI-bound flags |
+| 4 | `drainBlocked` + `pdbViolatedFor` flags; `BeginDrain` / `DrainTimeout`; LSP-grounded in CAPI Machine controller drain |
+| 4b | `criRuntimeReady`, `criImagesPulled`, `criPodSandboxRunning`, `criContainersRunning`; ContainerdReady/Crash/PullStaticPodImages/CreatePodSandbox/StartStaticPodContainers |
+| 5 | FM-23 Apalache safety verdict (`AllSafetyInvariants` holds at depth 4 under stepNoRecovery, ~278 s) |
+| 6 | IC-11 deterministic recovery: `upgradeRollbackRecoveryRun` reaches `HealthyControlPlane` |
+| 7 | FM-31 `customCondition` + `CustomConditionObserved` action |
+| 8 | FM-32 `webhooksAvailable` + `WebhookRotationFault` / `WebhookHeal` |
+| 9 | FM-34 `mhcCacheStale` + `MhcCacheStale` / `MhcCacheRefresh` |
+| 10 | FM-37 `hooksTriggered` + `TriggerPreUpgradeHook` |
+| 11 | FM-9 `ConvergenceFair` temporal property + `weakFair(step, allVars)`; generator at `hack/tools/quint-fairness-gen.py` |
+| 12 | FM-35 dual-cluster `SelfHosted.qnt` module: `selfHostedDeadlockTrace` + `selfHostedRecoveryTrace` |
+
+Plus apiserver↔etcd modelling: `apiserverEtcdReachable`,
+`apiserverReady`, `etcdCompactionInProgress`,
+`ApiserverEtcdConnect/Disconnect`, `ApiserverReadinessOk`,
+`EtcdCompactionStart/Done`, `ObservationRefresh`.
+
+LSP-grounded refinement anchors added across all the above for:
+- `internal/controllers/machine/{machine_controller.go, drain/drain.go}` (drain)
+- `staging/src/k8s.io/apiserver/pkg/storage/etcd3/{store, preflight, compact, healthcheck}`
+- `staging/src/k8s.io/apiserver/pkg/server/healthz`
+- `pkg/kubelet/kubelet_node_status.go` (registerWithAPIServer)
+- `pkg/kubelet/kuberuntime/{kuberuntime_manager, kuberuntime_image, kuberuntime_sandbox, kuberuntime_container}`
+- `cmd/kubeadm/app/cmd/phases/join/{preflight, kubelet, controlplaneprepare, controlplanejoin, checketcd, waitcontrolplane}`
+- `cmd/kubeadm/app/phases/{markcontrolplane, uploadconfig}`
+
+## Remaining gaps
 
 | Gap | Where documented |
 |---|---|
-| FM-9 fairness annotations not added (60-conjunct expansion) | `failure-modes.md` FM-9 |
-| FM-31, FM-32, FM-34, FM-37 init actions concept-only | `failure-modes.md` (full sections) |
+| Full per-cluster Lifecycle.qnt expansion for FM-35 (current SelfHosted.qnt is a focused module) | `upstream-issues-research.md` #12886 |
 | FM-33 worker-machine preflight out of scope | `test-corpus-spec.md` Won't |
-| FM-35 self-hosted upgrade requires topology expansion | `upstream-issues-research.md` Tier 2 |
 | Most FMs lack e2e specs (5 are blueprinted) | `e2e-blueprints.md` |
 
-The corpus is **complete enough for an upstream conversation**:
-the 19 modes with TLC verdicts plus 5 with Apalache proofs cover
-every operational concern raised, including 1/3/5-node
-topologies, scale-up/scale-down, upgrades, kubeadm misconfigs,
-LB outages, drain blocks, and etcd-defrag pauses. The 4 model-
-incomplete rows (FM-9, FM-23, FM-31, FM-32, FM-34, FM-37) are
-documented with explicit modelling paths.
+The corpus now provides comprehensive refinement coverage of the
+KCP control-plane lifecycle with LSP-grounded anchors into the
+upstream Kubernetes (`kube-apiserver`, `kubelet`, `kubeadm`),
+containerd/CRI, and CAPI Machine controller code paths.
 
 ## Tooling state
 
