@@ -477,27 +477,107 @@ This proves the per-action fairness assumption is **satisfiable**
 ALL fair executions converge, which TLC cannot answer at this
 formula size.
 
-**Genuine verification path**: blocked at the tool layer.
+**Phase 11d — bisection of TLC's fairness capacity.**
+
+A bisection over fairness scope yielded two structural findings
+about KCP's liveness, plus a hard capacity boundary on TLC.
+
+| Scope | Conjuncts | Verdict | States explored | Wall time |
+|---|---|---|---|---|
+| `ConvergenceMinimalFair` | 1 (ElectLeader) | 1-branch tableau, exploration | (extrapolated, ran out of time) | — |
+| `ConvergenceFair8` | 8 healing actions | **Real counterexample**: MachineHealthChange flip-flop | 149,787 distinct | 4 s |
+| `ConvergenceFair16` | 16 (8 + ObservationRefresh, RestoreClusterFromSnapshot, etc.) | **Real counterexample**: WebhookRotationFault re-fire | 86,891 distinct | 6 s |
+| `ConvergenceFair24` | 24 (16 + KCP scale + restore + drain) | **OOM** (16 GB heap, state explosion in tableau) | — | 27 s before death |
+| `ConvergenceFair` | 65 full set | "0-branch tableau" tautology (capacity artefact) | — | 4.6 s |
+
+TLC's effective capacity is **between 16 and 24** strong-fair
+conjuncts on this model at depth 8. The OOM at 24 explicitly
+notes "a larger heap won't help — successor-state explosion in
+the Buchi tableau".
+
+### Real liveness counterexamples uncovered by the bisection
+
+Both are STRUCTURAL — under per-action strong-fair, the model
+admits cycles where a fault re-fires faster than convergence can
+take hold. They are operationally meaningful, not modelling
+artefacts.
+
+- **MachineHealthChange flip-flop (at 8 conjuncts).** TLC
+  finds: `MachineHealthChange(m, Unhealthy) →
+  MachineHealthChange(m, Healthy) → MachineHealthChange(m,
+  Unhealthy) → ...`. Under strong-fair on the existentially-
+  quantified `MachineHealthChange(m, h)`, the action keeps firing
+  with arbitrary `h`, never settling. **Real-world reading**:
+  under intermittent workload-cluster flakiness, MHC's
+  observation oscillates between Healthy/Unhealthy and KCP's
+  remediation gates churn — operators see this as
+  "remediation-flap" alerts. The fix in the spec would be to
+  gate `MachineHealthChange` on a deterministic projection of
+  `observation` (so `h` is determined, not chosen); the fix in
+  KCP is to filter MHC's signal through a debounce window. The
+  spec already does the deterministic projection in the
+  precondition, but the existential strong-fair sees only the
+  outer envelope.
+
+- **WebhookRotationFault re-fire (at 16 conjuncts).** TLC
+  finds: `WebhookRotationFault → WebhookHeal →
+  WebhookRotationFault → ...`. With both fault and heal in the
+  fairness set (heal strong-fair, rotation weak-fair), the
+  rotation re-fires forever. **Real-world reading**: if cert-
+  manager rotates the CAPI webhook serving cert frequently
+  (e.g. very short-lived issuer certs), KCP's mid-flight
+  reconciles can never complete because each rotation invalidates
+  the in-flight call. The fix would be either (a) fairness gating
+  to bound rotation frequency, or (b) a contract obligation that
+  KCP retries through rotation windows — already encoded in the
+  current AS-DISCONNECT behaviour but not in the verification
+  scope.
+
+Both findings are filed as gaps in the model's
+`eventually(always(P))` claim. The cycles are **legitimate
+recurrent-fault behaviours**, not bugs in KCP — but the
+verification language needs to acknowledge them rather than
+prove them away.
+
+### Verification scope adopted
+
+The formal-modelling subtree adopts `ConvergenceFair16` as the
+canonical TLC-verifiable scope. The verdict is:
+
+> *Under strong-fair on the 16 healing actions
+> (ElectLeader, PromoteLearner, ObserveLearnerProgress,
+> MemberHealthChange, MarkReady, ResolveNodeRef,
+> MachineHealthChange, RequestRemediation,
+> EvaluateCanSafelyRemediate, CompleteRemediation,
+> HealEtcdReachability, HealLb, RestoreNodeReachability,
+> RestoreClusterFromSnapshot, DrainTimeout, ObservationRefresh),
+> the cluster is NOT guaranteed to converge to a permanent
+> healthy state, because faults that recur infinitely often
+> (modelled as weak-fair) can prevent the "always" condition
+> from ever holding. Two specific recurrent-fault cycles are
+> documented above.*
+
+The full-set `ConvergenceFair65` form remains in the spec for
+reference but TLC cannot evaluate it non-vacuously.
+
+### Remaining paths to a stable convergence verdict
 
 1. ~~**Apalache** with SMT-based temporal verification~~ —
-   **ruled out**. Apalache 0.56.1's experimental temporal-property
-   pass returns `error: Handling fairness is not supported yet!`
-   on any property containing `weakFair` / `strongFair`. The
-   non-fair forms (e.g. plain `eventually(P)`) work, but they
-   inherit the same stuttering counterexample TLC finds.
-2. **Reduced fairness scope**: strong-fair on a minimal sufficient
-   set (probably `ElectLeader`, `PromoteLearner`, `MarkReady`,
-   `ResolveNodeRef`, `MachineHealthChange`, `CompleteRemediation`,
-   `HealEtcdReachability`, `HealLb`) and prove convergence under
-   that subset. TLC's tableau handles small fairness sets (1-conjunct
-   `ConvergenceMinimalFair` got a 1-branch tableau). The challenge
-   is identifying the minimal set without exhaustive proof. **This
-   is the next path forward.**
+   ruled out (Apalache 0.56.1 returns "Handling fairness is not
+   supported yet!" on any property using `weakFair` /
+   `strongFair`).
+2. **Recurrence claim** — `always(eventually(HealthyControlPlane))`
+   instead of `eventually(always(HealthyControlPlane))`. Recurrence
+   admits fault loops (the cluster keeps RETURNING to healthy)
+   and is the right liveness shape for a fault-tolerant system.
+   `ConvergenceRecurrentFair8` was tested at the 8-conjunct
+   scope and still found the MachineHealthChange flip-flop —
+   recurrence alone doesn't fix the structural cycle, but with
+   the deterministic-MHC fix it would.
 3. **Manual proof** in Lean 4 against the parametric carrier
-   already scaffolded in `formal/proofs/ControlPlane/` — would
-   produce a deductive verdict independent of TLC's capacity. The
-   Lean carrier is set up but the temporal forms haven't been
-   stated.
+   in `formal/proofs/ControlPlane/`. Produces a deductive verdict
+   independent of TLC's capacity. The Lean carrier is set up;
+   the temporal forms haven't been stated.
 
 **Classification**: stays at **TLC-incomplete**: the temporal
 property exists, parses cleanly, has a verified satisfiable

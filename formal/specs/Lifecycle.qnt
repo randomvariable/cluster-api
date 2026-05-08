@@ -4026,6 +4026,110 @@ module Lifecycle {
     strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars)
       implies eventually(hasLeader(leaderAt, currentTerm))
 
+  // Phase 11d — bisecting minimal strong-fair set. The 65-conjunct
+  // ConvergenceFair causes TLC's tableau to overflow ("0 branches"
+  // == tautology). Smaller scopes give meaningful verdicts.
+
+  // 8-conjunct candidate minimal set: just the actions needed to
+  // (a) elect a leader, (b) drive a join to completion, (c) restore
+  // health after a fault, (d) complete remediation. The intuition
+  // is that all the kubeadm-join phases between PreflightPass and
+  // MarkReady will progress through KubeletStarted/etc. once
+  // ElectLeader and the recovery actions are strongly fair.
+  temporal ConvergenceFair8 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(HealLb, allVars)
+    )
+      implies eventually(always(HealthyControlPlane))
+
+  // 4-conjunct candidate (halve point): just the from-init essentials.
+  temporal ConvergenceFair4 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars)
+    )
+      implies eventually(always(HealthyControlPlane))
+
+  // 8-conjunct recurrence form. Strong-fair on healing; recurrence
+  // claim. After each fault, healing eventually restores
+  // HealthyControlPlane.
+  temporal ConvergenceRecurrentFair8 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(HealLb, allVars)
+    )
+      implies always(eventually(HealthyControlPlane))
+
+  // 16-conjunct candidate (double point): if 8 tableaus to >0 branches,
+  // try doubling toward the full set.
+  temporal ConvergenceFair16 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet p = (Set(Eligible, LaggingFar, Stuck)).oneOf(); ObserveLearnerProgress(id, p) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet h = (Set(Healthy, Unhealthy, UnknownHealth)).oneOf(); MemberHealthChange(id, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RequestRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EvaluateCanSafelyRemediate(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(HealLb, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreNodeReachability(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreClusterFromSnapshot(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DrainTimeout(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ObservationRefresh(m) }, allVars)
+    )
+      implies eventually(always(HealthyControlPlane))
+
+  // 24-conjunct candidate. Adds the kubeadm-join chain healing
+  // actions (BeginJoin..MarkReady minus the ones in 16) and the
+  // KCP scale + remediation healing actions to the 16-conjunct set.
+  temporal ConvergenceFair24 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet p = (Set(Eligible, LaggingFar, Stuck)).oneOf(); ObserveLearnerProgress(id, p) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet h = (Set(Healthy, Unhealthy, UnknownHealth)).oneOf(); MemberHealthChange(id, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); BeginJoin(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); PreflightPass(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); KubeletStarted(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EtcdAddLearnerSucceeded(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EtcdQuorumReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); AddMachine(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RequestRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EvaluateCanSafelyRemediate(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ScaleUpControlPlane(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ScaleDownControlPlane(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(HealLb, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreNodeReachability(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreClusterFromSnapshot(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DrainTimeout(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ObservationRefresh(m) }, allVars)
+    )
+      implies eventually(always(HealthyControlPlane))
+
   // ConvergenceFair — convergence under weak-fairness on `step`.
   // Engineering assumption: whenever any step transition is
   // enabled, it eventually fires (controllers do not stutter

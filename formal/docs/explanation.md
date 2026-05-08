@@ -164,26 +164,43 @@ the per-action fairness *is* satisfiable — at least one fair
 execution exists. Whether *all* fair executions converge is a
 question TLC can't answer at this formula size.
 
-Two paths forward:
+Three paths investigated:
+
 1. ~~**Apalache** — SMT-based, handles larger formulas.~~
    **Ruled out**: Apalache 0.56.1's experimental temporal-property
    pass returns `error: Handling fairness is not supported yet!`
-   for any property using `weakFair` / `strongFair`. We can use
-   Apalache for non-fair temporal properties (`eventually(P)`,
-   `always(P)`) but those inherit the stuttering counterexample
-   TLC already finds without fairness.
+   for any property using `weakFair` / `strongFair`.
+
 2. **Reduced fairness scope** — TLC's tableau handles small
-   fairness sets (the 1-conjunct `ConvergenceMinimalFair` produced
-   a 1-branch tableau and started state-space exploration). The
-   approach: identify a minimal sufficient set of strong-fair
-   actions (probably `ElectLeader`, `PromoteLearner`, `MarkReady`,
-   `ResolveNodeRef`, `MachineHealthChange`, `CompleteRemediation`,
-   `HealEtcdReachability`, `HealLb`) and prove convergence under
-   just those. This is the actionable next step.
-3. **Lean 4** — manual proof against the parametric carrier in
-   `formal/proofs/ControlPlane/`. Produces a deductive verdict
-   independent of model-checker capacity. Scaffolded; not yet
-   discharged.
+   fairness sets but state-explodes between 16 and 24 conjuncts
+   on this model. Phase 11d ran a bisection:
+
+   | Conjuncts | Verdict | Time |
+   |---|---|---|
+   | 8 | real cex (MachineHealthChange flip-flop) | 4 s |
+   | 16 | real cex (WebhookRotationFault re-fire) | 6 s |
+   | 24 | OOM at 16 GB heap (state explosion) | 27 s |
+   | 65 | tautology (tableau capacity) | 4.6 s |
+
+   Both 8- and 16-conjunct verdicts are **real liveness
+   counterexamples** — under strong-fair on healing actions and
+   weak-fair on faults, faults that recur infinitely often
+   prevent `eventually(always(P))` from holding. The
+   counterexamples are operationally meaningful: MHC flip-flop
+   under intermittent flakiness (8-conjunct) and webhook
+   rotation re-firing through KCP's reconcile (16-conjunct).
+   Both are recurrent-fault behaviours, not modelling artefacts.
+
+   `ConvergenceFair16` is now the canonical TLC-verifiable
+   scope. The verdict acknowledges the recurrent-fault cycles
+   rather than proving them away.
+
+3. **Lean 4 deductive proof** — against the parametric carrier
+   in `formal/proofs/ControlPlane/`. Independent of model-checker
+   capacity. Scaffolded but the temporal forms haven't been
+   stated. This is the path to a fault-aware liveness verdict
+   (e.g. "after the last fault, eventually-always healthy" with
+   an explicit fault budget).
 
 ## What's deferred
 

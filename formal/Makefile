@@ -196,10 +196,31 @@ verify-ic11:  ## IC-11 upgrade rollback recovery (TLC reachability)
 ##@ fairness:
 
 .PHONY: verify-fm9-fair
-verify-fm9-fair:  ## ConvergenceFair temporal verification (TLC)
+verify-fm9-fair:  ## ConvergenceFair16 (canonical scope; full 65 tableaus)
+	@# The full 65-conjunct ConvergenceFair tableaus to "0 branches"
+	@# (TLC capacity). Phase 11d bisected and adopted the 16-conjunct
+	@# scope as the canonical verifiable form. See failure-modes.md
+	@# FM-9 §"Phase 11d bisection".
+	$(QUINT) verify --main=Lifecycle --init=init --step=step \
+	                --temporal=ConvergenceFair16 --backend=tlc \
+	                --max-steps=$(MAX_STEPS_TLC) $(LIFECYCLE)
+
+.PHONY: verify-fm9-fair-full
+verify-fm9-fair-full:  ## ConvergenceFair (full 65; tableaus to tautology)
 	$(QUINT) verify --main=Lifecycle --init=init --step=step \
 	                --temporal=ConvergenceFair --backend=tlc \
 	                --max-steps=$(MAX_STEPS_TLC) $(LIFECYCLE)
+
+.PHONY: verify-fm9-fair-bisect
+verify-fm9-fair-bisect:  ## Run the bisection sequence (1, 8, 16, 24)
+	@for prop in ConvergenceMinimalFair ConvergenceFair8 ConvergenceFair16 ConvergenceFair24; do \
+	  echo "==> $$prop"; \
+	  TLA_JAVA_OPTS='-Xmx16g' $(QUINT) verify --main=Lifecycle \
+	                                          --init=init --step=step \
+	                                          --temporal=$$prop --backend=tlc \
+	                                          --max-steps=$(MAX_STEPS_TLC) \
+	                                          $(LIFECYCLE) || true; \
+	done
 
 .PHONY: verify-fm9-recurrent
 verify-fm9-recurrent:  ## ConvergenceRecurrentFair (recurrence form, TLC)
