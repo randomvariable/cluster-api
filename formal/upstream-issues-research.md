@@ -3,7 +3,7 @@
 GitHub-issue mining across cluster-api and the major
 infrastructure providers (vSphere, AWS, Azure, OpenStack) to
 seed the formal model with reported, real-world control-plane
-failure modes beyond the user-reported incident that started
+failure modes beyond the modelled scenario that started
 this work.
 
 Searches were run against `kubernetes-sigs/cluster-api`,
@@ -27,11 +27,11 @@ modelled.
 **Status**: open, kind/bug, area/provider/control-plane-kubeadm.
 **CAPI version reported**: v1.10.7. **K8s**: v1.34.2.
 
-This is **FM-1 verbatim**. The user-reported incident that
-opened this work (kvp22096-98cda1-fpx9t / 2026-04-28) and this
+This is **FM-1 verbatim**. The modelled scenario that
+opened this work (example-cluster / (modelling pass)) and this
 upstream issue describe the same failure: KCP creates a Machine,
 kubeadm-join adds an etcd learner, the learner never promotes
-(in #13221 because kubelet is broken; in our incident because of
+(in #13221 because kubelet is broken; in FM-1 because of
 a gRPC client routing bug), and KCP refuses to remove the
 unstarted etcd member because the failed Machine has no NodeRef.
 Subsequent join attempts fail because etcd's learner-then-
@@ -156,11 +156,31 @@ Self-hosted CAPI: the management cluster IS the workload
 cluster's control plane. Reconcile loops can deadlock during
 upgrade if the management cluster's KCP rolls itself.
 
-Seeds: **FM-35 — self-hosted upgrade deadlock**. Captures a
-topological constraint (the model currently treats management
-and workload clusters as separate). Out of scope for this round
-because it requires a full self-hosted topology in the model;
-recorded for later.
+Seeds: **FM-35 — self-hosted upgrade deadlock**. Captures the
+"KCP rolls its own host" feedback loop where the reconciler pod
+must pause its own Node to upgrade it, but pausing the Node halts
+reconciliation.
+
+**Phase 12 verdict.** A new `formal/specs/SelfHosted.qnt` module
+captures FM-35's dynamics with a focused 3-machine self-hosted
+model:
+- States: `mgmtMachines`, `kcpHost`, `kcpStatus`,
+  `machinePaused`, `machineTemplate`, `desiredMgmtTemplate`,
+  `wlIsMgmt`, `upgradePhase`.
+- Actions: `OperatorBumpTemplate`, `KcpStartUpgrade`,
+  `KcpUpgradeMachine`, `KcpUpgradeOwnHost` (deadlock entry),
+  `KcpReconcileResume` (operator workaround).
+- Verdict: `selfHostedDeadlockTrace` reaches the `Deadlocked`
+  state in 4 steps; `selfHostedRecoveryTrace` from the deadlock
+  init resolves via `KcpReconcileResume` (operator manually
+  re-hosts the KCP pod on a healthy non-paused Machine).
+
+A faithful proof against the full Lifecycle.qnt would require
+the per-cluster expansion described in
+`/home/naadir/.claude/plans/immutable-wibbling-dewdrop.md` Phase
+12 (every state variable wrapped to `ClusterId -> X`, every
+action gaining a `cluster` parameter). The SelfHosted.qnt module
+captures the load-bearing FM-35 dynamics without that refactor.
 
 ### #13508 — Machine drain stuck indefinitely when node is unreachable and PDBs block eviction
 

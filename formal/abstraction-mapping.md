@@ -125,6 +125,20 @@ checker tests.
 To be populated when `Remediation.tla` lands in Phase 5 of the
 proposal.
 
+### SelfHosted.qnt
+
+| Spec | Action | Go reference | Purpose |
+| ---- | ------ | -------------- | ------- |
+| SelfHosted | OperatorBumpTemplate | controlplane/kubeadm/api/v1beta2/kubeadmcontrolplane_types.go (`KubeadmControlPlane.spec.template` / spec.kubernetesVersion). | Operator bumps the desired CP template version (e.g. K8s upgrade). |
+| SelfHosted | KcpStartUpgrade | controlplane/kubeadm/internal/controllers/upgrade.go (KCP rolling-update entry). | KCP detects template mismatch and begins reconciling the upgrade. |
+| SelfHosted | KcpUpgradeMachine | controlplane/kubeadm/internal/controllers/upgrade.go (per-Machine rollout). | KCP rolls a single Machine to the new template. |
+| SelfHosted | KcpUpgradeOwnHost | (self-hosted-specific path; no dedicated CAPI entry yet — rolling-update controller treats own-host as any other Machine). | KCP attempts to upgrade the Node hosting its own pod. Pauses the host; KCP cannot reconcile until pod fails over. The FM-35 deadlock entry. |
+| SelfHosted | KcpReconcileResume | (operator workaround — manual KCP pod failover via kubectl delete pod or controller-manager pod failover). | KCP reconciler pod fails over to a healthy Machine; reconciliation resumes. |
+| SelfHosted | selfHostedSteadyInit | (initialiser — no Go entry). | 3-CP healthy steady-state init. |
+| SelfHosted | selfHostedUpgradeMidFlightInit | (initialiser — no Go entry). | Upgrade in flight init. |
+| SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
+| SelfHosted | stepNoRecovery | (step relation — no Go entry). | Step relation excluding KcpReconcileResume; used to prove deadlock unreachability of recovery. |
+
 ## Drift policy
 
 The CI gate requires that every Go reference of the form
