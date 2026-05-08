@@ -143,6 +143,7 @@ The corpus has progressed through several phases of expansion:
 | 19 | Cross-spec composition (issue #2): `WorkerLifecycle.qnt` joins Topology + MachineSetPreflight + InPlaceUpdate; surfaces FM-51 (level-triggered preflight re-evaluation race). 1000×60 random walk holds 9 cross-cutting joint invariants. |
 | 20 | Liveness properties beyond FM-9 (issue #3): 3 in `InPlaceUpdate.qnt` (`L1_EventuallyAllMachinesSettled`, `L2_EventuallyHookPendingCleared`, `L3_EventuallyVersionStable`), 1 in `Topology.qnt` (`LT1_EventuallyPendingHooksClear`). Topology's stronger eventual-progress is paradox-limited (documented for follow-up). FM-9 unchanged. |
 | 21 | Mutation testing (issue #4): `hack/tools/quint-mutation-tester.py` applies 8 systematic mutation operators per invariant. 696 mutations attempted across 9 specs; 131 killed (load-bearing), 60 survived. See `formal/mutation-findings.md`. |
+| 22 | Depth bump (issue #5): random walks bumped to 200×40 (Topology), 2000×120 (InPlaceUpdate), 500×100 (ControllerRuntime), 300×100 (ClusterE2E), 1000×80 (WorkerLifecycle); all HOLD. Lifecycle FM-1 TLC at depth=12 (90k states, 1.3 s); FM-9 ConvergenceFair16 at depth=12 surfaced fairness-scope gap (EtcdCompactionStart lasso). Added `ConvergenceFair17`. Documented in counterexample-log.md. |
 
 Plus apiserver↔etcd modelling (`apiserverEtcdReachable`,
 `apiserverReady`, `etcdCompactionInProgress`, etc.) and

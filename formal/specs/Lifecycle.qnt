@@ -4098,6 +4098,34 @@ module Lifecycle {
     )
       implies eventually(always(HealthyControlPlane))
 
+  // 17-conjunct: 16-conjunct + EtcdCompactionDone. Issue #5
+  // depth-bump finding: at depth 12 (was 8), TLC found a lasso
+  // through `EtcdCompactionStart` because the 16-conjunct scope
+  // didn't fair-schedule `EtcdCompactionDone`. The compaction
+  // recovery is essential for liveness once etcdCompactionInProgress
+  // becomes reachable in deeper traces.
+  temporal ConvergenceFair17 =
+    (
+      strongFair(any { nondet c = (MACHINES).oneOf(); ElectLeader(c) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); PromoteLearner(id) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet p = (Set(Eligible, LaggingFar, Stuck)).oneOf(); ObserveLearnerProgress(id, p) }, allVars) and
+      strongFair(any { nondet id = (MACHINES).oneOf(); nondet h = (Set(Healthy, Unhealthy, UnknownHealth)).oneOf(); MemberHealthChange(id, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); MarkReady(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ResolveNodeRef(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); nondet h = (Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine)).oneOf(); MachineHealthChange(m, h) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RequestRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); EvaluateCanSafelyRemediate(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); CompleteRemediation(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); HealEtcdReachability(m) }, allVars) and
+      strongFair(HealLb, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreNodeReachability(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); RestoreClusterFromSnapshot(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); DrainTimeout(m) }, allVars) and
+      strongFair(any { nondet m = (MACHINES).oneOf(); ObservationRefresh(m) }, allVars) and
+      strongFair(EtcdCompactionDone, allVars)
+    )
+      implies eventually(always(HealthyControlPlane))
+
   // 24-conjunct candidate. Adds the kubeadm-join chain healing
   // actions (BeginJoin..MarkReady minus the ones in 16) and the
   // KCP scale + remediation healing actions to the 16-conjunct set.

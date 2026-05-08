@@ -565,6 +565,52 @@ verify-mspreflight-refined:  ## Random-walk MachineSetPreflightRefined
 verify-refinements: verify-topology-refined verify-inplace-refined verify-mspreflight-refined  ## Full refinement suite
 
 ## --------------------------------------
+## Depth-bump verifications (Issue #5)
+## --------------------------------------
+
+##@ depth-bump:
+
+# Re-run random walks at deeper bounds. All hold; no
+# counterexamples found. Lifecycle FM-9 at depth=12 surfaces a
+# fairness-scope gap (see counterexample-log.md).
+
+.PHONY: verify-depth-bump
+verify-depth-bump:  ## Re-run random walks at deeper bounds (~30 s total)
+	@echo "##### Topology @ 200×40 #####"
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=Topology \
+	             --invariant=AllSafetyInvariants --max-samples=200 --max-steps=40 \
+	             $(TOPOLOGY)
+	@echo "##### InPlaceUpdate @ 2000×120 #####"
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=InPlaceUpdate \
+	             --invariant=AllSafetyInvariants --max-samples=2000 --max-steps=120 \
+	             $(INPLACE)
+	@echo "##### ControllerRuntime @ 500×100 #####"
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ControllerRuntime \
+	             --invariant=AllSafetyInvariants --max-samples=500 --max-steps=100 \
+	             $(CRRUNTIME)
+	@echo "##### ClusterE2E @ 300×100 #####"
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterE2E \
+	             --invariant=AllSafetyInvariants --max-samples=300 --max-steps=100 \
+	             $(E2E)
+	@echo "##### WorkerLifecycle @ 1000×80 #####"
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=WorkerLifecycle \
+	             --invariant=AllSafetyInvariants --max-samples=1000 --max-steps=80 \
+	             $(WORKER_LIFE)
+
+.PHONY: verify-fm1-depth12
+verify-fm1-depth12:  ## FM-1 TLC at depth=12 (was 8, ~1.3 s, 90k states)
+	$(QUINT) verify --main=Lifecycle --init=incidentInit \
+	                --step=stepRemediation --max-steps=12 \
+	                --invariant=AllSafetyInvariants \
+	                --backend=tlc $(LIFECYCLE)
+
+.PHONY: verify-fm9-fair17-depth12
+verify-fm9-fair17-depth12:  ## FM-9 ConvergenceFair17 at depth=12 (issue #5; surfaces flip-flop gap)
+	TLA_JAVA_OPTS='-Xmx8g' $(QUINT) verify --main=Lifecycle --init=init \
+	                --step=step --temporal=ConvergenceFair17 --backend=tlc \
+	                --max-steps=12 $(LIFECYCLE)
+
+## --------------------------------------
 ## Mutation testing (Issue #4)
 ## --------------------------------------
 
