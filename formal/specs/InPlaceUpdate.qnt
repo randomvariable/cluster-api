@@ -866,6 +866,72 @@ module InPlaceUpdate {
     DoneImpliesVersionFlipped,
   }
 
+  // ===============================================================
+  // LLM-discovered invariant candidates (issue #10)
+  // ===============================================================
+  // Verified via 300×60 random walk. See formal/llm-invariants.md.
+
+  // L1: A Machine in acknowledgedMove must be on newMS. Refines
+  // the upstream invariant: a Machine is only added to the
+  // AcknowledgedMove set after its OwnerRef has been flipped to
+  // newMS (machineset_controller.go:381).
+  val LLM_AckOnlyForMovedMachines =
+    MACHINES.forall(m =>
+      acknowledgedMove.contains(m) implies machineOnNewMs.get(m))
+
+  // L2: A Machine in InPlaceDone must be on newMS. Refines the
+  // post-condition of completeInPlaceUpdate: ownership has been
+  // flipped well before completion.
+  val LLM_DoneImpliesOnNewMs =
+    MACHINES.forall(m =>
+      machinePhase.get(m) == InPlaceDone implies machineOnNewMs.get(m))
+
+  // L3: A Machine in OnOldMS has no AcknowledgedMove entry. The
+  // acknowledgedMove set is a record of MS-side handshake; an
+  // OnOldMS Machine has not yet entered that handshake.
+  val LLM_OnOldMsImpliesNoAck =
+    MACHINES.forall(m =>
+      machinePhase.get(m) == OnOldMS
+        implies not(acknowledgedMove.contains(m)))
+
+  // L4: A Machine in InPlaceDone has no UpdateMachine hook
+  // pending. UpdateMachineHookShape covers Armed/Updating/Failed;
+  // this is the contrapositive that completes the partition.
+  val LLM_DoneNoHookPending =
+    MACHINES.forall(m =>
+      machinePhase.get(m) == InPlaceDone
+        implies not(updateMachineHookPending.get(m)))
+
+  // L5: A Machine in OnOldMS retains the oldMS version. Refines
+  // the property that the version flip happens during
+  // CompleteInPlaceUpdate; until then the Machine carries
+  // oldMsVersion.
+  val LLM_OldMsImpliesAtOldVersion =
+    MACHINES.forall(m =>
+      machinePhase.get(m) == OnOldMS
+        implies machineVersion.get(m) == oldMsVersion)
+
+  // L6: A Machine in OnOldMS has no in-progress annotations on
+  // any of the three CRs. Refines the post-condition of cleanup
+  // (CleanupOrphanedHook): the trio is cleared before the
+  // Machine returns to OnOldMS, AND no transition adds them in
+  // OnOldMS.
+  val LLM_NoInProgressOnOldMs =
+    MACHINES.forall(m =>
+      machinePhase.get(m) == OnOldMS
+        implies (not(machineInProgress.get(m))
+                 and not(infraInProgress.get(m))
+                 and not(bootstrapInProgress.get(m))))
+
+  val LLMCandidateInvariants = all {
+    LLM_AckOnlyForMovedMachines,
+    LLM_DoneImpliesOnNewMs,
+    LLM_OnOldMsImpliesNoAck,
+    LLM_DoneNoHookPending,
+    LLM_OldMsImpliesAtOldVersion,
+    LLM_NoInProgressOnOldMs,
+  }
+
   // FM-42: Premature in-place admission — the rollout planner must
   // not set Move/Receive annotations until CanUpdateMachineSet
   // has returned CanUpdateYes. Refines the precondition at
@@ -915,6 +981,7 @@ module InPlaceUpdate {
     FM42_PrematureInPlaceAdmission,
     FM43_UpdateMachineIdempotenceGate,
     FM44_MultiExtensionBlocksProgress,
+    LLMCandidateInvariants,
   }
 
   // ===============================================================

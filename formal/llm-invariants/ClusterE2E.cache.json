@@ -1,0 +1,41 @@
+{
+  "spec": "ClusterE2E",
+  "candidates": [
+    {
+      "name": "CpRoleAssignmentStable",
+      "quint_body": "CP_MACHINES.forall(m =>\n  machineCreated.get(m) implies machineRole.get(m) == ControlPlane)",
+      "rationale": "CP_MACHINES partitions the modelled machine ID space; once a CP id has a Machine, the role is fixed.",
+      "confidence": "High"
+    },
+    {
+      "name": "WorkerRoleAssignmentStable",
+      "quint_body": "WORKER_MACHINES.forall(m =>\n  machineCreated.get(m) implies machineRole.get(m) == Worker)",
+      "rationale": "Symmetric companion to CpRoleAssignmentStable for the worker partition.",
+      "confidence": "High"
+    },
+    {
+      "name": "EtcdJoinedRequiresKcpInit",
+      "quint_body": "ALL_MACHINES.forall(m =>\n  machinePhase.get(m) == MachineJoinedEtcd implies kcpInitialized)",
+      "rationale": "Suggests etcd-joined ordering against kcpInitialized.",
+      "confidence": "Medium"
+    },
+    {
+      "name": "InfraProvisionedRequiresInfraClusterReady",
+      "quint_body": "infraProvisioned implies infraClusterReady",
+      "rationale": "The Cluster controller flips infraProvisioned only after observing infraCluster.status.ready.",
+      "confidence": "High"
+    },
+    {
+      "name": "EndpointSetRequiresInfraClusterReady",
+      "quint_body": "controlPlaneEndpointSet implies infraClusterReady",
+      "rationale": "ControlPlaneEndpoint is sourced from infraCluster.status.controlPlaneEndpoint.",
+      "confidence": "High"
+    },
+    {
+      "name": "StableImpliesStepIdle",
+      "quint_body": "clusterPhase == Stable implies stepPhase == StepIdle",
+      "rationale": "The Topology controller only enters Upgrading after bumping topologyVersion; Stable implies the step machine is idle.",
+      "confidence": "High"
+    }
+  ]
+}

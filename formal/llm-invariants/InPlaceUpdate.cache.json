@@ -1,0 +1,41 @@
+{
+  "spec": "InPlaceUpdate",
+  "candidates": [
+    {
+      "name": "LLM_AckOnlyForMovedMachines",
+      "quint_body": "MACHINES.forall(m =>\n  acknowledgedMove.contains(m) implies machineOnNewMs.get(m))",
+      "rationale": "A Machine is added to AcknowledgedMove only after its OwnerRef is flipped to newMS (machineset_controller.go:381).",
+      "confidence": "High"
+    },
+    {
+      "name": "LLM_DoneImpliesOnNewMs",
+      "quint_body": "MACHINES.forall(m =>\n  machinePhase.get(m) == InPlaceDone implies machineOnNewMs.get(m))",
+      "rationale": "Ownership flip precedes completion; an InPlaceDone Machine must be on newMS.",
+      "confidence": "High"
+    },
+    {
+      "name": "LLM_OnOldMsImpliesNoAck",
+      "quint_body": "MACHINES.forall(m =>\n  machinePhase.get(m) == OnOldMS implies not(acknowledgedMove.contains(m)))",
+      "rationale": "OnOldMS is the pre-handshake phase; the AcknowledgedMove set has no entry for it.",
+      "confidence": "High"
+    },
+    {
+      "name": "LLM_DoneNoHookPending",
+      "quint_body": "MACHINES.forall(m =>\n  machinePhase.get(m) == InPlaceDone implies not(updateMachineHookPending.get(m)))",
+      "rationale": "Contrapositive of UpdateMachineHookShape, completing the partition.",
+      "confidence": "High"
+    },
+    {
+      "name": "LLM_OldMsImpliesAtOldVersion",
+      "quint_body": "MACHINES.forall(m =>\n  machinePhase.get(m) == OnOldMS implies machineVersion.get(m) == oldMsVersion)",
+      "rationale": "Version flip happens during CompleteInPlaceUpdate; OnOldMS Machines retain oldMsVersion.",
+      "confidence": "High"
+    },
+    {
+      "name": "LLM_NoInProgressOnOldMs",
+      "quint_body": "MACHINES.forall(m =>\n  machinePhase.get(m) == OnOldMS implies (not(machineInProgress.get(m)) and not(infraInProgress.get(m)) and not(bootstrapInProgress.get(m))))",
+      "rationale": "Cleanup clears the trio before returning to OnOldMS; no transition adds it from OnOldMS.",
+      "confidence": "High"
+    }
+  ]
+}

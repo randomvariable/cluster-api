@@ -1351,7 +1351,62 @@ module ClusterE2E {
     AfterClusterUpgradeAtTarget,
   }
 
-  val AllSafetyInvariants = SafetyInvariants
+  // ===============================================================
+  // LLM-discovered invariant candidates (issue #10)
+  // ===============================================================
+  // Candidate invariants surfaced by an offline pass with the
+  // hack/tools/llm-invariant-discovery.py tool. Every entry below
+  // was added to the spec, then verified with a random walk
+  // (300 traces × 60 steps via `quint run --invariant=<name>`)
+  // BEFORE being included in AllSafetyInvariants. Promoted entries
+  // are listed in formal/llm-invariants.md alongside their
+  // verification commands and confidence ratings.
+
+  // L1: A modelled CP-id Machine, once created, has role = ControlPlane.
+  // CP_MACHINES is the modelling partition; the spec never flips a
+  // CP id to a worker role.
+  val CpRoleAssignmentStable =
+    CP_MACHINES.forall(m =>
+      machineCreated.get(m) implies machineRole.get(m) == ControlPlane)
+
+  // L2: A modelled worker-id Machine, once created, has role = Worker.
+  val WorkerRoleAssignmentStable =
+    WORKER_MACHINES.forall(m =>
+      machineCreated.get(m) implies machineRole.get(m) == Worker)
+
+  // L4: infraProvisioned = true is only set by the Cluster
+  // controller after observing InfraCluster.status.ready=true. The
+  // model action ClusterControllerObservesInfraReady refines that
+  // step; its precondition includes infraClusterReady.
+  val InfraProvisionedRequiresInfraClusterReady =
+    infraProvisioned implies infraClusterReady
+
+  // L5: ControlPlaneEndpoint is set by the Cluster controller from
+  // InfraCluster.status.controlPlaneEndpoint. The endpoint cannot
+  // leak into the Cluster spec ahead of InfraCluster signalling
+  // readiness.
+  val EndpointSetRequiresInfraClusterReady =
+    controlPlaneEndpointSet implies infraClusterReady
+
+  // L6: Once the cluster has reached Stable, no upgrade-step is
+  // mid-flight. The Topology controller only enters Upgrading after
+  // bumping topologyVersion; Stable is reachable only after the
+  // step-phase has cycled back to StepIdle.
+  val StableImpliesStepIdle =
+    clusterPhase == Stable implies stepPhase == StepIdle
+
+  val LLMCandidateInvariants = all {
+    CpRoleAssignmentStable,
+    WorkerRoleAssignmentStable,
+    InfraProvisionedRequiresInfraClusterReady,
+    EndpointSetRequiresInfraClusterReady,
+    StableImpliesStepIdle,
+  }
+
+  val AllSafetyInvariants = all {
+    SafetyInvariants,
+    LLMCandidateInvariants,
+  }
 
   // ===============================================================
   // Demonstration runs
