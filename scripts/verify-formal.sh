@@ -137,8 +137,8 @@ run_go() {
     skip "go not in PATH"
     return 0
   fi
-  ( cd "${REPO_ROOT}" && go build ./internal/trace/... )
-  ( cd "${REPO_ROOT}" && go test  ./internal/trace/... )
+  ( cd "${REPO_ROOT}" && go build ./internal/trace/... ./internal/chaos/... ./internal/refinement/... )
+  ( cd "${REPO_ROOT}" && go test  ./internal/trace/... ./internal/chaos/... ./internal/refinement/... )
   # The trace-validator command shares its directory name with
   # the binary it produces, so `go build ./trace-validator/...`
   # collides with the source directory. Use `go vet` for type

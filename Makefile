@@ -1006,9 +1006,22 @@ test-e2e: $(GINKGO) generate-e2e-templates ## Run the end-to-end tests
 		--e2e.skip-resource-cleanup=$(SKIP_RESOURCE_CLEANUP) \
 		--e2e.use-existing-cluster=$(USE_EXISTING_CLUSTER)
 
+.PHONY: verify-refinement
+verify-refinement: ## Run abstraction-mapping refinement tests (issue #13 Phase 1)
+	go test -count=1 ./internal/refinement/...
+	@# Coverage summary against formal/abstraction-mapping.md.
+	@total=$$(grep -cE '^\| [A-Z][A-Za-z]+\s+\| [A-Z][A-Za-z_]+\s+\|' formal/abstraction-mapping.md 2>/dev/null || echo 0); \
+	  covered=$$(grep -REhoE '^\s*Action: "[A-Za-z_]+"' internal/refinement/*_test.go | sort -u | wc -l | tr -d ' '); \
+	  if [ "$$total" -gt 0 ]; then \
+	    pct=$$(( covered * 100 / total )); \
+	    echo "==> Refinement coverage: $$covered / $$total actions covered ($$pct%)"; \
+	  else \
+	    echo "==> Refinement coverage: $$covered actions covered (mapping count unknown)"; \
+	  fi
+
 .PHONY: test-race
 test-race: ## Run the trace + chaos packages under -race (issue #12)
-	go test -race -count=1 ./internal/trace/... ./internal/chaos/...
+	go test -race -count=1 ./internal/trace/... ./internal/chaos/... ./internal/refinement/...
 
 .PHONY: test-race-chaos
 test-race-chaos: ## Like test-race but with a fixed CHAOS_SEED for reproducible failures
