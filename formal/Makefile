@@ -93,6 +93,7 @@ SKIPUPGRADE   := $(SPECS_DIR)/SkipVersionUpgrade.qnt
 ROLLBACKSURGE := $(SPECS_DIR)/RollbackSurgeRace.qnt
 BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
 SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
+MSGTRUNC      := $(SPECS_DIR)/ConditionMessageTruncation.qnt
 CMREPLAY      := $(SPECS_DIR)/ControllerManagerReplay.qnt
 CMSPLITBRAIN  := $(SPECS_DIR)/ControllerLeaderSplitBrain.qnt
 MPSCALECONFLICT := $(SPECS_DIR)/MachinePoolScaleConflict.qnt
@@ -1995,6 +1996,43 @@ verify-sa-token-rotation-apalache:  ## Apalache stale-token auth failure counter
 
 .PHONY: verify-sa-token-rotation
 verify-sa-token-rotation: verify-sa-token-rotation-happy verify-sa-token-rotation-counterexample verify-sa-token-rotation-random verify-sa-token-rotation-apalache  ## Full ServiceAccount token rotation / auth retry suite
+
+.PHONY: verify-msg-truncation-happy
+verify-msg-truncation-happy:  ## Drive tail-preserving truncation path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConditionMessageTruncation --init=tailPreservedRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(MSGTRUNC)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConditionMessageTruncation --init=tailPreservedRun --step=step \
+	             --invariant=RootCauseSurvivesTruncation --max-steps=0 \
+	             $(MSGTRUNC)
+
+.PHONY: verify-msg-truncation-counterexample
+verify-msg-truncation-counterexample:  ## Drive tail-dropped truncation without companion event
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ConditionMessageTruncation --init=tailDroppedRun --step=step \
+	              --invariant=RootCauseSurvivesTruncation --max-steps=0 \
+	              $(MSGTRUNC)
+
+.PHONY: verify-msg-truncation-random
+verify-msg-truncation-random:  ## Random-walk stable condition-message bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants StoredLengthBounded CompanionEventCarriesFullMessage; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ConditionMessageTruncation \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(MSGTRUNC) || exit 1; \
+	done
+
+.PHONY: verify-msg-truncation-apalache
+verify-msg-truncation-apalache:  ## Apalache tail-loss counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ConditionMessageTruncation --init=tailDroppedInit \
+	                  --step=stepApalache --invariant=RootCauseSurvivesTruncation \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(MSGTRUNC)
+
+.PHONY: verify-msg-truncation
+verify-msg-truncation: verify-msg-truncation-happy verify-msg-truncation-counterexample verify-msg-truncation-random verify-msg-truncation-apalache  ## Full condition-message truncation suite
 
 .PHONY: verify-machinepool-scale-happy
 verify-machinepool-scale-happy:  ## Drive arbitrated MachinePool scale ownership path

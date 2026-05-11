@@ -618,6 +618,20 @@ triggered a refresh-aware retry.
 | ServiceAccountTokenRotation | `RetryOn401WithRefreshedToken` / `refreshAfter401Run` | same | Show the intended regime where a stale token causes a 401 and reconcile retries with a refreshed token. |
 | ServiceAccountTokenRotation | `NoSilentReconcileFailure` / `staleTokenFailureRun` | same | Express the issue's counterexample target: a stale token yields a 401 and reconcile fails without a rotation-aware retry. |
 
+### ConditionMessageTruncation.qnt
+
+Standalone condition-message truncation model for issue #72. This spec
+keeps only the full message length, stored message length, whether the
+root cause lives in the tail, whether the stored condition still carries
+that root cause, and whether a companion event preserved the full text.
+
+| Spec | Action / invariant | Go / API reference | Purpose |
+| ---- | ------------------ | ------------------ | ------- |
+| ConditionMessageTruncation | `EmitLongCondition` | `internal/controllers/machine/drain/drain.go`; `internal/controllers/topology/cluster/conditions.go:195-276` | Ground the real long condition-message builders that accumulate multi-clause status details. |
+| ConditionMessageTruncation | `TruncateKeepingTail` / `TruncateDroppingTail` | `api/bootstrap/kubeadm/v1beta1/kubeadm_types.go:411,418,782`; `api/core/v1beta2/clusterclass_types.go:394,410,706,879,1247,1303` | Ground the concrete 1024-byte validation surfaces where message-bearing fields can be truncated or rejected. |
+| ConditionMessageTruncation | `RootCauseSurvivesTruncation` / `tailDroppedRun` | same plus `internal/controllers/machine/drain/drain_test.go:1786-1815` | Express the issue's counterexample target: keeping only the prefix silently drops the root-cause-bearing tail. |
+| ConditionMessageTruncation | `EmitCompanionEvent` | same | Capture the alternative safe regime where the condition is shortened but the full diagnostic survives in a companion event. |
+
 ### MtuFragmentation.qnt
 
 Standalone MTU/fragmentation model for issue #50. This spec keeps one

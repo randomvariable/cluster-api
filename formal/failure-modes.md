@@ -3274,6 +3274,41 @@ Apalache reaches the same `NoSilentReconcileFailure` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-108 — Condition message truncation silently drops the root-cause-bearing tail
+
+**Provenance.** **Modelling** — issue #72 standalone truncation slice
+(`ConditionMessageTruncation.qnt`). The model is grounded in the real
+long condition-message builders and the concrete `MaxLength=1024`
+validation surfaces on several older message-bearing fields.
+
+**Trigger.** A long wrapped error chain exceeds the 1024-byte storage
+limit, the implementation keeps only the prefix of the message, and the
+root-cause-bearing tail is dropped without any companion event carrying
+the full text.
+
+**Init / scenarios.** `tailPreservedRun` shows the intended regime:
+either truncation keeps the tail or another surface can still preserve
+the root cause, so `RootCauseSurvivesTruncation` holds. `tailDroppedRun`
+takes the bad path where the stored message is shortened to 1024 bytes,
+the root cause no longer survives in the stored condition, and no
+companion event exists, violating `RootCauseSurvivesTruncation`.
+
+**LSP grounding.**
+
+| Go / API entry point | File | Line |
+|---|---|---|
+| Long drain condition message tests | `internal/controllers/machine/drain/drain_test.go` | 1786-1815, 1963-1995 |
+| Topology upgrade condition message builder | `internal/controllers/topology/cluster/conditions.go` | 195-276 |
+| Example 1024-byte schema cap | `api/bootstrap/kubeadm/v1beta1/kubeadm_types.go` | 411, 418, 782 |
+| Example 1024-byte schema cap | `api/core/v1beta2/clusterclass_types.go` | 394, 410, 706, 879, 1247, 1303 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the tail-loss branch via `tailDroppedRun`, and Apalache
+reaches the same `RootCauseSurvivesTruncation` violation from
+`tailDroppedInit` within depth 4 (`make verify-msg-truncation-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-90 — MTU drift silently fragments packets and stalls snapshot transfer
 
 **Provenance.** **Modelling** — issue #50 standalone MTU / fragmentation
@@ -3731,6 +3766,7 @@ reason that the operator can read.
 | FM-87 | MemPressure evicts a mis-priority critical static pod | MODELLING | Correct kubeadm output keeps static pods priority-protected | Logged as deliberate counterexample candidate on `CriticalStaticPodsImmuneFromEviction` in `specs/StaticPodMemPressure.qnt`; Apalache reaches the mis-priority eviction state within depth 4 |
 | FM-88 | Static-pod hash collision or stale kubelet reload preserves the wrong intent | MODELLING | Distinct intents hash differently and kubelet reload catches up in the safe regime | Logged as deliberate counterexample candidate on `NoHashCollisionAcrossDistinctIntents` / `ReloadEventuallyConverges` in `specs/StaticPodHashReloadRace.qnt`; Apalache reaches the collision state within depth 4 |
 | FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
+| FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |

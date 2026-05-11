@@ -1742,6 +1742,39 @@ echo y | quint verify --main=ServiceAccountTokenRotation --init=expiredTokenInit
 
 Or, from `formal/`: `make verify-sa-token-rotation`.
 
+### Condition message truncation silently drops root-cause diagnostics (issue #72)
+
+```sh
+# Tail-preserving truncation keeps the root cause.
+quint run --main=ConditionMessageTruncation --init=tailPreservedRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ConditionMessageTruncation.qnt
+
+quint run --main=ConditionMessageTruncation --init=tailPreservedRun --step=step \
+          --invariant=RootCauseSurvivesTruncation --max-steps=0 \
+          formal/specs/ConditionMessageTruncation.qnt
+
+# Explicit tail-dropped truncation counterexample.
+quint run --main=ConditionMessageTruncation --init=tailDroppedRun --step=step \
+          --invariant=RootCauseSurvivesTruncation --max-steps=0 \
+          formal/specs/ConditionMessageTruncation.qnt
+
+# Random-walk stable truncation bookkeeping.
+for inv in StableSafetyInvariants StoredLengthBounded CompanionEventCarriesFullMessage; do
+  quint run --main=ConditionMessageTruncation --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ConditionMessageTruncation.qnt
+done
+
+# Backend verdict: tail-loss reachable within depth 4.
+echo y | quint verify --main=ConditionMessageTruncation --init=tailDroppedInit --step=stepApalache \
+                      --invariant=RootCauseSurvivesTruncation \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ConditionMessageTruncation.qnt
+```
+
+Or, from `formal/`: `make verify-msg-truncation`.
+
 ### MTU drift / silent packet fragmentation stalls etcd snapshot transfer (issue #50)
 
 ```sh
