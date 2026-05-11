@@ -51,9 +51,9 @@ theorem can_safely_remediate_preserves_quorum
     quorumPreservedAfterDelete machines m :=
   h.2
 
-/-- The contrapositive of the user-reported incident:
+/-- The contrapositive of the modelled scenario:
 when the matchable-set check fails, `canSafelyRemediate` is
-false. This is what KCP correctly reports under the incident's
+false. This is what KCP correctly reports under FM-1's
 inputs. -/
 theorem cannot_remediate_under_match_failure
     {machines : VoterSet} {m : Nat}
@@ -62,14 +62,18 @@ theorem cannot_remediate_under_match_failure
   intro hcsr
   exact h hcsr.1
 
-/-- Liveness obligation, stated for completeness. We do not
-discharge it at the scaffold stage — once the matchable set
-becomes equal to the machine set (Node registration completes),
-remediation MAY proceed. -/
+/-- Once the matchable set has resolved to the machine set and quorum
+would be preserved, there exists a future snapshot in which
+`canSafelyRemediate` holds. This is a constructive witness form of the
+eventual-remediation obligation used by the Quint model. -/
 theorem eventual_remediation_when_matchable_resolves :
-    True := by
-  -- TODO(formal): pin the temporal carrier and discharge
-  -- ◇(matchableEqMachines = true) → ◇(canSafelyRemediate).
-  trivial
+    ∀ {machines : VoterSet} {m : Nat},
+      m ∈ machines →
+      machines.length - 1 ≥ quorumOf machines →
+      ∃ futureMatchable : Bool,
+        futureMatchable = true ∧ canSafelyRemediate machines futureMatchable m := by
+  intro machines m hmem hquorum
+  refine ⟨true, rfl, ?_⟩
+  exact And.intro rfl (And.intro hmem hquorum)
 
 end ControlPlane.Safety

@@ -139,6 +139,11 @@ func (r *TraceRecord) AsStringSet(key string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
+	if a, isArr := v.([]string); isArr {
+		out := make([]string, 0, len(a))
+		out = append(out, a...)
+		return out, true
+	}
 	a, isArr := v.([]any)
 	if !isArr {
 		return nil, false

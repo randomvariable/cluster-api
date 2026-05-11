@@ -1251,6 +1251,14 @@ module Topology {
     TopologyForwardProgressFair
     implies eventually(pendingHooks.size() == 0)
 
+  // L-T2 — under the same fairness scope, an upgrade should
+  // eventually return the cluster to Stable. This is intentionally
+  // stronger than LT1 and is retained as a likely fairness-gap
+  // candidate when HookBlock can recur forever.
+  temporal LT2_EventuallyStableAfterUpgrade =
+    TopologyForwardProgressFair
+    implies eventually(clusterPhase == Stable)
+
   // KNOWN LIMITATION: stronger eventual-progress properties
   // (e.g. `eventually(clusterPhase == Stable)`,
   // `always(eventually(clusterPhase != NotCreated))`,

@@ -1409,6 +1409,40 @@ module ClusterE2E {
   }
 
   // ===============================================================
+  // Liveness properties (issue #24 — Apalache temporal checks)
+  // ===============================================================
+
+  val allVars = (clusterPhase, topologyVersion, infraProvisioned,
+    controlPlaneEndpointSet, controlPlaneInitialised, stepPhase,
+    pendingHooks, beforeClusterCreateUnblocked, infraClusterReady,
+    machinePhase, machineRole, machineVersion, machineCreated,
+    machineInfraReady, machineBootstrapReady, machineNodeRef,
+    kcpReplicas, kcpInitialized, mdReplicas, mdEnabled,
+    cpDesiredVersion, nextUpgradeStepVersion, upgradeStrategy)
+
+  temporal BringUpFair =
+    strongFair(FireBeforeClusterCreate, allVars)
+    and strongFair(InfraClusterProvision, allVars)
+    and strongFair(ClusterControllerObservesInfraReady, allVars)
+    and strongFair(KcpInitializeControlPlane, allVars)
+    and strongFair(any { nondet m = CP_MACHINES.oneOf(); CpMachineMarkReady(m) }, allVars)
+    and strongFair(any { nondet m = CP_MACHINES.oneOf(); KcpScaleUpControlPlane(m) }, allVars)
+    and strongFair(KcpMarkInitialized, allVars)
+    and strongFair(ClusterControllerObservesCpInitialised, allVars)
+    and strongFair(any { nondet m = WORKER_MACHINES.oneOf(); MdCreateWorker(m) }, allVars)
+    and strongFair(any { nondet m = WORKER_MACHINES.oneOf(); WorkerMarkReady(m) }, allVars)
+
+  // CE1 — once bring-up is scheduled fairly, the endpoint is eventually set.
+  temporal CE1_EventuallyEndpointSet =
+    BringUpFair
+    implies eventually(controlPlaneEndpointSet)
+
+  // CE2 — the cluster eventually reaches a control-plane-initialised-or-better state.
+  temporal CE2_EventuallyControlPlaneInitialised =
+    BringUpFair
+    implies eventually(controlPlaneInitialised or clusterPhase == WorkersStarting or clusterPhase == Stable or clusterPhase == Upgrading)
+
+  // ===============================================================
   // Demonstration runs
   // ===============================================================
 

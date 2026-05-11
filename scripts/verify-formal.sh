@@ -146,6 +146,21 @@ run_go() {
   # linkage without writing artefacts.
   ( cd "${REPO_ROOT}/hack/tools" && go vet -tags tools ./trace-validator/... )
   ( cd "${REPO_ROOT}/hack/tools" && go build -tags tools -o /dev/null ./trace-validator )
+  ( cd "${REPO_ROOT}/hack/tools" && go vet -tags tools ./capd-log-to-trace/... )
+  ( cd "${REPO_ROOT}/hack/tools" && go build -tags tools -o /dev/null ./capd-log-to-trace )
+
+  if [ "${FORMAL_VERIFY_CAPD_DIFFERENTIAL:-0}" = "1" ]; then
+    step "Real-trace differential fixtures (optional)"
+    local validator
+    validator="$(mktemp)"
+    trap 'rm -f "$validator"' EXIT
+    ( cd "${REPO_ROOT}/hack/tools" && go build -tags tools -o "$validator" ./trace-validator )
+    for fixture in "${REPO_ROOT}"/internal/trace/testdata/capd_*.jsonl; do
+      [ -e "$fixture" ] || continue
+      "$validator" -format capdlog -differential "$fixture" >/dev/null
+    done
+    green "OK differential fixtures"
+  fi
   green "OK go"
 }
 

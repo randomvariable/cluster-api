@@ -12,6 +12,12 @@ emits one ITF JSON file per trace. Each ITF state carries the
 action the model chose, the non-deterministic parameters it
 picked, and the post-state of every variable.
 
+Real CAPD controller-manager logs can be lifted into the same
+`TraceRecord` JSONL shape with `hack/tools/capd-log-to-trace/`, or
+ fed straight into `trace-validator -format capdlog`. The same
+ checker set therefore covers both synthetic Quint traces and real
+ controller traces.
+
 `internal/trace/itf.go::LoadITF` parses these ITF files into
 `TraceRecord` slices the per-spec checkers consume. The
 `hack/tools/trace-validator/` binary runs every checker against
@@ -103,11 +109,15 @@ that scale (see `make verify-trace-replay-large`).
 
 ```
 internal/trace/
+├── capdlog.go                # CAPD structured-log -> TraceRecord translator
+├── capdlog_test.go           # fixture-based translator tests
 ├── itf.go                    # MBT-aware ITF loader + spec/param dispatch
 ├── itf_test.go               # round-trip + unwrap unit tests
 ├── testdata/
+│   ├── capd_*.jsonl          # canonical CAPD log fixtures
 │   └── etcd_membership.mbt.itf.json
 hack/tools/
+├── capd-log-to-trace/        # standalone CAPD log -> JSONL translator
 ├── trace-validator/          # one-trace CLI (also used by FM-2 e2e)
 └── trace-replay-sweep.sh     # N-trace × M-spec sweep
 formal/

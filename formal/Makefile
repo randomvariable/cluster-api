@@ -30,6 +30,8 @@ QUINT     ?= quint
 LEAN      ?= lake
 TLC       ?= tlc
 PYTHON    ?= python3
+MKDIR_P   ?= mkdir -p
+CP        ?= cp
 
 # typescript backend is needed for Lifecycle.qnt — the rust
 # evaluator hits a recursion limit on the per-action
@@ -41,6 +43,7 @@ QUINT_BACKEND ?= typescript
 #
 MAX_STEPS_TLC      ?= 8
 MAX_STEPS_APALACHE ?= 4
+TLC_SYMMETRY_DIR   ?= /tmp/opencode/tlc-symmetry
 
 #
 # Directories.
@@ -55,11 +58,47 @@ MSPREFLIGHT   := $(SPECS_DIR)/MachineSetPreflight.qnt
 TOPOLOGY      := $(SPECS_DIR)/Topology.qnt
 INPLACE       := $(SPECS_DIR)/InPlaceUpdate.qnt
 CRRUNTIME     := $(SPECS_DIR)/ControllerRuntime.qnt
+XCCYCLE       := $(SPECS_DIR)/CrossControllerCycle.qnt
+RELISTSTORM   := $(SPECS_DIR)/ReflectorRelistStorm.qnt
+STALESHUT     := $(SPECS_DIR)/StaleEnqueueShutdown.qnt
+WEBHOOKCHAIN  := $(SPECS_DIR)/WebhookOrdering.qnt
+WEBHOOKSELF   := $(SPECS_DIR)/WebhookSelfReference.qnt
+WEBCABUNDLE   := $(SPECS_DIR)/WebhookCABundleStaleness.qnt
+VAPTIMEOUT    := $(SPECS_DIR)/VAPTimeout.qnt
+DRYSIDEEFFECT := $(SPECS_DIR)/DryRunSideEffects.qnt
+ASYMPART      := $(SPECS_DIR)/AsymmetricPartition.qnt
+SNAPRESTORE   := $(SPECS_DIR)/SnapshotRestoreCompaction.qnt
+DEFRAGQUORUM  := $(SPECS_DIR)/DefragQuorumLoss.qnt
+ETCDBATCH     := $(SPECS_DIR)/EtcdMembershipBatch.qnt
+WALFAULTS     := $(SPECS_DIR)/EtcdWalFaults.qnt
+ETCD5FAIL     := $(SPECS_DIR)/EtcdFiveNodeFailure.qnt
+PLEGHANG      := $(SPECS_DIR)/KubeletPlegHang.qnt
+REGPULL       := $(SPECS_DIR)/RegistryPullBackoff.qnt
+KCPMHCDEL     := $(SPECS_DIR)/KcpMhcDeleteRace.qnt
+CNIVETH       := $(SPECS_DIR)/CniVethRace.qnt
+LBDRAIN       := $(SPECS_DIR)/LoadBalancerDrain.qnt
+NETPOLSTALL   := $(SPECS_DIR)/NetworkPolicyMidFlight.qnt
+CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
+STACPODMEM    := $(SPECS_DIR)/StaticPodMemPressure.qnt
+HASHRELOAD    := $(SPECS_DIR)/StaticPodHashReloadRace.qnt
+BOOTCSR       := $(SPECS_DIR)/BootstrapCsrLag.qnt
+MTUFRAG       := $(SPECS_DIR)/MtuFragmentation.qnt
 TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
+CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
+CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
 INPLACE_REFINED := $(SPECS_DIR)/InPlaceUpdateRefined.qnt
 MSPREFLIGHT_REFINED := $(SPECS_DIR)/MachineSetPreflightRefined.qnt
 E2E           := $(SPECS_DIR)/ClusterE2E.qnt
+E2E_REFINED   := $(SPECS_DIR)/ClusterE2ERefined.qnt
 WORKER_LIFE   := $(SPECS_DIR)/WorkerLifecycle.qnt
+MD_ROLLOUT    := $(SPECS_DIR)/MachineDeploymentRollout.qnt
+MD_ROLLOUT_REFINED := $(SPECS_DIR)/MachineDeploymentRolloutRefined.qnt
+CC_PATCHES    := $(SPECS_DIR)/ClusterClassPatches.qnt
+FINALIZERS    := $(SPECS_DIR)/Finalizers.qnt
+RUNTIMESDK    := $(SPECS_DIR)/RuntimeSDK.qnt
+PIVOT         := $(SPECS_DIR)/Pivot.qnt
+CONVERSIONWEBHOOK := $(SPECS_DIR)/ConversionWebhook.qnt
+KUBELETPKI    := $(SPECS_DIR)/KubeletPKI.qnt
 
 QUINT_FILES := $(wildcard $(SPECS_DIR)/*.qnt)
 TLA_FILES   := $(wildcard $(SPECS_DIR)/*.tla)
@@ -120,6 +159,41 @@ tlc:  ## Run TLC on every TLA+ module that has a .cfg
 	    $(TLC) -config $$cfg $$tla || exit 1; \
 	  fi; \
 	done
+
+.PHONY: tlc-symmetry-prepare
+tlc-symmetry-prepare:  ## Compile Quint specs into TLC symmetry scratch dir
+	@if ! command -v $(QUINT) >/dev/null 2>&1; then \
+	  echo "SKIP: quint not in PATH"; \
+	  exit 0; \
+	fi
+	@$(MKDIR_P) $(TLC_SYMMETRY_DIR)/Lifecycle $(TLC_SYMMETRY_DIR)/EtcdMembership $(TLC_SYMMETRY_DIR)/ClusterE2E
+	@$(QUINT) compile $(LIFECYCLE) --target tlaplus > $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla
+	@$(QUINT) compile $(SPECS_DIR)/EtcdMembership.qnt --target tlaplus > $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla
+	@$(QUINT) compile $(E2E) --target tlaplus > $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla
+	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/Lifecycle/
+	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/EtcdMembership/
+	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/ClusterE2E/
+
+.PHONY: verify-tlc-symmetry-lifecycle
+verify-tlc-symmetry-lifecycle: tlc-symmetry-prepare  ## TLC symmetry run for Lifecycle
+	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla"); t = p.read_text(); marker = "\n============================================================================="; p.write_text(t.replace(marker, "\nSymmetry == Permutations(MACHINES)" + marker, 1))'
+	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY Symmetry\nINVARIANTS\n    AllSafetyInvariants\n' > $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.cfg
+	@$(TLC) -config $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.cfg $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla
+
+.PHONY: verify-tlc-symmetry-etcd
+verify-tlc-symmetry-etcd: tlc-symmetry-prepare  ## TLC symmetry run for EtcdMembership
+	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla"); t = p.read_text(); marker = "\n============================================================================="; p.write_text(t.replace(marker, "\nSymmetry == Permutations(MEMBERS)" + marker, 1))'
+	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY Symmetry\nINVARIANTS\n    AllInvariants\n' > $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.cfg
+	@$(TLC) -config $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.cfg $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla
+
+.PHONY: verify-tlc-symmetry-clustere2e
+verify-tlc-symmetry-clustere2e: tlc-symmetry-prepare  ## TLC symmetry run for ClusterE2E
+	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla"); t = p.read_text(); marker = "\n============================================================================="; sym = "\nCpWorkerSymmetry == { [id \\in ALL_MACHINES |-> IF id \\in CP_MACHINES THEN cp[id] ELSE wk[id]] : cp \\in Permutations(CP_MACHINES), wk \\in Permutations(WORKER_MACHINES) }"; p.write_text(t.replace(marker, sym + marker, 1))'
+	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY CpWorkerSymmetry\nINVARIANTS\n    AllSafetyInvariants\n' > $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.cfg
+	@$(TLC) -config $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.cfg $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla
+
+.PHONY: verify-tlc-symmetry
+verify-tlc-symmetry: verify-tlc-symmetry-lifecycle verify-tlc-symmetry-etcd verify-tlc-symmetry-clustere2e  ## TLC symmetry runs for Lifecycle, EtcdMembership, ClusterE2E
 
 .PHONY: drift
 drift:  ## Check abstraction-mapping rows resolve
@@ -518,8 +592,1041 @@ verify-cr-random:  ## Random-walk every controller-runtime invariant (500x60)
 	               $(CRRUNTIME) || exit 1; \
 	done
 
+.PHONY: verify-cr-faultstorm
+verify-cr-faultstorm:  ## Fault-storm bounded progress + overload counterexample (issue #30)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerRuntime --init=boundedFaultStormRun --step=step \
+	             --invariant=FM69_BoundedFaultProgress --max-steps=0 \
+	             $(CRRUNTIME)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ControllerRuntime --init=faultStormOverloadRun --step=step \
+	              --invariant=FM70_NoLegitReadyBacklog --max-steps=0 \
+	              $(CRRUNTIME)
+
+.PHONY: verify-cr-faultstorm-apalache
+verify-cr-faultstorm-apalache:  ## Apalache counterexample for FM-70 at depth 4
+	-@echo y | $(QUINT) verify --main=ControllerRuntime --init=init \
+	                  --step=step --invariant=FM70_NoLegitReadyBacklog \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CRRUNTIME)
+
 .PHONY: verify-cr
-verify-cr: verify-cr-happy verify-cr-multiworker verify-cr-dedup verify-cr-requeue verify-cr-terminal verify-cr-leader-loss verify-cr-random  ## Full controller-runtime substrate suite
+verify-cr: verify-cr-happy verify-cr-multiworker verify-cr-dedup verify-cr-requeue verify-cr-terminal verify-cr-leader-loss verify-cr-random verify-cr-faultstorm  ## Full controller-runtime substrate suite
+
+.PHONY: verify-cross-controller-cycle-happy
+verify-cross-controller-cycle-happy:  ## Drive cache-stabilised cross-controller cycle run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CrossControllerCycle --init=stabilisedCycleRun --step=step \
+	             --invariant=ScenarioSafetyInvariants --max-steps=0 \
+	             $(XCCYCLE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CrossControllerCycle --init=stabilisedCycleRun --step=step \
+	             --invariant=CacheStableAllowsCompletion --max-steps=0 \
+	             $(XCCYCLE)
+
+.PHONY: verify-cross-controller-cycle-counterexample
+verify-cross-controller-cycle-counterexample:  ## Drive livelock counterexample run
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=CrossControllerCycle --init=livelockCycleRun --step=step \
+	              --invariant=NoCyclicLivelock --max-steps=0 \
+	              $(XCCYCLE)
+
+.PHONY: verify-cross-controller-cycle-random
+verify-cross-controller-cycle-random:  ## Random-walk stable cross-controller-cycle invariants (300x40)
+	@for inv in ScenarioSafetyInvariants CrossEnqueuePreservesTargetQueue; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=CrossControllerCycle \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(XCCYCLE) || exit 1; \
+	done
+
+.PHONY: verify-cross-controller-cycle-apalache
+verify-cross-controller-cycle-apalache:  ## Apalache counterexample for cyclic livelock at depth 4
+	-@echo y | $(QUINT) verify --main=CrossControllerCycle --init=init \
+	                  --step=step --invariant=NoCyclicLivelock \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(XCCYCLE)
+
+.PHONY: verify-cross-controller-cycle
+verify-cross-controller-cycle: verify-cross-controller-cycle-happy verify-cross-controller-cycle-counterexample verify-cross-controller-cycle-random verify-cross-controller-cycle-apalache  ## Full cross-controller cyclic enqueue suite
+
+.PHONY: verify-reliststorm-happy
+verify-reliststorm-happy:  ## Drive idempotent relist-storm run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ReflectorRelistStorm --init=idempotentRelistStormRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(RELISTSTORM)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ReflectorRelistStorm --init=idempotentRelistStormRun --step=step \
+	             --invariant=NoDuplicateMachineLeak --max-steps=0 \
+	             $(RELISTSTORM)
+
+.PHONY: verify-reliststorm-counterexample
+verify-reliststorm-counterexample:  ## Drive duplicate-create relist-storm counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ReflectorRelistStorm --init=duplicateCreateRelistStormRun --step=step \
+	              --invariant=NoDuplicateMachineLeak --max-steps=0 \
+	              $(RELISTSTORM)
+
+.PHONY: verify-reliststorm-random
+verify-reliststorm-random:  ## Random-walk stable relist-storm invariants (300x40)
+	@for inv in StableSafetyInvariants WatchStateConsistent DuplicateDeliveryRequiresRelist; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ReflectorRelistStorm \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(RELISTSTORM) || exit 1; \
+	done
+
+.PHONY: verify-reliststorm-apalache
+verify-reliststorm-apalache:  ## Apalache duplicate-create counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ReflectorRelistStorm --init=init \
+	                  --step=step --invariant=NoDuplicateMachineLeak \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(RELISTSTORM)
+
+.PHONY: verify-reliststorm
+verify-reliststorm: verify-reliststorm-happy verify-reliststorm-counterexample verify-reliststorm-random verify-reliststorm-apalache  ## Full reflector relist-storm suite
+
+.PHONY: verify-stale-shutdown-happy
+verify-stale-shutdown-happy:  ## Drive deleted-object + shutdown-drain happy runs
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaleEnqueueShutdown --init=deletedObjectHandledRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(STALESHUT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaleEnqueueShutdown --init=shutdownDrainRun --step=step \
+	             --invariant=ShutdownDrainCompletes --max-steps=0 \
+	             $(STALESHUT)
+
+.PHONY: verify-stale-shutdown-counterexample
+verify-stale-shutdown-counterexample:  ## Drive nil-read / finalizer-leak counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaleEnqueueShutdown --init=nilReadAfterDeleteRun --step=step \
+	              --invariant=NoNilReadAfterDelete --max-steps=0 \
+	              $(STALESHUT)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaleEnqueueShutdown --init=orphanedFinalizerRun --step=step \
+	              --invariant=NoOrphanedFinalizer --max-steps=0 \
+	              $(STALESHUT)
+
+.PHONY: verify-stale-shutdown-random
+verify-stale-shutdown-random:  ## Random-walk stable stale-enqueue/shutdown invariants (300x40)
+	@for inv in StableSafetyInvariants ShutdownImpliesNotAccepting NilReadRequiresMissingObject; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=StaleEnqueueShutdown \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(STALESHUT) || exit 1; \
+	done
+
+.PHONY: verify-stale-shutdown-apalache
+verify-stale-shutdown-apalache:  ## Apalache nil-read counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=StaleEnqueueShutdown --init=init \
+	                  --step=step --invariant=NoNilReadAfterDelete \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(STALESHUT)
+
+.PHONY: verify-stale-shutdown
+verify-stale-shutdown: verify-stale-shutdown-happy verify-stale-shutdown-counterexample verify-stale-shutdown-random verify-stale-shutdown-apalache  ## Full stale-enqueue / shutdown-drain suite
+
+.PHONY: verify-webhook-ordering-happy
+verify-webhook-ordering-happy:  ## Drive converging mutating/validating chain run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WebhookOrdering --init=convergingReinvocationRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(WEBHOOKCHAIN)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WebhookOrdering --init=convergingReinvocationRun --step=step \
+	             --invariant=ReinvocationConverges --max-steps=0 \
+	             $(WEBHOOKCHAIN)
+
+.PHONY: verify-webhook-ordering-counterexample
+verify-webhook-ordering-counterexample:  ## Drive stale-validator-read counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=WebhookOrdering --init=staleValidatorReadRun --step=step \
+	              --invariant=ObservedValueIsFinal --max-steps=0 \
+	              $(WEBHOOKCHAIN)
+
+.PHONY: verify-webhook-ordering-random
+verify-webhook-ordering-random:  ## Random-walk stable webhook-ordering invariants (300x40)
+	@for inv in StableSafetyInvariants MutatorOnlyMovesTowardDefault; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=WebhookOrdering \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(WEBHOOKCHAIN) || exit 1; \
+	done
+
+.PHONY: verify-webhook-ordering-apalache
+verify-webhook-ordering-apalache:  ## Apalache stale-validator counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=WebhookOrdering --init=init \
+	                  --step=step --invariant=ObservedValueIsFinal \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(WEBHOOKCHAIN)
+
+.PHONY: verify-webhook-ordering
+verify-webhook-ordering: verify-webhook-ordering-happy verify-webhook-ordering-counterexample verify-webhook-ordering-random verify-webhook-ordering-apalache  ## Full mutating/validating ordering suite
+
+.PHONY: verify-webhook-selfref-happy
+verify-webhook-selfref-happy:  ## Drive safe webhook-gap fallback run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WebhookSelfReference --init=safeFallbackRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(WEBHOOKSELF)
+
+.PHONY: verify-webhook-selfref-counterexample
+verify-webhook-selfref-counterexample:  ## Drive fail-closed deadlock + ignore-window counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=WebhookSelfReference --init=failClosedDeadlockRun --step=step \
+	              --invariant=UpgradeProgressDespiteWebhookGap --max-steps=0 \
+	              $(WEBHOOKSELF)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=WebhookSelfReference --init=ignoreWindowInvalidMutationRun --step=step \
+	              --invariant=NoInvalidMutationDuringIgnoreWindow --max-steps=0 \
+	              $(WEBHOOKSELF)
+
+.PHONY: verify-webhook-selfref-random
+verify-webhook-selfref-random:  ## Random-walk stable self-referential webhook invariants (300x40)
+	@for inv in StableSafetyInvariants IgnoreWindowRequiresIgnorePolicy; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=WebhookSelfReference \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(WEBHOOKSELF) || exit 1; \
+	done
+
+.PHONY: verify-webhook-selfref-apalache
+verify-webhook-selfref-apalache:  ## Apalache deadlock counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=WebhookSelfReference --init=init \
+	                  --step=stepApalache --invariant=UpgradeProgressDespiteWebhookGap \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(WEBHOOKSELF)
+
+.PHONY: verify-webhook-selfref
+verify-webhook-selfref: verify-webhook-selfref-happy verify-webhook-selfref-counterexample verify-webhook-selfref-random verify-webhook-selfref-apalache  ## Full self-referential webhook outage suite
+
+.PHONY: verify-webhook-cabundle-happy
+verify-webhook-cabundle-happy:  ## Drive cache-refresh recovery run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WebhookCABundleStaleness --init=refreshRecoveryRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(WEBCABUNDLE)
+
+.PHONY: verify-webhook-cabundle-counterexample
+verify-webhook-cabundle-counterexample:  ## Drive stale-trust outage counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=WebhookCABundleStaleness --init=staleTrustOutageRun --step=step \
+	              --invariant=CurrentlyTrusted --max-steps=0 \
+	              $(WEBCABUNDLE)
+
+.PHONY: verify-webhook-cabundle-random
+verify-webhook-cabundle-random:  ## Random-walk stable CABundle invariants (300x40)
+	@for inv in StableSafetyInvariants CacheRefreshMonotonic; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=WebhookCABundleStaleness \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(WEBCABUNDLE) || exit 1; \
+	done
+
+.PHONY: verify-webhook-cabundle-apalache
+verify-webhook-cabundle-apalache:  ## Apalache stale-trust counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=WebhookCABundleStaleness --init=init \
+	                  --step=step --invariant=CurrentlyTrusted \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(WEBCABUNDLE)
+
+.PHONY: verify-webhook-cabundle
+verify-webhook-cabundle: verify-webhook-cabundle-happy verify-webhook-cabundle-counterexample verify-webhook-cabundle-random verify-webhook-cabundle-apalache  ## Full CABundle staleness suite
+
+.PHONY: verify-vap-timeout-happy
+verify-vap-timeout-happy:  ## Drive fail-closed timeout and later heal run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=VAPTimeout --init=failWindowHealsRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(VAPTIMEOUT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=VAPTimeout --init=failWindowHealsRun --step=step \
+	             --invariant=FailWindowEventuallyHeals --max-steps=0 \
+	             $(VAPTIMEOUT)
+
+.PHONY: verify-vap-timeout-counterexample
+verify-vap-timeout-counterexample:  ## Drive ignore-window invalid admission counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=VAPTimeout --init=ignoreWindowInvalidAdmissionRun --step=step \
+	              --invariant=IgnoreWindowDoesNotMutateInvariants --max-steps=0 \
+	              $(VAPTIMEOUT)
+
+.PHONY: verify-vap-timeout-random
+verify-vap-timeout-random:  ## Random-walk stable VAP-timeout invariants (300x40)
+	@for inv in StableSafetyInvariants InvalidAdmissionRequiresIgnore TimeoutRequiresRemoteParam; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=VAPTimeout \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(VAPTIMEOUT) || exit 1; \
+	done
+
+.PHONY: verify-vap-timeout-apalache
+verify-vap-timeout-apalache:  ## Apalache ignore-window counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=VAPTimeout --init=ignoreCounterexampleInit \
+	                  --step=stepApalache --invariant=IgnoreWindowDoesNotMutateInvariants \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(VAPTIMEOUT)
+
+.PHONY: verify-vap-timeout
+verify-vap-timeout: verify-vap-timeout-happy verify-vap-timeout-counterexample verify-vap-timeout-random verify-vap-timeout-apalache  ## Full VAP timeout / failurePolicy suite
+
+.PHONY: verify-dryrun-sideeffects-happy
+verify-dryrun-sideeffects-happy:  ## Drive compliant dry-run probe path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=DryRunSideEffects --init=compliantDryRunProbeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(DRYSIDEEFFECT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=DryRunSideEffects --init=compliantDryRunProbeRun --step=step \
+	             --invariant=DryRunHasNoSideEffects --max-steps=0 \
+	             $(DRYSIDEEFFECT)
+
+.PHONY: verify-dryrun-sideeffects-counterexample
+verify-dryrun-sideeffects-counterexample:  ## Drive dry-run external side effect counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=DryRunSideEffects --init=violatingDryRunProbeRun --step=step \
+	              --invariant=DryRunHasNoSideEffects --max-steps=0 \
+	              $(DRYSIDEEFFECT)
+
+.PHONY: verify-dryrun-sideeffects-random
+verify-dryrun-sideeffects-random:  ## Random-walk stable dry-run side-effect invariants (300x40)
+	@for inv in StableSafetyInvariants TriggeredSideEffectsRequireWebhookFire DryRunRequestsTracked; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=DryRunSideEffects \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(DRYSIDEEFFECT) || exit 1; \
+	done
+
+.PHONY: verify-dryrun-sideeffects-apalache
+verify-dryrun-sideeffects-apalache:  ## Apalache dry-run side-effect counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=DryRunSideEffects --init=violatingProbeInit \
+	                  --step=stepApalache --invariant=DryRunHasNoSideEffects \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(DRYSIDEEFFECT)
+
+.PHONY: verify-dryrun-sideeffects
+verify-dryrun-sideeffects: verify-dryrun-sideeffects-happy verify-dryrun-sideeffects-counterexample verify-dryrun-sideeffects-random verify-dryrun-sideeffects-apalache  ## Full dry-run side-effects suite
+
+.PHONY: verify-asymmetric-partition-happy
+verify-asymmetric-partition-happy:  ## Drive recovered asymmetric partition run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AsymmetricPartition --init=recoveredDirectionalPartitionRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ASYMPART)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AsymmetricPartition --init=recoveredDirectionalPartitionRun --step=step \
+	             --invariant=RecoveredToSingleLeader --max-steps=0 \
+	             $(ASYMPART)
+
+.PHONY: verify-asymmetric-partition-counterexample
+verify-asymmetric-partition-counterexample:  ## Drive dual-leader asymmetric partition counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=AsymmetricPartition --init=dualLeaderWindowRun --step=step \
+	              --invariant=NoSimultaneousLeaders --max-steps=0 \
+	              $(ASYMPART)
+
+.PHONY: verify-asymmetric-partition-random
+verify-asymmetric-partition-random:  ## Random-walk stable asymmetric-partition invariants (300x40)
+	@for inv in StableSafetyInvariants TermAdvanceRequiresElection NoStuckTermAdvance; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=AsymmetricPartition \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ASYMPART) || exit 1; \
+	done
+
+.PHONY: verify-asymmetric-partition-apalache
+verify-asymmetric-partition-apalache:  ## Apalache dual-leader counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=AsymmetricPartition --init=dualLeaderInit \
+	                  --step=stepApalache --invariant=NoSimultaneousLeaders \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ASYMPART)
+
+.PHONY: verify-asymmetric-partition
+verify-asymmetric-partition: verify-asymmetric-partition-happy verify-asymmetric-partition-counterexample verify-asymmetric-partition-random verify-asymmetric-partition-apalache  ## Full asymmetric partition suite
+
+.PHONY: verify-snapshot-restore-happy
+verify-snapshot-restore-happy:  ## Drive clean restore completion path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SnapshotRestoreCompaction --init=cleanRestoreRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(SNAPRESTORE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SnapshotRestoreCompaction --init=cleanRestoreRun --step=step \
+	             --invariant=MemberSetMatchesSnapshotPostRestore --max-steps=0 \
+	             $(SNAPRESTORE)
+
+.PHONY: verify-snapshot-restore-counterexample
+verify-snapshot-restore-counterexample:  ## Drive compaction-during-restore inconsistency counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=SnapshotRestoreCompaction --init=compactionRaceRun --step=step \
+	              --invariant=NoLogInconsistency --max-steps=0 \
+	              $(SNAPRESTORE)
+
+.PHONY: verify-snapshot-restore-random
+verify-snapshot-restore-random:  ## Random-walk stable restore/compaction invariants (300x40)
+	@for inv in StableSafetyInvariants RestoreFlagImpliesSnapshotPresent CompactionMonotone; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=SnapshotRestoreCompaction \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(SNAPRESTORE) || exit 1; \
+	done
+
+.PHONY: verify-snapshot-restore-apalache
+verify-snapshot-restore-apalache:  ## Apalache restore/compaction race counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=SnapshotRestoreCompaction --init=raceInit \
+	                  --step=stepApalache --invariant=NoLogInconsistency \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(SNAPRESTORE)
+
+.PHONY: verify-snapshot-restore
+verify-snapshot-restore: verify-snapshot-restore-happy verify-snapshot-restore-counterexample verify-snapshot-restore-random verify-snapshot-restore-apalache  ## Full snapshot-restore / compaction-race suite
+
+.PHONY: verify-defrag-quorum-happy
+verify-defrag-quorum-happy:  ## Drive single-defrag safe window
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=DefragQuorumLoss --init=serialDefragRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(DEFRAGQUORUM)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=DefragQuorumLoss --init=serialDefragRun --step=step \
+	             --invariant=NoQuorumLossUnderSingleMaintenanceFault --max-steps=0 \
+	             $(DEFRAGQUORUM)
+
+.PHONY: verify-defrag-quorum-counterexample
+verify-defrag-quorum-counterexample:  ## Drive defrag + second glitch counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=DefragQuorumLoss --init=overlapLossRun --step=step \
+	              --invariant=NoQuorumLossUnderSingleMaintenanceFault --max-steps=0 \
+	              $(DEFRAGQUORUM)
+
+.PHONY: verify-defrag-quorum-random
+verify-defrag-quorum-random:  ## Random-walk stable defrag/quorum invariants (300x40)
+	@for inv in StableSafetyInvariants SerialDefragOrdering DefragPauseMarksMember; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=DefragQuorumLoss \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(DEFRAGQUORUM) || exit 1; \
+	done
+
+.PHONY: verify-defrag-quorum-apalache
+verify-defrag-quorum-apalache:  ## Apalache quorum-loss counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=DefragQuorumLoss --init=overlapInit \
+	                  --step=stepApalache --invariant=NoQuorumLossUnderSingleMaintenanceFault \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(DEFRAGQUORUM)
+
+.PHONY: verify-defrag-quorum
+verify-defrag-quorum: verify-defrag-quorum-happy verify-defrag-quorum-counterexample verify-defrag-quorum-random verify-defrag-quorum-apalache  ## Full defrag-induced quorum loss suite
+
+.PHONY: verify-wal-faults-happy
+verify-wal-faults-happy:  ## Drive detectable-member-loss remediation path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdWalFaults --init=detectedFaultRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(WALFAULTS)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdWalFaults --init=detectedFaultRun --step=step \
+	             --invariant=KcpDetectsAndRemediates --max-steps=0 \
+	             $(WALFAULTS)
+
+.PHONY: verify-wal-faults-counterexample
+verify-wal-faults-counterexample:  ## Drive silent-member-loss counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdWalFaults --init=silentCorruptionRun --step=step \
+	              --invariant=NoSilentMemberLoss --max-steps=0 \
+	              $(WALFAULTS)
+
+.PHONY: verify-wal-faults-random
+verify-wal-faults-random:  ## Random-walk stable WAL/disk fault invariants (300x40)
+	@for inv in StableSafetyInvariants RemediationRequiresDetection; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EtcdWalFaults \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(WALFAULTS) || exit 1; \
+	done
+
+.PHONY: verify-wal-faults-apalache
+verify-wal-faults-apalache:  ## Apalache silent-member-loss counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EtcdWalFaults --init=silentInit \
+	                  --step=stepApalache --invariant=NoSilentMemberLoss \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(WALFAULTS)
+
+.PHONY: verify-wal-faults
+verify-wal-faults: verify-wal-faults-happy verify-wal-faults-counterexample verify-wal-faults-random verify-wal-faults-apalache  ## Full etcd WAL corruption / disk-full fault suite
+
+.PHONY: verify-etcd-batch-happy
+verify-etcd-batch-happy:  ## Drive serial add/promote/remove completion path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdMembershipBatch --init=serialMembershipRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ETCDBATCH)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdMembershipBatch --init=serialMembershipRun --step=step \
+	             --invariant=NoSameBatchAddRemove --max-steps=0 \
+	             $(ETCDBATCH)
+
+.PHONY: verify-etcd-batch-counterexample
+verify-etcd-batch-counterexample:  ## Drive add+remove-same-batch counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdMembershipBatch --init=sameBatchChurnRun --step=step \
+	              --invariant=NoSameBatchAddRemove --max-steps=0 \
+	              $(ETCDBATCH)
+
+.PHONY: verify-etcd-batch-random
+verify-etcd-batch-random:  ## Random-walk stable batch-membership invariants (300x40)
+	@for inv in StableSafetyInvariants BatchRemoveRequiresExistingMember PromoteRequiresLearner; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EtcdMembershipBatch \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ETCDBATCH) || exit 1; \
+	done
+
+.PHONY: verify-etcd-batch-apalache
+verify-etcd-batch-apalache:  ## Apalache add+remove batch counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EtcdMembershipBatch --init=sameBatchInit \
+	                  --step=stepApalache --invariant=NoSameBatchAddRemove \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ETCDBATCH)
+
+.PHONY: verify-etcd-batch
+verify-etcd-batch: verify-etcd-batch-happy verify-etcd-batch-counterexample verify-etcd-batch-random verify-etcd-batch-apalache  ## Full add+remove same-reconcile membership suite
+
+.PHONY: verify-etcd-5node-happy
+verify-etcd-5node-happy:  ## Drive serial remediation on 5-node 3-failure scenarios
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdFiveNodeFailure --init=sequentialRecoveryRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ETCD5FAIL)
+
+.PHONY: verify-etcd-5node-counterexample
+verify-etcd-5node-counterexample:  ## Drive 3-failure remediation-ordering counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdFiveNodeFailure --init=leaderFollowersLossRun --step=step \
+	              --invariant=NoDoublePromotionDuringRecovery --max-steps=0 \
+	              $(ETCD5FAIL)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdFiveNodeFailure --init=symmetricTripleLossRun --step=step \
+	              --invariant=RemediationBoundedPerScenario --max-steps=0 \
+	              $(ETCD5FAIL)
+
+.PHONY: verify-etcd-5node-random
+verify-etcd-5node-random:  ## Random-walk stable 5-node failure invariants (300x40)
+	@for inv in StableSafetyInvariants QuorumMathConsistent PromotionRequiresLearner; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EtcdFiveNodeFailure \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ETCD5FAIL) || exit 1; \
+	done
+
+.PHONY: verify-etcd-5node-apalache
+verify-etcd-5node-apalache:  ## Apalache 5-node triple-failure counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EtcdFiveNodeFailure --init=leaderFollowersInit \
+	                  --step=stepApalache --invariant=NoDoublePromotionDuringRecovery \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ETCD5FAIL)
+
+.PHONY: verify-etcd-5node
+verify-etcd-5node: verify-etcd-5node-happy verify-etcd-5node-counterexample verify-etcd-5node-random verify-etcd-5node-apalache  ## Full 5-node / 3-failure etcd recovery suite
+
+.PHONY: verify-pleg-hang-happy
+verify-pleg-hang-happy:  ## Drive transient PLEG hang that recovers before remediation
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=KubeletPlegHang --init=transientRecoveryRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(PLEGHANG)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=KubeletPlegHang --init=transientRecoveryRun --step=step \
+	             --invariant=RemediationAfterStableNotReady --max-steps=0 \
+	             $(PLEGHANG)
+
+.PHONY: verify-pleg-hang-counterexample
+verify-pleg-hang-counterexample:  ## Drive over-eager remediation after transient CRI slowdown
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=KubeletPlegHang --init=overEagerRemediationRun --step=step \
+	              --invariant=RemediationAfterStableNotReady --max-steps=0 \
+	              $(PLEGHANG)
+
+.PHONY: verify-pleg-hang-random
+verify-pleg-hang-random:  ## Random-walk stable PLEG/CRI bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants PlegThresholdRequiresSlowCri RecoveryClearsTransientNotReady; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=KubeletPlegHang \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(PLEGHANG) || exit 1; \
+	done
+
+.PHONY: verify-pleg-hang-apalache
+verify-pleg-hang-apalache:  ## Apalache transient-NotReady remediation counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=KubeletPlegHang --init=slowCriInit \
+	                  --step=stepApalache --invariant=RemediationAfterStableNotReady \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(PLEGHANG)
+
+.PHONY: verify-pleg-hang
+verify-pleg-hang: verify-pleg-hang-happy verify-pleg-hang-counterexample verify-pleg-hang-random verify-pleg-hang-apalache  ## Full slow-CRI / PLEG-hang remediation suite
+
+.PHONY: verify-registry-pull-happy
+verify-registry-pull-happy:  ## Drive throttled bootstrap that still succeeds before timeout
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=RegistryPullBackoff --init=boundedThrottleRun --step=stepHappy \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(REGPULL)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=RegistryPullBackoff --init=boundedThrottleRun --step=stepHappy \
+	             --invariant=NoFalseBootstrapFailure --max-steps=0 \
+	             $(REGPULL)
+
+.PHONY: verify-registry-pull-counterexample
+verify-registry-pull-counterexample:  ## Drive bootstrap timeout before legitimate pull-backoff clears
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=RegistryPullBackoff --init=timeoutBeforePullClearsRun --step=step \
+	              --invariant=NoFalseBootstrapFailure --max-steps=0 \
+	              $(REGPULL)
+
+.PHONY: verify-registry-pull-random
+verify-registry-pull-random:  ## Random-walk stable registry-pull invariants (300x40)
+	@for inv in StableSafetyInvariants BackoffMonotone; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=RegistryPullBackoff \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(REGPULL) || exit 1; \
+	done
+
+.PHONY: verify-registry-pull-apalache
+verify-registry-pull-apalache:  ## Apalache bootstrap-timeout counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=RegistryPullBackoff --init=timeoutInit \
+	                  --step=stepApalache --invariant=NoFalseBootstrapFailure \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(REGPULL)
+
+.PHONY: verify-registry-pull
+verify-registry-pull: verify-registry-pull-happy verify-registry-pull-counterexample verify-registry-pull-random verify-registry-pull-apalache  ## Full registry-throttle / bootstrap-timeout suite
+
+.PHONY: verify-kcp-mhc-delete-happy
+verify-kcp-mhc-delete-happy:  ## Drive single-authoritative-deleter path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=KcpMhcDeleteRace --init=authoritativeDeleteRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(KCPMHCDEL)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=KcpMhcDeleteRace --init=authoritativeDeleteRun --step=step \
+	             --invariant=NoReplacementCannibalisation --max-steps=0 \
+	             $(KCPMHCDEL)
+
+.PHONY: verify-kcp-mhc-delete-counterexample
+verify-kcp-mhc-delete-counterexample:  ## Drive concurrent delete / replacement cannibalisation counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=KcpMhcDeleteRace --init=concurrentDeleteRun --step=step \
+	              --invariant=NoDoubleDelete --max-steps=0 \
+	              $(KCPMHCDEL)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=KcpMhcDeleteRace --init=replacementCannibalisedRun --step=step \
+	              --invariant=NoReplacementCannibalisation --max-steps=0 \
+	              $(KCPMHCDEL)
+
+.PHONY: verify-kcp-mhc-delete-random
+verify-kcp-mhc-delete-random:  ## Random-walk stable delete-race invariants (300x40)
+	@for inv in StableSafetyInvariants ReplacementDeleteNeedsUnhealthyLabel MhcMarksNeedSelection; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=KcpMhcDeleteRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(KCPMHCDEL) || exit 1; \
+	done
+
+.PHONY: verify-kcp-mhc-delete-apalache
+verify-kcp-mhc-delete-apalache:  ## Apalache concurrent-delete counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=KcpMhcDeleteRace --init=doubleDeleteInit \
+	                  --step=stepApalache --invariant=NoDoubleDelete \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(KCPMHCDEL)
+
+.PHONY: verify-kcp-mhc-delete
+verify-kcp-mhc-delete: verify-kcp-mhc-delete-happy verify-kcp-mhc-delete-counterexample verify-kcp-mhc-delete-random verify-kcp-mhc-delete-apalache  ## Full KCP+MHC concurrent-delete race suite
+
+.PHONY: verify-cni-veth-happy
+verify-cni-veth-happy:  ## Drive CNI-ready path before probes fail
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CniVethRace --init=cniReadyBeforeProbeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CNIVETH)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CniVethRace --init=cniReadyBeforeProbeRun --step=step \
+	             --invariant=NoContainerStartBeforeCni --max-steps=0 \
+	             $(CNIVETH)
+
+.PHONY: verify-cni-veth-counterexample
+verify-cni-veth-counterexample:  ## Drive probe-loop before veth creation
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=CniVethRace --init=probeLoopBeforeVethRun --step=step \
+	              --invariant=NoContainerStartBeforeCni --max-steps=0 \
+	              $(CNIVETH)
+
+.PHONY: verify-cni-veth-random
+verify-cni-veth-random:  ## Random-walk stable CNI/veth bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants VethRequiresCni RestartLoopRequiresRepeatedProbeFailure; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=CniVethRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CNIVETH) || exit 1; \
+	done
+
+.PHONY: verify-cni-veth-apalache
+verify-cni-veth-apalache:  ## Apalache probe-loop counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=CniVethRace --init=probeLoopInit \
+	                  --step=stepApalache --invariant=NoContainerStartBeforeCni \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CNIVETH)
+
+.PHONY: verify-cni-veth
+verify-cni-veth: verify-cni-veth-happy verify-cni-veth-counterexample verify-cni-veth-random verify-cni-veth-apalache  ## Full CNI-veth race / probe-loop suite
+
+.PHONY: verify-lb-drain-happy
+verify-lb-drain-happy:  ## Drive drain-complete before apiserver kill
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=LoadBalancerDrain --init=drainBeforeKillRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(LBDRAIN)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=LoadBalancerDrain --init=drainBeforeKillRun --step=step \
+	             --invariant=KcpUpgradeAccountsForLbDrain --max-steps=0 \
+	             $(LBDRAIN)
+
+.PHONY: verify-lb-drain-counterexample
+verify-lb-drain-counterexample:  ## Drive apiserver kill before LB drain completes
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=LoadBalancerDrain --init=killBeforeDrainRun --step=step \
+	              --invariant=KcpUpgradeAccountsForLbDrain --max-steps=0 \
+	              $(LBDRAIN)
+
+.PHONY: verify-lb-drain-random
+verify-lb-drain-random:  ## Random-walk stable LB-drain bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants DrainProgressMonotone HungClientNeedsDeregisteredTarget; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=LoadBalancerDrain \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(LBDRAIN) || exit 1; \
+	done
+
+.PHONY: verify-lb-drain-apalache
+verify-lb-drain-apalache:  ## Apalache blackholed-connection counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=LoadBalancerDrain --init=killBeforeDrainInit \
+	                  --step=stepApalache --invariant=KcpUpgradeAccountsForLbDrain \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(LBDRAIN)
+
+.PHONY: verify-lb-drain
+verify-lb-drain: verify-lb-drain-happy verify-lb-drain-counterexample verify-lb-drain-random verify-lb-drain-apalache  ## Full load-balancer drain / blackholed-connection suite
+
+.PHONY: verify-netpol-stall-happy
+verify-netpol-stall-happy:  ## Drive policy application that is detected and recovered
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=NetworkPolicyMidFlight --init=detectedPolicyCutRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(NETPOLSTALL)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=NetworkPolicyMidFlight --init=detectedPolicyCutRun --step=step \
+	             --invariant=NoSilentControllerStall --max-steps=0 \
+	             $(NETPOLSTALL)
+
+.PHONY: verify-netpol-stall-counterexample
+verify-netpol-stall-counterexample:  ## Drive long-lived watch that survives policy cut silently
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=NetworkPolicyMidFlight --init=silentWatchSurvivesRun --step=step \
+	              --invariant=NoSilentControllerStall --max-steps=0 \
+	              $(NETPOLSTALL)
+
+.PHONY: verify-netpol-stall-random
+verify-netpol-stall-random:  ## Random-walk stable netpol/connection invariants (300x40)
+	@for inv in StableSafetyInvariants ExistingConnRequiresAppliedPolicy TerminatedConnRequiresPolicy; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=NetworkPolicyMidFlight \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(NETPOLSTALL) || exit 1; \
+	done
+
+.PHONY: verify-netpol-stall-apalache
+verify-netpol-stall-apalache:  ## Apalache silent-stall counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=NetworkPolicyMidFlight --init=silentWatchInit \
+	                  --step=stepApalache --invariant=NoSilentControllerStall \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(NETPOLSTALL)
+
+.PHONY: verify-netpol-stall
+verify-netpol-stall: verify-netpol-stall-happy verify-netpol-stall-counterexample verify-netpol-stall-random verify-netpol-stall-apalache  ## Full NetworkPolicy mid-flight / silent-stall suite
+
+.PHONY: verify-conntrack-happy
+verify-conntrack-happy:  ## Drive churn below conntrack saturation threshold
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConntrackExhaustion --init=boundedChurnRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CONNTRACK)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConntrackExhaustion --init=boundedChurnRun --step=step \
+	             --invariant=EventualConvergence --max-steps=0 \
+	             $(CONNTRACK)
+
+.PHONY: verify-conntrack-counterexample
+verify-conntrack-counterexample:  ## Drive conntrack exhaustion under churn
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ConntrackExhaustion --init=tableFullRun --step=step \
+	              --invariant=EventualConvergence --max-steps=0 \
+	              $(CONNTRACK)
+
+.PHONY: verify-conntrack-random
+verify-conntrack-random:  ## Random-walk stable conntrack bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants OccupancyBounded ExpiryNeverIncreasesOccupancy; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ConntrackExhaustion \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CONNTRACK) || exit 1; \
+	done
+
+.PHONY: verify-conntrack-apalache
+verify-conntrack-apalache:  ## Apalache conntrack-exhaustion counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ConntrackExhaustion --init=tableFullInit \
+	                  --step=stepApalache --invariant=EventualConvergence \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CONNTRACK)
+
+.PHONY: verify-conntrack
+verify-conntrack: verify-conntrack-happy verify-conntrack-counterexample verify-conntrack-random verify-conntrack-apalache  ## Full conntrack-exhaustion / dropped-connection suite
+
+.PHONY: verify-static-pod-eviction-happy
+verify-static-pod-eviction-happy:  ## Drive mem-pressure eviction that preserves critical static pods
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodMemPressure --init=correctPriorityRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(STACPODMEM)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodMemPressure --init=correctPriorityRun --step=step \
+	             --invariant=KcpOutputsCorrectPriority --max-steps=0 \
+	             $(STACPODMEM)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodMemPressure --init=correctPriorityRun --step=step \
+	             --invariant=CriticalStaticPodsImmuneFromEviction --max-steps=0 \
+	             $(STACPODMEM)
+
+.PHONY: verify-static-pod-eviction-counterexample
+verify-static-pod-eviction-counterexample:  ## Drive mis-priority static-pod eviction counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaticPodMemPressure --init=misPriorityEvictionRun --step=step \
+	              --invariant=CriticalStaticPodsImmuneFromEviction --max-steps=0 \
+	              $(STACPODMEM)
+
+.PHONY: verify-static-pod-eviction-random
+verify-static-pod-eviction-random:  ## Random-walk stable mem-pressure bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants EvictionChoiceNeedsPressure; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=StaticPodMemPressure \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(STACPODMEM) || exit 1; \
+	done
+
+.PHONY: verify-static-pod-eviction-apalache
+verify-static-pod-eviction-apalache:  ## Apalache static-pod eviction counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=StaticPodMemPressure --init=misPriorityInit \
+	                  --step=stepApalache --invariant=CriticalStaticPodsImmuneFromEviction \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(STACPODMEM)
+
+.PHONY: verify-static-pod-eviction
+verify-static-pod-eviction: verify-static-pod-eviction-happy verify-static-pod-eviction-counterexample verify-static-pod-eviction-random verify-static-pod-eviction-apalache  ## Full mem-pressure static-pod eviction suite
+
+.PHONY: verify-static-pod-hash-happy
+verify-static-pod-hash-happy:  ## Drive distinct-intent manifests + eventual kubelet reload convergence
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodHashReloadRace --init=eventualReloadRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(HASHRELOAD)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodHashReloadRace --init=eventualReloadRun --step=step \
+	             --invariant=ReloadEventuallyConverges --max-steps=0 \
+	             $(HASHRELOAD)
+
+.PHONY: verify-static-pod-hash-counterexample
+verify-static-pod-hash-counterexample:  ## Drive hash collision + stale reload counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaticPodHashReloadRace --init=hashCollisionRun --step=step \
+	              --invariant=NoHashCollisionAcrossDistinctIntents --max-steps=0 \
+	              $(HASHRELOAD)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaticPodHashReloadRace --init=staleReloadRun --step=step \
+	              --invariant=ReloadEventuallyConverges --max-steps=0 \
+	              $(HASHRELOAD)
+
+.PHONY: verify-static-pod-hash-random
+verify-static-pod-hash-random:  ## Random-walk stable manifest/reload bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants ManifestHashDeterministic DesiredConfigGenMonotone; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=StaticPodHashReloadRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(HASHRELOAD) || exit 1; \
+	done
+
+.PHONY: verify-static-pod-hash-apalache
+verify-static-pod-hash-apalache:  ## Apalache manifest-hash collision counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=StaticPodHashReloadRace --init=collisionInit \
+	                  --step=stepApalache --invariant=NoHashCollisionAcrossDistinctIntents \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(HASHRELOAD)
+
+.PHONY: verify-static-pod-hash
+verify-static-pod-hash: verify-static-pod-hash-happy verify-static-pod-hash-counterexample verify-static-pod-hash-random verify-static-pod-hash-apalache  ## Full static-pod hash / kubelet reload race suite
+
+.PHONY: verify-bootstrap-csr-happy
+verify-bootstrap-csr-happy:  ## Drive delayed-but-eventually-approved bootstrap CSR path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=BootstrapCsrLag --init=eventualApprovalRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(BOOTCSR)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=BootstrapCsrLag --init=eventualApprovalRun --step=step \
+	             --invariant=BootstrapTimeoutCoversCsrLatency --max-steps=0 \
+	             $(BOOTCSR)
+
+.PHONY: verify-bootstrap-csr-counterexample
+verify-bootstrap-csr-counterexample:  ## Drive bootstrap timeout before CSR approval clears
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=BootstrapCsrLag --init=approvalTimeoutRun --step=step \
+	              --invariant=BootstrapTimeoutCoversCsrLatency --max-steps=0 \
+	              $(BOOTCSR)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=BootstrapCsrLag --init=strandedKubeletRun --step=step \
+	              --invariant=NoStrandedKubelet --max-steps=0 \
+	              $(BOOTCSR)
+
+.PHONY: verify-bootstrap-csr-random
+verify-bootstrap-csr-random:  ## Random-walk stable CSR-lag bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants QueueMonotone SubmitTimeRecorded; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=BootstrapCsrLag \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(BOOTCSR) || exit 1; \
+	done
+
+.PHONY: verify-bootstrap-csr-apalache
+verify-bootstrap-csr-apalache:  ## Apalache CSR-lag bootstrap-timeout counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=BootstrapCsrLag --init=approvalTimeoutInit \
+	                  --step=stepApalache --invariant=BootstrapTimeoutCoversCsrLatency \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(BOOTCSR)
+
+.PHONY: verify-bootstrap-csr
+verify-bootstrap-csr: verify-bootstrap-csr-happy verify-bootstrap-csr-counterexample verify-bootstrap-csr-random verify-bootstrap-csr-apalache  ## Full bootstrap CSR approval-lag suite
+
+.PHONY: verify-mtu-frag-happy
+verify-mtu-frag-happy:  ## Drive bounded packet sizing / PMTU convergence path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MtuFragmentation --init=convergedPmtuRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(MTUFRAG)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MtuFragmentation --init=convergedPmtuRun --step=step \
+	             --invariant=EtcdSnapshotEventuallySucceeds --max-steps=0 \
+	             $(MTUFRAG)
+
+.PHONY: verify-mtu-frag-counterexample
+verify-mtu-frag-counterexample:  ## Drive DF+MTU silent drop counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=MtuFragmentation --init=silentFragDropRun --step=step \
+	              --invariant=EtcdSnapshotEventuallySucceeds --max-steps=0 \
+	              $(MTUFRAG)
+
+.PHONY: verify-mtu-frag-random
+verify-mtu-frag-random:  ## Random-walk stable MTU/PMTU bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants PmtuNeverExceedsLinkMtu; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=MtuFragmentation \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(MTUFRAG) || exit 1; \
+	done
+
+.PHONY: verify-mtu-frag-apalache
+verify-mtu-frag-apalache:  ## Apalache silent fragmentation counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=MtuFragmentation --init=silentFragInit \
+	                  --step=stepApalache --invariant=EtcdSnapshotEventuallySucceeds \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(MTUFRAG)
+
+.PHONY: verify-mtu-frag
+verify-mtu-frag: verify-mtu-frag-happy verify-mtu-frag-counterexample verify-mtu-frag-random verify-mtu-frag-apalache  ## Full MTU drift / silent fragmentation suite
+
+.PHONY: verify-cc-topology-race-happy
+verify-cc-topology-race-happy:  ## Drive version-pinned ClusterClass read
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterClassTopologyRace --init=versionPinnedReadRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CCTOPORACE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterClassTopologyRace --init=versionPinnedReadRun --step=step \
+	             --invariant=ConsistentCCViewPerReconcile --max-steps=0 \
+	             $(CCTOPORACE)
+
+.PHONY: verify-cc-topology-race-counterexample
+verify-cc-topology-race-counterexample:  ## Drive torn ClusterClass read counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ClusterClassTopologyRace --init=tornReadRun --step=step \
+	              --invariant=ConsistentCCViewPerReconcile --max-steps=0 \
+	              $(CCTOPORACE)
+
+.PHONY: verify-cc-topology-race-random
+verify-cc-topology-race-random:  ## Random-walk stable ClusterClass topology invariants (300x40)
+	@for inv in StableSafetyInvariants DefinitionStateWellFormed MidUpdateRequiresVersionSkew; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterClassTopologyRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CCTOPORACE) || exit 1; \
+	done
+
+.PHONY: verify-cc-topology-race-apalache
+verify-cc-topology-race-apalache:  ## Apalache torn ClusterClass read counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ClusterClassTopologyRace --init=tornReadInit \
+	                  --step=stepApalache --invariant=ConsistentCCViewPerReconcile \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CCTOPORACE)
+
+.PHONY: verify-cc-topology-race
+verify-cc-topology-race: verify-cc-topology-race-happy verify-cc-topology-race-counterexample verify-cc-topology-race-random verify-cc-topology-race-apalache  ## Full ClusterClass/Topology torn-read suite
+
+.PHONY: verify-crs-timing-happy
+verify-crs-timing-happy:  ## Drive CRS application after kubelets join
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterResourceSetTiming --init=joinsBeforeApplyRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CRSTIMING)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterResourceSetTiming --init=joinsBeforeApplyRun --step=step \
+	             --invariant=ApplyOnceEventuallyTakesEffect --max-steps=0 \
+	             $(CRSTIMING)
+
+.PHONY: verify-crs-timing-counterexample
+verify-crs-timing-counterexample:  ## Drive ApplyOnce before kubelets join counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ClusterResourceSetTiming --init=applyBeforeJoinRun --step=step \
+	              --invariant=ApplyOnceEventuallyTakesEffect --max-steps=0 \
+	              $(CRSTIMING)
+
+.PHONY: verify-crs-timing-random
+verify-crs-timing-random:  ## Random-walk stable CRS timing invariants (300x40)
+	@for inv in StableSafetyInvariants ApplyOnceRequiresPendingPayload ReconcileRetriesUntilJoined; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterResourceSetTiming \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CRSTIMING) || exit 1; \
+	done
+
+.PHONY: verify-crs-timing-apalache
+verify-crs-timing-apalache:  ## Apalache ApplyOnce timing counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ClusterResourceSetTiming --init=applyBeforeJoinInit \
+	                  --step=stepApalache --invariant=ApplyOnceEventuallyTakesEffect \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CRSTIMING)
+
+.PHONY: verify-crs-timing
+verify-crs-timing: verify-crs-timing-happy verify-crs-timing-counterexample verify-crs-timing-random verify-crs-timing-apalache  ## Full ClusterResourceSet ApplyOnce timing suite
 
 ## --------------------------------------
 ## CAPI refinements onto controller-runtime
@@ -645,24 +1752,40 @@ verify-fm9-fair17-depth12:  ## FM-9 ConvergenceFair17 at depth=12 (issue #5; sur
 .PHONY: mutation-test
 mutation-test:  ## Run mutation testing across all spec modules (~10 min)
 	@$(PYTHON) ../hack/tools/quint-mutation-tester.py --help >/dev/null 2>&1 || { echo "ERR: quint-mutation-tester.py missing"; exit 1; }
-	@for spec in ControllerRuntime InPlaceUpdate MachineSetPreflight \
-	             Topology ClusterE2E WorkerLifecycle SelfHosted \
-	             TopologyRefined InPlaceUpdateRefined \
-	             MachineSetPreflightRefined; do \
+	@for pair in ControllerRuntime:ControllerRuntime InPlaceUpdate:InPlaceUpdate MachineSetPreflight:MachineSetPreflight \
+	             Topology:Topology ClusterE2E:ClusterE2E WorkerLifecycle:WorkerLifecycle SelfHosted:SelfHosted \
+	             TopologyRefined:TopologyRefined InPlaceUpdateRefined:InPlaceUpdateRefined \
+	             Lifecycle.multicluster:LifecycleMultiCluster \
+	             MachineSetPreflightRefined:MachineSetPreflightRefined; do \
+	  spec=$${pair%%:*}; main=$${pair##*:}; \
 	  if [ -f $(SPECS_DIR)/$$spec.qnt ]; then \
 	    echo "##### $$spec #####"; \
 	    $(PYTHON) ../hack/tools/quint-mutation-tester.py \
-	      $(SPECS_DIR)/$$spec.qnt --main=$$spec \
+	      $(SPECS_DIR)/$$spec.qnt --main=$$main \
 	      --max-samples=300 --max-steps=40 --timeout=60 \
 	      --workdir=/tmp/quint-mutations || true; \
 	  fi; \
 	done
 
+.PHONY: mutation-test-newer-sampled
+mutation-test-newer-sampled:  ## Run a CI-sized sampled subset of newer-spec mutation tests
+	@$(PYTHON) ../hack/tools/quint-mutation-tester.py --help >/dev/null 2>&1 || { echo "ERR: quint-mutation-tester.py missing"; exit 1; }
+	@for spec in ControllerRuntime Topology ClusterE2E WorkerLifecycle; do \
+	  echo "##### $$spec #####"; \
+	  $(PYTHON) ../hack/tools/quint-mutation-tester.py \
+	    $(SPECS_DIR)/$$spec.qnt --main=$$spec \
+	    --max-samples=120 --max-steps=20 --timeout=45 \
+	    --workdir=/tmp/quint-mutations || true; \
+	done
+
+.PHONY: mutation-test-newer-full
+mutation-test-newer-full: mutation-test  ## Run the full newer-spec mutation sweep (nightly/full gate)
+
 .PHONY: mutation-test-spec
 mutation-test-spec:  ## Run mutation testing against one spec (use SPEC=<name>)
 	@test -n "$(SPEC)" || { echo "Usage: make mutation-test-spec SPEC=<ModuleName>"; exit 1; }
 	$(PYTHON) ../hack/tools/quint-mutation-tester.py \
-	  $(SPECS_DIR)/$(SPEC).qnt --main=$(SPEC) \
+	  $(SPECS_DIR)/$(SPEC).qnt --main=$(if $(MAIN),$(MAIN),$(SPEC)) \
 	  --max-samples=300 --max-steps=40 --timeout=60 \
 	  --workdir=/tmp/quint-mutations
 
@@ -729,6 +1852,312 @@ verify-worker-lifecycle-random:  ## Random-walk every WorkerLifecycle invariant 
 
 .PHONY: verify-worker-lifecycle
 verify-worker-lifecycle: verify-worker-lifecycle-happy verify-worker-lifecycle-preflight verify-worker-lifecycle-random  ## Full WorkerLifecycle suite
+
+## --------------------------------------
+## MachineDeployment rollout x MHC x scale concurrency (Issue #14)
+## --------------------------------------
+
+##@ machine-deployment-rollout:
+
+.PHONY: verify-md-rollout-happy
+verify-md-rollout-happy:  ## Drive happy rollout completion run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachineDeploymentRollout --init=happyRolloutRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(MD_ROLLOUT)
+
+.PHONY: verify-md-rollout-race
+verify-md-rollout-race:  ## Drive scale-down versus MHC remediation race run
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachineDeploymentRollout --init=conflictingDeleteRaceRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 \
+	             $(MD_ROLLOUT)
+
+.PHONY: verify-md-rollout-random
+verify-md-rollout-random:  ## Random-walk every MD rollout invariant (1000x60)
+	@for inv in AllSafetyInvariants SurgeBound \
+	            NoConflictingDeletes TemplateMonotone \
+	            PdbBlockedDrainStalls DrainTimeoutEventuallyRequeues \
+	            MhcCannotDeleteScaleDownVictim RemovedMachinesDeselected; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=MachineDeploymentRollout \
+	               --invariant=$$inv --max-samples=1000 --max-steps=60 \
+	               $(MD_ROLLOUT) || exit 1; \
+	done
+
+.PHONY: verify-md-rollout-apalache
+verify-md-rollout-apalache:  ## Apalache battery across MD rollout invariants
+	@for inv in SurgeBound NoConflictingDeletes TemplateMonotone \
+	            PdbBlockedDrainStalls DrainTimeoutEventuallyRequeues \
+	            RemovedMachinesDeselected; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=MachineDeploymentRollout \
+	                            --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                            --backend=apalache $(MD_ROLLOUT) || exit 1; \
+	  sleep 5; \
+	done
+
+.PHONY: verify-md-rollout-refined
+verify-md-rollout-refined:  ## Random-walk refined MD rollout invariants on controller-runtime substrate
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation BodyActionsGated \
+	            ReconcileOwnershipConsistent; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=MachineDeploymentRolloutRefined \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(MD_ROLLOUT_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-md-rollout
+verify-md-rollout: verify-md-rollout-happy verify-md-rollout-race verify-md-rollout-random verify-md-rollout-refined  ## Full MD rollout suite
+
+.PHONY: verify-clusterclass-patches-happy
+verify-clusterclass-patches-happy:  ## Drive happy ClusterClass patch merge run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterClassPatches \
+	             --init=happyPatchMergeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(CC_PATCHES)
+
+.PHONY: verify-clusterclass-patches-overlap
+verify-clusterclass-patches-overlap:  ## Drive overlapping-patch order run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterClassPatches \
+	             --init=overlappingPatchOrderRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(CC_PATCHES)
+
+.PHONY: verify-clusterclass-patches-random
+verify-clusterclass-patches-random:  ## Random-walk ClusterClass patch invariants (1000x60)
+	@for inv in StableSafetyInvariants mergeDeterministic immutablePreserved \
+	            overridesSurviveCC patchIdempotent noPhantomVar; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterClassPatches \
+	               --step=randomStep \
+	               --invariant=$$inv --max-samples=1000 --max-steps=60 \
+	               $(CC_PATCHES) || exit 1; \
+	done
+
+.PHONY: verify-clusterclass-patches-apalache
+verify-clusterclass-patches-apalache:  ## Apalache battery across ClusterClass patch invariants
+	@for inv in mergeDeterministic immutablePreserved overridesSurviveCC \
+	            patchIdempotent noPhantomVar; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=ClusterClassPatches \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(CC_PATCHES) || exit 1; \
+	done
+
+.PHONY: verify-clusterclass-patches
+verify-clusterclass-patches: verify-clusterclass-patches-happy verify-clusterclass-patches-overlap verify-clusterclass-patches-random verify-clusterclass-patches-apalache  ## Full ClusterClass patch suite
+
+.PHONY: verify-finalizers-happy
+verify-finalizers-happy:  ## Drive happy finalizer cascade run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=Finalizers \
+	             --init=happyCascadeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(FINALIZERS)
+
+.PHONY: verify-finalizers-random
+verify-finalizers-random:  ## Random-walk finalizer invariants (1000x60)
+	@for inv in StableSafetyInvariants noOrphan cleanShutdownTerminal topologicalOrder idempotentRemoval; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=Finalizers \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=1000 --max-steps=60 $(FINALIZERS) || exit 1; \
+	done
+
+.PHONY: verify-finalizers-apalache
+verify-finalizers-apalache:  ## Apalache battery across finalizer invariants
+	@for inv in noOrphan cleanShutdownTerminal topologicalOrder idempotentRemoval; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=Finalizers \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(FINALIZERS) || exit 1; \
+	done
+
+.PHONY: verify-finalizers-proof
+verify-finalizers-proof:  ## Build Lean theorem for finalizer progress measure
+	cd $(PROOFS_DIR) && $(LEAN) build
+
+.PHONY: verify-finalizers
+verify-finalizers: verify-finalizers-happy verify-finalizers-random verify-finalizers-apalache verify-finalizers-proof  ## Full finalizer suite
+
+.PHONY: verify-runtimesdk-happy
+verify-runtimesdk-happy:  ## Drive happy Runtime SDK lifecycle run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=RuntimeSDK \
+	             --init=happyRuntimeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(RUNTIMESDK)
+
+.PHONY: verify-runtimesdk-partial
+verify-runtimesdk-partial:  ## Drive partial-failure retry run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=RuntimeSDK \
+	             --init=partialFailureRetryRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(RUNTIMESDK)
+
+.PHONY: verify-runtimesdk-random
+verify-runtimesdk-random:  ## Random-walk Runtime SDK invariants (1000x60)
+	@for inv in StableSafetyInvariants idempotentHookUnderRetry noDoubleFire \
+	            discoveryConsistent cacheInvalidatedOnRestart \
+	            partialFailureRecoverable; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=RuntimeSDK \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=1000 --max-steps=60 $(RUNTIMESDK) || exit 1; \
+	done
+
+.PHONY: verify-runtimesdk-apalache
+verify-runtimesdk-apalache:  ## Apalache battery across Runtime SDK invariants
+	@for inv in idempotentHookUnderRetry noDoubleFire discoveryConsistent \
+	            cacheInvalidatedOnRestart partialFailureRecoverable; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=RuntimeSDK \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(RUNTIMESDK) || exit 1; \
+	done
+
+.PHONY: verify-runtimesdk
+verify-runtimesdk: verify-runtimesdk-happy verify-runtimesdk-partial verify-runtimesdk-random verify-runtimesdk-apalache  ## Full Runtime SDK suite
+
+.PHONY: verify-pivot-happy
+verify-pivot-happy:  ## Drive happy clusterctl move / resume run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=Pivot \
+	             --init=happyPivotRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(PIVOT)
+
+.PHONY: verify-pivot-blocked
+verify-pivot-blocked:  ## Drive blocked-move / retry pivot run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=Pivot \
+	             --init=blockedPivotRetryRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(PIVOT)
+
+.PHONY: verify-pivot-random
+verify-pivot-random:  ## Random-walk pivot invariants (1000x60)
+	@for inv in StableSafetyInvariants objectConservation noOrphan \
+	            mutualExclusion partialPivotRecoverable \
+	            finalizerOrdered secretsCloned; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=Pivot \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=1000 --max-steps=60 $(PIVOT) || exit 1; \
+	done
+
+.PHONY: verify-pivot-apalache
+verify-pivot-apalache:  ## Apalache battery across pivot invariants
+	@for inv in objectConservation noOrphan mutualExclusion \
+	            finalizerOrdered secretsCloned; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=Pivot \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(PIVOT) || exit 1; \
+	done
+
+.PHONY: verify-pivot
+verify-pivot: verify-pivot-happy verify-pivot-blocked verify-pivot-random verify-pivot-apalache  ## Full pivot suite
+
+.PHONY: verify-conversionwebhook-happy
+verify-conversionwebhook-happy:  ## Drive happy conversion round-trip run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ConversionWebhook \
+	             --init=happyRoundTripRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(CONVERSIONWEBHOOK)
+
+.PHONY: verify-conversionwebhook-random
+verify-conversionwebhook-random:  ## Random-walk conversion invariants (1000x60)
+	@for inv in StableSafetyInvariants roundTripSpec roundTripStatusInformative \
+	            webhookFailureSafe defaultsIdempotent \
+	            informationLossDocumented; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ConversionWebhook \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=1000 --max-steps=60 $(CONVERSIONWEBHOOK) || exit 1; \
+	done
+
+.PHONY: verify-conversionwebhook-apalache
+verify-conversionwebhook-apalache:  ## Apalache battery across conversion invariants
+	@for inv in roundTripSpec roundTripStatusInformative webhookFailureSafe \
+	            defaultsIdempotent informationLossDocumented; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=ConversionWebhook \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(CONVERSIONWEBHOOK) || exit 1; \
+	done
+
+.PHONY: verify-conversionwebhook-proof
+verify-conversionwebhook-proof:  ## Build Lean theorem for conversion informativeness
+	cd $(PROOFS_DIR) && $(LEAN) build
+
+.PHONY: verify-conversionwebhook
+verify-conversionwebhook: verify-conversionwebhook-happy verify-conversionwebhook-random verify-conversionwebhook-apalache verify-conversionwebhook-proof  ## Full conversion-webhook suite
+
+.PHONY: verify-kubeletpki-happy
+verify-kubeletpki-happy:  ## Drive happy kubeconfig rotation run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KubeletPKI \
+	             --init=happyRotationRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(KUBELETPKI)
+
+.PHONY: verify-kubeletpki-blocked
+verify-kubeletpki-blocked:  ## Drive blocked CA / user-secret run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KubeletPKI \
+	             --init=blockedRotationRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(KUBELETPKI)
+
+.PHONY: verify-kubeletpki-random
+verify-kubeletpki-random:  ## Random-walk kubelet PKI invariants (1000x60)
+	@for inv in StableSafetyInvariants ownedSecretOnlyRotates caNotRecreatedAfterInit \
+	            rotationRequiresThreshold rotationPreservesEndpoint \
+	            missingCARequeues; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=KubeletPKI \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=1000 --max-steps=60 $(KUBELETPKI) || exit 1; \
+	done
+
+.PHONY: verify-kubeletpki-apalache
+verify-kubeletpki-apalache:  ## Apalache battery across kubelet PKI invariants
+	@for inv in ownedSecretOnlyRotates caNotRecreatedAfterInit \
+	            rotationRequiresThreshold rotationPreservesEndpoint \
+	            missingCARequeues; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=KubeletPKI \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(KUBELETPKI) || exit 1; \
+	done
+
+.PHONY: verify-kubeletpki
+verify-kubeletpki: verify-kubeletpki-happy verify-kubeletpki-blocked verify-kubeletpki-random verify-kubeletpki-apalache  ## Full kubelet PKI suite
+
+.PHONY: verify-clustere2e-refined-happy
+verify-clustere2e-refined-happy:  ## Drive happy refined cluster bring-up run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterE2ERefined \
+	             --init=happyRefinedBringUpRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 $(E2E_REFINED)
+
+.PHONY: verify-clustere2e-refined-leaderloss
+verify-clustere2e-refined-leaderloss:  ## Drive leader-loss / replay bring-up run
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterE2ERefined \
+	             --init=leaderLossReplayRun --step=step \
+	             --invariant=AllSafetyInvariants --max-steps=0 $(E2E_REFINED)
+
+.PHONY: verify-clustere2e-refined-random
+verify-clustere2e-refined-random:  ## Random-walk refined ClusterE2E invariants (500x60)
+	@for inv in AllSafetyInvariants FM45_PerKeySerialisation \
+	            FM48_NoCpBeforeInfraReady FM49_NoWorkersBeforeCpInit \
+	            FM50_EndpointMonotonic EndpointSetRequiresInfraClusterReady \
+	            ClusterCpInitializedRequiresKcp; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterE2ERefined \
+	               --step=randomStep --invariant=$$inv \
+	               --max-samples=500 --max-steps=60 $(E2E_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-clustere2e-refined-apalache
+verify-clustere2e-refined-apalache:  ## Apalache battery across refined ClusterE2E invariants
+	@for inv in FM45_PerKeySerialisation FM48_NoCpBeforeInfraReady \
+	            FM49_NoWorkersBeforeCpInit FM50_EndpointMonotonic \
+	            EndpointSetRequiresInfraClusterReady \
+	            ClusterCpInitializedRequiresKcp; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=ClusterE2ERefined \
+	                         --invariant=$$inv --max-steps=$(MAX_STEPS_APALACHE) \
+	                         --backend=apalache $(E2E_REFINED) || exit 1; \
+	done
+
+.PHONY: verify-clustere2e-refined
+verify-clustere2e-refined: verify-clustere2e-refined-happy verify-clustere2e-refined-leaderloss verify-clustere2e-refined-random verify-clustere2e-refined-apalache  ## Full refined ClusterE2E suite
 
 ## --------------------------------------
 ## Apalache hopelessness on the new specs (Issue #1)

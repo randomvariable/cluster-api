@@ -31,7 +31,7 @@ import (
 //     the v1beta1 message, the v1beta2 message MUST carry the
 //     same key. The current v1beta2 projection violates this for
 //     the `context deadline exceeded` and `no route to host`
-//     keys; the user-reported incident produces a counterexample.
+//     keys; the modelled scenario produces a counterexample.
 type MHC struct{}
 
 // Spec returns trace.SpecMachineHealthCheck.

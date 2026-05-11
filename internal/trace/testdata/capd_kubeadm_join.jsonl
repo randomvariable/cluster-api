@@ -1,0 +1,6 @@
+{"time":"2026-05-10T00:01:00Z","msg":"Starting kubeadm join","machine":"cp4"}
+{"time":"2026-05-10T00:01:01Z","msg":"Preflight checks passed","machine":"cp4"}
+{"time":"2026-05-10T00:01:02Z","msg":"Kubelet started","machine":"cp4"}
+{"time":"2026-05-10T00:01:03Z","msg":"Added learner to etcd","machine":"cp4"}
+{"time":"2026-05-10T00:01:04Z","msg":"Etcd quorum reached","machine":"cp4"}
+{"time":"2026-05-10T00:01:05Z","msg":"Marked control plane node ready","machine":"cp4"}

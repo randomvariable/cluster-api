@@ -215,7 +215,7 @@ formal/
 │   ├── commits.yaml                   # pinned upstream SHAs
 │   └── relink.py                      # SHA bump helper
 ├── abstraction-mapping.md             # Action ↔ Go file:line
-└── counterexample-log.md              # incident ledger
+└── counterexample-log.md              # spec-violation ledger
 
 internal/trace/                        # Go runtime
 ├── record.go
@@ -260,7 +260,7 @@ The choice of three formal tools is deliberate, not redundant:
 The Go trace runtime is a separate, independent reimplementation in
 the implementation language. This is not redundant: the runtime
 encodes the *checker*, not the spec, and its job is to reject
-production traces that violate the spec — exactly the abstraction-
+modelled traces that violate the spec — exactly the abstraction-
 mapping discipline of Abadi & Lamport (1991).
 
 ### Quint as the source of truth
@@ -323,7 +323,7 @@ longer matches by content fingerprint.
 
 `formal/counterexample-log.md` is a markdown ledger with the schema
 below. Every model-checker counterexample, fuzz finding, or
-production-traced violation gets a row.
+modelled-traced violation gets a row.
 
 | Date | Spec | Action | Classification | Severity | Status | Fix link | Evidence | Notes |
 
@@ -333,7 +333,7 @@ closure does not delete. The discipline here matches the
 [Linux kernel's regression-tracking model](https://www.kernel.org/doc/html/latest/admin-guide/reporting-regressions.html).
 
 The inaugural row is the InformativenessObligation counterexample
-produced by the user-reported stuck-learner incident.
+produced by the FM-1 stuck-learner scenario.
 
 ### CI gating
 
@@ -357,8 +357,8 @@ know what coverage they have on a given run.
 
 ## Worked example: a stuck etcd learner
 
-The user-reported incident under
-`KubeadmControlPlane=ns-vault-prod-ky8ns/kvp22096-98cda1-fpx9t`
+The modelled scenario under
+`example-cluster`
 exercises the model end-to-end:
 
 1. `KubeadmJoin` reaches `KubeletStart` but `EtcdJoinAddLearner`
@@ -396,7 +396,7 @@ val InformativenessObligation =
       <= informativeness(project_v1beta2(s))
 ```
 
-The incident produces a counterexample because v1beta2's
+FM-1 produces a counterexample because v1beta2's
 `reason=InternalError, message="Please check controller logs"`
 loses the gRPC error chain that v1beta1's
 `message="failed to get etcdStatus for workload cluster ..."`
@@ -412,7 +412,7 @@ independently useful and reviewable.
 | Phase | Deliverable | Status gate |
 |---|---|---|
 | **0 — proposal + scaffold** | This CAEP, `formal/` directory tree with READMEs, `Makefile`, contracts skeletons, abstraction-mapping skeleton, counterexample-log skeleton. | CAEP merged; scaffold passes drift check. |
-| **1 — core specs** | The four Quint modules + Composition. `IncidentWitness` model-checks. `InformativenessObligation` produces a counterexample matching the user-reported incident. | `quint typecheck` clean; `quint test` runs; counterexample-log row inaugurated. |
+| **1 — core specs** | The four Quint modules + Composition. `IncidentWitness` model-checks. `InformativenessObligation` produces a counterexample matching the modelled scenario. | `quint typecheck` clean; `quint test` runs; counterexample-log row inaugurated. |
 | **2 — contracts** | The three RFC-2119 contracts, line-anchored to pinned commits. `relink.py` working. | Contracts review-complete; pins recorded in `commits.yaml`. |
 | **3 — proofs** | Lean 4 lake project. `Refinement.lean` skeleton; `Informativeness.lean` proof of the partial-order; `Safety.lean` proof of `canSafelyRemediate ⇒ quorum-preserving`. | `lake build` clean. |
 | **4 — runtime** | Go trace-refinement runtime + `trace-validator` CLI. Per-checker tests. | `go build` and `go test` clean; CI gate active. |
@@ -437,7 +437,7 @@ independently useful and reviewable.
 ## Alternatives
 
 - **Annotation-only ADRs.** Document choreography in markdown
-  without an executable model. Rejected: the user-reported
+  without an executable model. Rejected: the modelled
   incident reveals exactly the kind of multi-component invariant
   that survives a markdown review and fails in production.
 - **Property-based tests only.** Use `gopter` or similar in Go.

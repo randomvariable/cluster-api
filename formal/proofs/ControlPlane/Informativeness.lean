@@ -16,7 +16,7 @@ ordering is reflexive and transitive — that makes it a preorder,
 not a partial order, because two projections that carry the same
 key set under different syntactic forms are equivalent.
 
-The user-reported incident's v1beta2 projection violates the
+The modelled scenario's v1beta2 projection violates the
 informativeness obligation against the v1beta1 projection. The
 counterexample is filed in `formal/counterexample-log.md`.
 
@@ -63,6 +63,19 @@ theorem trans
 
 /-! ### The KCP-Machine obligation -/
 
+inductive ConversionObservation where
+  | legacyTimeout
+  | cleanRead
+  deriving DecidableEq
+
+def πv1beta1 : Projection ConversionObservation
+  | .legacyTimeout => ["context deadline exceeded", "failed to get etcdStatus"]
+  | .cleanRead => []
+
+def πv1beta2 : Projection ConversionObservation
+  | .legacyTimeout => ["failed to get etcdStatus"]
+  | .cleanRead => []
+
 /-- The InformativenessObligation, parameterised in the
 observation type. The contract in
 `formal/contracts/kcp-machine-contract.md` instantiates this with
@@ -71,18 +84,18 @@ def InformativenessObligation
     {Obs : Type} (πv1beta1 πv1beta2 : Projection Obs) : Prop :=
   πv1beta2 ≼ πv1beta1
 
-/-- The user-reported incident is a counterexample to the
-obligation. We do not discharge the negative claim here — that
-would require a concrete v1beta2 projection contradicting the
-contract. The counterexample lives in
-`formal/counterexample-log.md` and the failing trace is checked
-by the Go runtime in `internal/trace/checkers/mhc.go`. -/
+/-- The modelled scenario is a concrete counterexample to the
+obligation: the v1beta1 projection carries the timeout diagnostic
+key while the v1beta2 projection drops it. The counterexample also
+lives in `formal/counterexample-log.md` and is checked in the Go
+runtime by `internal/trace/checkers/mhc.go`. -/
 theorem informativeness_obligation_violated_for_v1beta2_today :
-    True := by
-  -- TODO(formal): once the v1beta2 projection's exact
-  -- behaviour is encoded as a Lean function, instantiate
-  -- InformativenessObligation with it and produce a witness
-  -- observation showing the obligation is false.
-  trivial
+    ¬ InformativenessObligation πv1beta1 πv1beta2 := by
+  unfold InformativenessObligation AtLeastAsInformative
+  intro h
+  have hk : "context deadline exceeded" ∈ πv1beta1 ConversionObservation.legacyTimeout := by
+    simp [πv1beta1]
+  have hk' := h ConversionObservation.legacyTimeout "context deadline exceeded" hk
+  simp [πv1beta2] at hk'
 
 end ControlPlane.Informativeness

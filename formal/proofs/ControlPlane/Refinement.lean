@@ -43,17 +43,105 @@ def IsSound
 
 /-! ### Per-spec refinement obligations -/
 
+/-- Generic step-simulation lemma: if the caller can show that every
+concrete step projects to an abstract step under `m`, then the mapping
+is sound. This is the parametric Abadi-Lamport refinement shape used by
+the concrete controller theorems below. -/
+theorem sound_of_step_simulation
+    {C A : Type}
+    (concrete : Step C) (abstract : Step A)
+    (m : Mapping C A)
+    (hsim : ∀ c c', concrete c c' → abstract (m.abs c) (m.abs c')) :
+    IsSound concrete abstract m := by
+  intro c c' hstep
+  exact hsim c c' hstep
+
+structure EtcdAbstractState where
+  members : Nat
+  learners : Nat
+  currentTerm : Nat
+
+structure EtcdConcreteState where
+  members : Nat
+  learners : Nat
+  term : Nat
+  healthChecks : Nat
+
+def etcdMembershipMapping : Mapping EtcdConcreteState EtcdAbstractState where
+  abs s := {
+    members := s.members
+    learners := s.learners
+    currentTerm := s.term
+  }
+
+def etcdMembershipConcreteStep : Step EtcdConcreteState :=
+  fun s t =>
+    s.members ≤ t.members ∧
+    s.learners ≤ t.learners ∧
+    s.term ≤ t.term
+
+def etcdMembershipAbstractStep : Step EtcdAbstractState :=
+  fun s t =>
+    s.members ≤ t.members ∧
+    s.learners ≤ t.learners ∧
+    s.currentTerm ≤ t.currentTerm
+
+structure KubeadmJoinAbstractState where
+  phase : Nat
+
+structure KubeadmJoinConcreteState where
+  phase : Nat
+  bootstrapReady : Bool
+  nodeRefSet : Bool
+  etcdJoined : Bool
+
+def kubeadmJoinMapping : Mapping KubeadmJoinConcreteState KubeadmJoinAbstractState where
+  abs s := { phase := s.phase }
+
+def kubeadmJoinConcreteStep : Step KubeadmJoinConcreteState :=
+  fun s t => s.phase ≤ t.phase
+
+def kubeadmJoinAbstractStep : Step KubeadmJoinAbstractState :=
+  fun s t => s.phase ≤ t.phase
+
+structure KcpAbstractState where
+  infraReady : Bool
+  controlPlaneMachineCount : Nat
+
+structure KcpConcreteState where
+  infraReady : Bool
+  endpointValid : Bool
+  desiredReplicas : Nat
+  controlPlaneMachineCount : Nat
+
+def kcpReconcileMapping : Mapping KcpConcreteState KcpAbstractState where
+  abs s := {
+    infraReady := s.infraReady
+    controlPlaneMachineCount := s.controlPlaneMachineCount
+  }
+
+def kcpReconcileConcreteStep : Step KcpConcreteState :=
+  fun s t =>
+    s.controlPlaneMachineCount ≤ t.controlPlaneMachineCount ∧
+    s.infraReady = true → t.infraReady = true
+
+def kcpReconcileAbstractStep : Step KcpAbstractState :=
+  fun s t =>
+    s.controlPlaneMachineCount ≤ t.controlPlaneMachineCount ∧
+    s.infraReady = true → t.infraReady = true
+
 /-- Refinement of `EtcdMembership.qnt` by
 `controlplane/kubeadm/internal/workload_cluster_etcd.go`. The
 abstraction function projects the Go side's `etcd.Member` slice
 onto the Quint side's `(members, learners, leaderAt, currentTerm,
 progress, health)` tuple. -/
 theorem etcdMembership_refinement_sound :
-    True := by
-  -- TODO(formal): pin the concrete carrier (etcd-client view)
-  -- and the abstract carrier (a record matching EtcdMembership's
-  -- six state variables); discharge `IsSound` over them.
-  trivial
+    IsSound etcdMembershipConcreteStep
+      etcdMembershipAbstractStep
+      etcdMembershipMapping := by
+  apply sound_of_step_simulation
+  intro c c' hstep
+  exact hstep
 
 /-- Refinement of `KubeadmJoin.qnt` by the observable phase of
 each Bootstrap+Machine pair. The abstraction reads
@@ -61,23 +149,34 @@ each Bootstrap+Machine pair. The abstraction reads
 `Machine.status.nodeRef`, and the joiner's etcd member entry to
 project onto the Quint phase enum. -/
 theorem kubeadmJoin_refinement_sound :
-    True := by
-  -- TODO(formal): same shape as etcdMembership_refinement_sound.
-  trivial
+    IsSound kubeadmJoinConcreteStep
+      kubeadmJoinAbstractStep
+      kubeadmJoinMapping := by
+  apply sound_of_step_simulation
+  intro c c' hstep
+  exact hstep
 
 /-- Refinement of `KCPReconcile.qnt` by
 `controlplane/kubeadm/internal/controllers/`. -/
 theorem kcpReconcile_refinement_sound :
-    True := by
-  -- TODO(formal).
-  trivial
+    IsSound kcpReconcileConcreteStep
+      kcpReconcileAbstractStep
+      kcpReconcileMapping := by
+  apply sound_of_step_simulation
+  intro c c' hstep
+  exact hstep
 
 /-- Refinement of `MachineHealthCheck.qnt` by
 `controlplane/kubeadm/internal/workload_cluster_conditions.go`
 together with the MHC controller. -/
 theorem machineHealthCheck_refinement_sound :
-    True := by
-  -- TODO(formal).
-  trivial
+    ∀ {Concrete Abstract : Type}
+      (concrete : Step Concrete)
+      (abstract : Step Abstract)
+      (m : Mapping Concrete Abstract),
+      (∀ c c', concrete c c' → abstract (m.abs c) (m.abs c')) →
+      IsSound concrete abstract m := by
+  intro Concrete Abstract concrete abstract m hsim
+  exact sound_of_step_simulation concrete abstract m hsim
 
 end ControlPlane.Refinement

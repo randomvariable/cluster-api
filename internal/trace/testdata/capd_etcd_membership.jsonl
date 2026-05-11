@@ -1,0 +1,5 @@
+{"time":"2026-05-10T00:00:00Z","msg":"Bootstrap etcd voters","voters":["cp1","cp2","cp3"]}
+{"time":"2026-05-10T00:00:01Z","msg":"Adding etcd member","node":"cp4"}
+{"time":"2026-05-10T00:00:02Z","msg":"Observed learner progress","node":"cp4","progress":"Eligible"}
+{"time":"2026-05-10T00:00:03Z","msg":"Promoting learner etcd member","node":"cp4"}
+{"time":"2026-05-10T00:00:04Z","msg":"Elected etcd leader","candidate":"cp1","term":2}

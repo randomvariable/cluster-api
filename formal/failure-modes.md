@@ -17,7 +17,11 @@ controller-runtime substrate they share:
 | ClusterTopology + runtime extensions | `Topology.qnt` | FM-39, FM-40, FM-41 |
 | In-place machine updates | `InPlaceUpdate.qnt` | FM-42, FM-43, FM-44 |
 | controller-runtime substrate | `ControllerRuntime.qnt` | FM-45, FM-46, FM-47 |
-| End-to-end cluster lifecycle | `ClusterE2E.qnt` | FM-48, FM-49, FM-50 |
+| End-to-end cluster lifecycle | `ClusterE2E.qnt`, `ClusterE2ERefined.qnt` | FM-48, FM-49, FM-50 |
+| Finalizer chain ordering | `Finalizers.qnt` | FM-57, FM-58 |
+| Runtime SDK replay / cache lifecycle | `RuntimeSDK.qnt` | FM-59, FM-60 |
+| Conversion-webhook round-trip / outage fallback | `ConversionWebhook.qnt` | FM-63, FM-64, FM-65 |
+| Kubelet PKI / kubeconfig rotation | `KubeletPKI.qnt` | FM-66, FM-67, FM-68 |
 
 ## Classification taxonomy
 
@@ -1566,9 +1570,11 @@ KcpInitializeControlPlane.
 | `KubeadmControlPlaneReconciler.scaleUpControlPlane` | same | 67 |
 
 **Verdict.** `FM48_NoCpBeforeInfraReady` holds across all
-demos and 300×60 random walk.
-**Apalache hopelessness proven** (depth 4, ~10 s) — see
-`make verify-e2e-apalache`.
+demos and 300×60 random walk in `ClusterE2E.qnt`, and again across the
+substrate-aware `ClusterE2ERefined.qnt` demos plus 500×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~10 s) in `ClusterE2E.qnt`
+and re-recorded at depth 4 in `ClusterE2ERefined.qnt` — see
+`make verify-e2e-apalache` and `make verify-clustere2e-refined`.
 **Lean 4 deductive proof** in
 `formal/proofs/ControlPlane/Ordering.lean::fm48_no_cp_before_infra_ready`.
 The proof discharges the invariant by structural induction on
@@ -1610,8 +1616,10 @@ requires `controlPlaneInitialised`).
 | Topology `callAfterControlPlaneInitialized` | `internal/controllers/topology/cluster/reconcile_state.go` | 188 |
 
 **Verdict.** `FM49_NoWorkersBeforeCpInit` holds across all
-demos and 300×60 random walk.
-**Apalache hopelessness proven** (depth 4, ~9 s).
+demos and 300×60 random walk in `ClusterE2E.qnt`, and across the
+substrate-aware `ClusterE2ERefined.qnt` demos plus 500×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~9 s) and re-recorded in the
+refined model at depth 4.
 **Lean 4 deductive proof** in
 `formal/proofs/ControlPlane/Ordering.lean::fm49_no_workers_before_cp_init`.
 Same structural-induction technique as FM-48; the proof holds
@@ -1647,8 +1655,10 @@ remains true.
 | (No clear path — verified by inspection.) | | |
 
 **Verdict.** `FM50_EndpointMonotonic` holds across all demos
-and 300×60 random walk.
-**Apalache hopelessness proven** (depth 4, ~9 s).
+and 300×60 random walk in `ClusterE2E.qnt`, and across the
+substrate-aware `ClusterE2ERefined.qnt` demos plus 500×60 random walk.
+**Apalache hopelessness proven** (depth 4, ~9 s) and re-recorded in the
+refined model at depth 4.
 **Lean 4 deductive proof** in
 `formal/proofs/ControlPlane/Ordering.lean::fm50_endpoint_monotonic`.
 The Lean proof generalises the bounded check to a
@@ -1663,6 +1673,464 @@ contradicting the strengthened invariant). Composed via
 `PEndpointHost`.
 
 **Classification.** **MODELLING** (verifies upstream invariant).
+
+## FM-52 — MachineDeployment rollout / MHC conflicting delete pressure
+
+**Provenance.** **Modelling** — surfaced by the dedicated
+MachineDeployment rollout model for issue #14. The race is
+between rollout-owned old-Machine scale-down and
+MachineHealthCheck-owned remediation for the same worker fleet.
+
+**Trigger.** A rollout is already running, replacement capacity
+exists, and MHC independently marks an old Machine unhealthy.
+If ownership bookkeeping is stale, both the rollout planner and
+the remediation path may attempt to claim the same delete slot.
+
+**Init / scenarios.** `conflictingDeleteRaceRun` demonstrates the
+safe sequence where MHC and rollout delete different Machines.
+`MachineDeletionRaceWithMHC` is kept as a synthetic bug action to
+show the conflicting-delete shape explicitly.
+
+**Verdict.** Stable invariant `MhcCannotDeleteScaleDownVictim`
+holds in `specs/MachineDeploymentRollout.qnt` (1000×60 random
+walk) and the controller-runtime refinement preserves the same
+ownership split under single-key reconcile serialisation.
+
+**Classification.** **MODELLING** (ownership invariant over
+upstream choreography).
+
+## FM-53 — Rollout availability snapshot invariant is too strong
+
+**Provenance.** **Modelling** — issue #14 intentionally asks for
+counterexample-driven refinement of MD rollout invariants.
+
+**Trigger.** While a rollout is running, the operator changes
+`MachineDeployment.spec.replicas` upward while an MHC-owned drain
+is already in flight. The stronger snapshot-style obligation
+`AvailabilityBound` fails transiently before the replacement
+Machine becomes Healthy.
+
+**Init / scenarios.** Captured in
+`counterexample-log.md` as a deliberate open counterexample on
+`MachineDeploymentRollout.AvailabilityBound`.
+
+**Verdict.** The invariant is retained as a documented
+counterexample candidate and is NOT part of the passing stable
+safety battery. This is an accepted modelling outcome, not an
+upstream implementation bug.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-95 — ClusterTopology reads a torn ClusterClass view mid-update
+
+**Provenance.** **Modelling** — issue #84 standalone ClusterClass /
+topology torn-read slice (`ClusterClassTopologyRace.qnt`). The concrete
+read surface is the topology reconciler invoking
+`DefaultAndValidateVariables` against a `ClusterClass`, while the
+definition-conflict signal is grounded in the topology variable
+validation helpers.
+
+**Trigger.** `ClusterClass` begins updating its variable definitions,
+but the topology reconciler reads a mixed old/new view before the update
+finishes. Variable resolution then sees an inconsistent definition set
+and produces an invalid merged template.
+
+**Init / scenarios.** `versionPinnedReadRun` shows the intended regime:
+update the ClusterClass, finish the update, then let topology pin and
+resolve the new version cleanly. `tornReadRun` begins the update,
+performs a mid-update read, and resolves variables from that torn view,
+violating `ConsistentCCViewPerReconcile`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Topology reconciler variable default/validate read | `internal/controllers/topology/cluster/cluster_controller.go` | 354 |
+| Cluster webhook variable validation surface | `internal/webhooks/cluster.go` | 754-756 |
+| Variable-definition conflict surfacing | `internal/topology/variables/utils.go` | 78 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the torn-read path via `tornReadRun`, and Apalache reaches the
+same `ConsistentCCViewPerReconcile` violation from `tornReadInit`
+within depth 4 (`make verify-cc-topology-race-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-96 — ClusterResourceSet ApplyOnce runs before kubelets join
+
+**Provenance.** **Modelling** — issue #85 standalone ClusterResourceSet
+timing slice (`ClusterResourceSetTiming.qnt`). The concrete strategy
+surface is the CRS controller's `ApplyOnce` vs `Reconcile` split; the
+readiness race is grounded in the same control-plane-init milestone the
+topology/formal corpus already uses.
+
+**Trigger.** `Cluster.Status.ControlPlaneInitialized` becomes true, the
+ClusterResourceSet `ApplyOnce` strategy fires, but worker kubelets have
+not yet joined. The payload is consumed exactly once, fails to take
+effect, and is never retried.
+
+**Init / scenarios.** `joinsBeforeApplyRun` shows the intended regime:
+control plane initialises, kubelets join, then CRS applies and the
+payload becomes effective. `applyBeforeJoinRun` races the apply ahead of
+kubelet join, violating `ApplyOnceEventuallyTakesEffect`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| CRS apply / binding update path | `internal/controllers/clusterresourceset/clusterresourceset_controller.go` | 292-447 |
+| CRS strategy selection | `internal/controllers/clusterresourceset/clusterresourceset_scope.go` | 81-87 |
+| Control-plane-init milestone grounding | `internal/controllers/topology/cluster/cluster_controller.go` | 354 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the ApplyOnce timing race via `applyBeforeJoinRun`, and
+Apalache reaches the same `ApplyOnceEventuallyTakesEffect` violation
+from `applyBeforeJoinInit` within depth 4
+(`make verify-crs-timing-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-97 — KCP and MHC concurrently delete the same Machine
+
+**Provenance.** **Modelling** — issue #83 standalone delete-race slice
+(`KcpMhcDeleteRace.qnt`). The KCP replacement path is grounded in the
+control-plane scale/helpers code, while the MHC-side selection/remediation
+path is grounded in the machine-healthcheck controller.
+
+**Trigger.** KCP has already selected an unhealthy old machine for
+replacement and may have created the replacement, while MHC independently
+marks the same old machine unhealthy and also decides it should be
+deleted. Depending on timing, both controllers can believe they own
+deletion, and the replacement can even be selected for remediation before
+it has stabilized.
+
+**Init / scenarios.** `authoritativeDeleteRun` shows the intended regime:
+KCP creates the replacement and is the sole deleter of the old machine.
+`concurrentDeleteRun` sets both KCP and MHC as deleters of the old
+machine, violating `NoDoubleDelete`. `replacementCannibalisedRun` creates
+the replacement, lands it on the same node/failure domain, and has MHC
+select it immediately, violating `NoReplacementCannibalisation`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| KCP replacement selection / creation grounding | `controlplane/kubeadm/internal/controllers/scale.go` | 1-260 |
+| KCP helper creation path | `controlplane/kubeadm/internal/controllers/helpers.go` | 149-305 |
+| MHC remediation request / existence checks | `internal/controllers/machinehealthcheck/machinehealthcheck_controller.go` | 421-521, 795-813 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the concurrent double-delete path via `concurrentDeleteRun`,
+and Apalache reaches the same `NoDoubleDelete` violation from
+`doubleDeleteInit` within depth 4 (`make verify-kcp-mhc-delete-apalache`).
+The replacement-cannibalisation variant is separately captured via
+`NoReplacementCannibalisation` on `replacementCannibalisedRun`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-66 — User-provided kubeconfig secret is rotated as if KCP owned it
+
+**Provenance.** **Modelling** — first issue-20 counterexample
+candidate.
+
+**Trigger.** A kubeconfig Secret that is user-provided or otherwise not
+owned by KCP is still regenerated when its client certificate ages past
+the renewal window.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`KubeletPKI.ownedSecretOnlyRotates`, reproduced via
+`userSecretRotationRun` with `--invariant=ownedSecretOnlyRotates`.
+
+**Verdict.** Logged as a deliberate ownership-guard counterexample.
+The stable invariant set follows the controller helper, which only
+rotates owned Secrets.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-67 — Cluster CA is regenerated after KCP initialization
+
+**Provenance.** **Modelling** — second issue-20 counterexample
+candidate.
+
+**Trigger.** KCP has already initialized at least one control-plane
+machine, cluster CA material later goes missing, and reconcile mints a
+fresh CA instead of surfacing the unsupported state as an error.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`KubeletPKI.caNotRecreatedAfterInit`, reproduced via
+`postInitCARegenRun` with `--invariant=caNotRecreatedAfterInit`.
+
+**Verdict.** Logged as the post-init CA-regeneration counterexample.
+The stable model follows `reconcileClusterCertificates`: generation is
+allowed only before initialization; after that, missing CA is an error.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-68 — Kubeconfig rotation rewrites the control-plane endpoint
+
+**Provenance.** **Modelling** — third issue-20 counterexample
+candidate.
+
+**Trigger.** A kubeconfig rotation path replaces or rewrites the server
+endpoint instead of preserving the address parsed from the existing
+Secret.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`KubeletPKI.rotationPreservesEndpoint`, reproduced via
+`endpointRewriteRun` with `--invariant=rotationPreservesEndpoint`.
+
+**Verdict.** Logged as the endpoint-rewrite counterexample. The stable
+invariant follows `RegenerateSecret`, which reuses the endpoint parsed
+from the existing kubeconfig before re-signing client credentials.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-54 — Old-MS starvation snapshot invariant is too strong
+
+**Provenance.** **Modelling** — second issue-14 counterexample
+candidate.
+
+**Trigger.** The rollout planner selected an old Machine only
+after replacement capacity existed, but a later operator template
+change aborts the rollout generation. The derived state can still
+show `scaleDownSelected=true` after the earlier replacement-ready
+fact has been invalidated, so a timeless `NoStarveOldMS`
+obligation is too strong.
+
+**Init / scenarios.** Logged in `counterexample-log.md` on
+`MachineDeploymentRollout.NoStarveOldMS`.
+
+**Verdict.** Like FM-53, this remains a documented
+counterexample candidate rather than a member of the stable
+passing invariant battery.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-55 — ClusterClass patch order is non-confluent on overlapping fields
+
+**Provenance.** **Modelling** — issue #15 adds an explicit model for
+the ordered patch accumulation loop in the topology patch engine.
+
+**Trigger.** Two ClusterClass patches write the same JSON pointer
+(`ImageTag` in the abstraction). Enabling the conflicting patch and
+then flipping `ClusterClassPatchOrderChange` changes the final merged
+template even though the enabled patch set is unchanged.
+
+**Init / scenarios.** Captured in `counterexample-log.md` as
+`ClusterClassPatches.mergeDeterministicAllOrders`. The stable invariant
+`mergeDeterministic` is intentionally scoped to independent-field patch
+sets only.
+
+**Verdict.** Deliberate counterexample candidate. Not treated as an
+upstream implementation bug; it documents the non-confluent merge shape
+that an explicit ordered patch pipeline necessarily admits.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-56 — Immutable-field snapshot taken before validation is too strong
+
+**Provenance.** **Modelling** — second issue-15 counterexample
+candidate.
+
+**Trigger.** `ClusterClassImmutableFieldChanges` updates the variable
+feeding an immutable field. The raw merged template flips the field, but
+the webhook verdict becomes `ValidationReject` and `MergedTemplateApplied`
+never commits the change to the applied template.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`ClusterClassPatches.immutableMergedCandidate`.
+
+**Verdict.** The stronger pre-validation snapshot claim is rejected on
+purpose. The stable invariant is `immutablePreserved`, which ranges over
+the applied template that survives webhook validation.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-57 — Parent object disappears before child finalizers clear
+
+**Provenance.** **Modelling** — issue #18 adds an explicit finalizer
+chain model and a synthetic `OwnerDeletedMachineSet` action to exercise
+the ordering bug the stable safety invariants intentionally exclude.
+
+**Trigger.** A parent object (`MachineSetObj` in the reproduced trace)
+has already cleared its own finalizer and disappears while a child
+(`MachineObj`) is still alive with provider-side leaves
+(`InfraMachineObj`, `BootstrapConfigObj`) pending.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`Finalizers.ownerDeletionWaitsForChildrenCandidate`, reproduced via
+`orphanedChildOrderingRun` followed by `OwnerDeletedMachineSet`.
+
+**Verdict.** Deliberate counterexample candidate. Not treated as an
+upstream implementation bug by itself; it documents the stronger
+ordering obligation that the current stable battery does not claim.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-58 — Progress-from-any-state is too strong under deletion stalls
+
+**Provenance.** **Modelling** — second issue-18 counterexample
+candidate.
+
+**Trigger.** Deletion is in flight, but no controller has yet
+acknowledged the parent/child handoff and the external block flags are
+also asserted (`infraQuotaExceeded`, `nodeDrainBlocked`). In that state
+the stronger obligation that *some* `RemoveFinalizer` action is enabled
+from every deleting state fails immediately.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`Finalizers.progressFromAnyStateCandidate`, reproduced via
+`blockedDeletionRun`.
+
+**Verdict.** Accepted as an over-strong liveness candidate rather than a
+passing invariant. The stable battery verifies safety properties of the
+chain and leaves eventual progress to the Lean companion theorem under a
+well-founded clearing measure.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-59 — Restart invalidates in-memory hook cache, causing replay
+
+**Provenance.** **Modelling** — issue #16 adds an explicit Runtime SDK
+discovery / cache lifecycle model.
+
+**Trigger.** A hook response has already been applied once for the
+current generation, then a controller restart invalidates the in-memory
+response cache. The next retry replays the transport call even though the
+effect-level application remains idempotent.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`RuntimeSDK.restartCacheReuseCandidate`, reproduced via
+`restartCacheReplayRun` followed by `InvokeHook`.
+
+**Verdict.** Deliberate counterexample candidate. The stable invariant is
+`cacheInvalidatedOnRestart`; the stronger claim that there is no replayed
+transport call across restart is intentionally rejected.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-60 — Partial failure may require transport replay of the same hook generation
+
+**Provenance.** **Modelling** — second issue-16 counterexample
+candidate.
+
+**Trigger.** One extension in an N-extension hook chain fails after a
+prefix of handlers has already completed. Recovery keeps the
+already-applied prefix intact, but a retry replays the transport-level
+hook call for the same generation.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`RuntimeSDK.partialFailureSingleTransportCandidate`, reproduced via
+`partialFailureRetryRun` followed by `InvokeHook`.
+
+**Verdict.** Accepted as a replay-style counterexample rather than a
+stable invariant failure. The passing property is
+`partialFailureRecoverable`, which protects prefix integrity instead of
+forbidding replay.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-61 — Pivot crash leaves dual-live object without pause fence
+
+**Provenance.** **Modelling** — issue #17 adds an explicit clusterctl
+move / pivot model for source pause, destination restore, and source
+teardown.
+
+**Trigger.** A controller crash lands after the destination has already
+restored part of the owner graph, but before the move is fenced by the
+intended pause / teardown window. The same object can then be live on
+both clusters while neither side is safely fenced.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`Pivot.crashMutualExclusionCandidate`, reproduced via
+`crashDualReconcileRun`.
+
+**Verdict.** Deliberate counterexample candidate. The stable invariant
+`mutualExclusion` only ranges over reachable states that keep the
+transfer fenced while duplication is tolerated; the stronger crash-state
+claim is documented separately.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-62 — Partial pivot restores leaf before owner chain
+
+**Provenance.** **Modelling** — second issue-17 counterexample
+candidate.
+
+**Trigger.** A partial restore places a leaf object on the destination
+cluster while its owner chain is still present only on the source. The
+result is a destination-side orphan that the stable owner-closure
+invariant intentionally excludes from the passing battery.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`Pivot.partialPivotOrphanCandidate`, reproduced via `partialOrphanRun`.
+
+**Verdict.** Accepted as a stronger pivot-snapshot obligation rather
+than a passing invariant. The stable property `noOrphan` allows
+source+destination duplication during transfer, but not destination-only
+children whose owner chain is missing there.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-63 — v1beta2 projection drops a legacy diagnostic key
+
+**Provenance.** **Modelling** — issue #19 adds an explicit
+conversion-webhook model plus a Lean witness for the FM-16
+informativeness gap.
+
+**Trigger.** A v1beta1 status projection carries a legacy diagnostic
+tag (`context deadline exceeded`) while the v1beta2 status surface only
+keeps a generic wrapper tag. The newer projection is therefore not at
+least as informative as the older one.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`ConversionWebhook.roundTripStatusInformative`, reproduced via
+`statusProjectionLossRun` with `--invariant=roundTripStatusInformative`.
+
+**Verdict.** Deliberate counterexample candidate and the concrete
+witness used to replace the previous `trivial` proof in
+`formal/proofs/ControlPlane/Informativeness.lean`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-64 — One-version-only status field is dropped without documentation
+
+**Provenance.** **Modelling** — second issue-19 counterexample
+candidate.
+
+**Trigger.** A field that exists only in one version is absent from the
+other version's surface, and the drop is not explicitly documented in
+the conversion corpus.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`ConversionWebhook.informationLossDocumented`, reproduced via
+`undocumentedFieldLossRun` with `--invariant=informationLossDocumented`.
+
+**Verdict.** Accepted as a documentation-gap counterexample rather than
+a stable invariant failure in the supported conversion path.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-65 — NoneConverter fallback serves a cross-version read
+
+**Provenance.** **Modelling** — third issue-19 counterexample
+candidate.
+
+**Trigger.** The conversion webhook is unavailable, `noneConverter`
+fallback is enabled, and the caller still requests a different API
+version than the stored one. That is exactly the silent-cross-version
+path the model treats as unsafe.
+
+**Init / scenarios.** Logged in `counterexample-log.md` as
+`ConversionWebhook.noneConverterCrossVersionCandidate`, reproduced via
+`outageFallbackRun` with
+`--invariant=noneConverterCrossVersionCandidate`.
+
+**Verdict.** Logged as the expected outage-fallback counterexample.
+The stable invariant `webhookFailureSafe` requires this situation to
+surface as a clean error while leaving stored data untouched.
+
+**Classification.** **MODELLING** (counterexample candidate).
 
 ## FM-45 — Per-key reconcile serialisation
 
@@ -1781,6 +2249,920 @@ runs and 500×60 random walk.
 
 **Classification.** **MODELLING** (verifies upstream
 invariant).
+
+## FM-69 — Bounded fault storm still permits legitimate reconcile completion
+
+**Provenance.** **Modelling** — issue #30 fault-storm slice layered on
+top of `ControllerRuntime.qnt`.
+
+**Trigger.** Several non-legitimate keys flap simultaneously, but the
+aggregate fault rate stays within the abstract refill budget captured by
+`MAX_BURST` and `REFILL_RATE`.
+
+**Init / scenarios.** `boundedFaultStormRun` drives two faulting keys
+plus a distinguished legitimate key (`LEGIT_KEY`). The scenario checks
+`FM69_BoundedFaultProgress`, requiring the legitimate key to still
+finish with `OutcomeSuccess`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `processNextWorkItem` | `pkg/internal/controller/controller.go` | 419 |
+| Non-terminal error requeue (`AddRateLimited`) | same | 487-489 |
+| `handleWaitingItems` | `pkg/controller/priorityqueue/priorityqueue.go` | 309-356 |
+| `NumRequeues` / `Forget` | same | 497-521 |
+
+**Verdict.** `FM69_BoundedFaultProgress` holds on the dedicated
+bounded-fault demo run. This is not claimed as a global controller-runtime
+invariant; it is an issue-specific scenario check layered on top of the
+stable FM-45/46/47 battery.
+
+**Classification.** **MODELLING** (bounded-fault scenario holds).
+
+## FM-70 — Fault-storm overload starves a legitimate reconcile
+
+**Provenance.** **Modelling** — issue #30 overload counterexample.
+
+**Trigger.** Repeated fault-induced retries on other keys consume the
+abstract dispatch budget quickly enough that a legitimate key remains in
+the ready queue without being served.
+
+**Init / scenarios.** `faultStormOverloadRun` drives two consecutive
+error / requeue cycles for a flapping peer key before enqueuing the
+distinguished legitimate key. The stronger property
+`FM70_NoLegitReadyBacklog` then fails because the legitimate key is left
+in `InReady` rather than being reconciled immediately.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `processNextWorkItem` | `pkg/internal/controller/controller.go` | 419 |
+| Non-terminal error requeue (`AddRateLimited`) | same | 487-489 |
+| `handleWaitingItems` | `pkg/controller/priorityqueue/priorityqueue.go` | 309-356 |
+| `NumRequeues` / `Forget` | same | 497-521 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the overload shape directly via `faultStormOverloadRun`, and Apalache
+finds a violation of `FM70_NoLegitReadyBacklog` from `init` within depth
+4 (`make verify-cr-faultstorm-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-71 — Cross-controller cyclic enqueue livelock
+
+**Provenance.** **Modelling** — issue #31 two-controller queue / cache
+cycle (`CrossControllerCycle.qnt`). The concrete watch edges come from
+the MachineDeployment controller watching MachineSets and the MachineSet
+controller watching MachineDeployments / Machines.
+
+**Trigger.** Reconciler `Md` is in flight, cross-enqueues work that makes
+`Ms` reconcile, and then waits for its cache to observe the resulting
+MachineSet-side update. `Ms` starts, cross-enqueues back toward the
+Deployment-side object, and also waits for its own cache to observe the
+peer-side update. With both caches still stale, both controllers are in
+flight and blocked on each other.
+
+**Init / scenarios.** `livelockCycleRun` reaches the blocked cycle in four
+steps and violates `NoCyclicLivelock`. `stabilisedCycleRun` follows the
+same enqueue pattern but then executes `CacheSyncMdOnMs` /
+`CacheSyncMsOnMd`, after which `CompleteMd` / `CompleteMs` are enabled and
+the cycle drains.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| `MachineSetToDeployments` watch enqueue | `internal/controllers/machinedeployment/machinedeployment_controller.go` | 106-113 |
+| `MachineToMachineSets` / `mdToMachineSets` watch enqueue | `internal/controllers/machineset/machineset_controller.go` | 131-141 |
+| Cache reader split | `pkg/client/client.go` | 40-91 |
+| Queue drain | `pkg/internal/controller/controller.go` | 419 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the livelock via `livelockCycleRun`, and Apalache reaches the same
+blocked shape from `init` within depth 4 (`make verify-cross-controller-cycle-apalache`).
+The stabilised companion scenario demonstrates the recovery regime once
+the peer cache views catch up.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-72 — Reflector relist storm duplicates a Machine create
+
+**Provenance.** **Modelling** — issue #32 bookmark-gap / RV-too-old / relist
+storm abstraction (`ReflectorRelistStorm.qnt`). The concrete watch
+semantics are anchored to the in-memory runtime watch implementation,
+while the create surface is anchored to the KCP machine-generation helper.
+
+**Trigger.** A reflector misses a bookmark, the apiserver compacts, the
+watch session relists, and the current create-intent state is replayed.
+If reconcile is not idempotent, both the relist replay and the later
+watch replay can trigger the same Machine create path.
+
+**Init / scenarios.** `idempotentRelistStormRun` shows the safe regime:
+the duplicate delivery is ignored and `NoDuplicateMachineLeak` still
+holds. `duplicateCreateRelistStormRun` takes the adversarial branch
+`CreateDuplicateMachineBug` and violates `NoDuplicateMachineLeak` by
+driving `machineCount` from `1` to `2`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Bookmark event emission | `test/infrastructure/inmemory/pkg/server/api/watch.go` | 173-185 |
+| Bookmark RV retrieval | `test/infrastructure/inmemory/pkg/runtime/cache/cache.go` | 51 |
+| Bookmark RV client impl | `test/infrastructure/inmemory/pkg/runtime/cache/client.go` | 84-95 |
+| KCP desired-machine generation | `controlplane/kubeadm/internal/controllers/helpers.go` | 149-193 |
+| KCP Machine create + cache wait | `controlplane/kubeadm/internal/controllers/helpers.go` | 298-305 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the duplicate-create bug via `duplicateCreateRelistStormRun`, and
+Apalache reaches the same `NoDuplicateMachineLeak` violation from `init`
+within depth 4 (`make verify-reliststorm-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-73 — Deleted object stays enqueued into a nil-read / shutdown-drain race
+
+**Provenance.** **Modelling** — issue #33 queue/object lifecycle slice
+(`StaleEnqueueShutdown.qnt`). The delete-after-enqueue path is grounded to
+KCP/helper `IsNotFound` handling, while the shutdown side reuses the same
+queue-drain intuition already present in the controller-runtime substrate.
+
+**Trigger.** A key is enqueued, the object disappears from etcd before
+reconcile reads it, and reconcile either handles NotFound correctly or
+incorrectly proceeds as if a live object were still present. In the sister
+scenario, manager shutdown stops accepting new work while one reconcile is
+already in flight.
+
+**Init / scenarios.** `deletedObjectHandledRun` demonstrates the safe
+NotFound path via `HandleNotFound`. `shutdownDrainRun` shows an in-flight
+reconcile draining after `ManagerShutdown`. `nilReadAfterDeleteRun`
+reproduces the panic-class bug via `NilReadBug`, and `orphanedFinalizerRun`
+reproduces the stronger finalizer-leak candidate.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| KCP reconcile NotFound handling | `controlplane/kubeadm/internal/controllers/controller.go` | 182, 451 |
+| KCP helper NotFound handling | `controlplane/kubeadm/internal/controllers/helpers.go` | 59 |
+| Queue work-item processing | `pkg/internal/controller/controller.go` | 419 |
+| Finalizer patch NotFound guard | `util/patch/patch.go` | 186 |
+| Deprecated patch NotFound guard | `util/deprecated/v1beta1/patch/patch.go` | 181 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the nil-read bug via `nilReadAfterDeleteRun`, and Apalache reaches the
+same `NoNilReadAfterDelete` violation from `init` within depth 4
+(`make verify-stale-shutdown-apalache`). The shutdown-drain companion run
+still satisfies `ShutdownDrainCompletes`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-74 — Validator reads stale field before mutator default/replay converges
+
+**Provenance.** **Modelling** — issue #34 admission-chain ordering slice
+(`WebhookOrdering.qnt`). The concrete default/validate anchor is the
+Cluster topology variable webhook path; reinvocation is modelled as
+platform admission behaviour layered on top of that path.
+
+**Trigger.** A validating webhook observes a field, then a mutating step
+defaults or normalises that field later in the same admission chain. If
+the validating verdict is not replayed against the new value, the final
+admitted object no longer matches what the validator actually checked.
+
+**Init / scenarios.** `convergingReinvocationRun` models the safe regime:
+validator reads `Invalid`, mutator moves the value through `Defaulted`
+into `Valid`, reinvocation is triggered, and the second validator pass
+converges (`ReinvocationConverges`). `staleValidatorReadRun` models the
+counterexample where mutation/defaulting happens after the original read,
+but the chain still declares itself converged with the stale observation.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Cluster variable default + validate | `internal/webhooks/cluster.go` | 754-900 |
+| Cluster topology path invoking `DefaultAndValidateVariables` | `internal/controllers/topology/cluster/cluster_controller.go` | 354 |
+| ClusterClass variable validation | `internal/topology/variables/clusterclass_variable_validation.go` | 55-120 |
+| ClusterClass webhook validation hook | `internal/webhooks/clusterclass.go` | 125 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the stale-validator-read bug via `staleValidatorReadRun`, and Apalache
+reaches the same `ObservedValueIsFinal` violation from `init` within
+depth 4 (`make verify-webhook-ordering-apalache`). The converging
+companion run shows the intended replay regime.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-75 — Self-hosted webhook outage deadlocks upgrade or opens unsafe ignore window
+
+**Provenance.** **Modelling** — issue #35 self-referential webhook outage
+slice (`WebhookSelfReference.qnt`). The concrete anchor is the webhook
+manifests’ `failurePolicy: Fail` plus the fact that upgrade-relevant
+control-plane reconciliation depends on admission succeeding while the
+same cluster is hosting the webhook pod.
+
+**Trigger.** The webhook pod restarts or goes unavailable during an
+upgrade of the same cluster. With fail-closed admission, progress stalls
+waiting for a webhook that is itself affected by the upgrade. With a broad
+temporary switch to `Ignore`, progress resumes but invalid mutations can
+slip through during the outage window.
+
+**Init / scenarios.** `safeFallbackRun` models the intended safe regime:
+admission is still unavailable, but an explicit `safeFallbackActive` path
+lets the upgrade continue without admitting an invalid mutation.
+`failClosedDeadlockRun` models the pure fail-closed deadlock and violates
+`UpgradeProgressDespiteWebhookGap`. `ignoreWindowInvalidMutationRun`
+models the unsafe branch where `failurePolicy == Ignore` admits a pending
+invalid mutation, violating `NoInvalidMutationDuringIgnoreWindow`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Core webhook manifests (`failurePolicy: Fail`) | `config/webhook/manifests.yaml` | n/a |
+| Bootstrap kubeadm webhook manifests | `bootstrap/kubeadm/config/webhook/manifests.yaml` | n/a |
+| KCP webhook manifests | `controlplane/kubeadm/config/webhook/manifests.yaml` | n/a |
+| KCP upgrade / reconcile surface | `controlplane/kubeadm/internal/controllers/controller.go` | upgrade-relevant reconcile path |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the fail-closed deadlock via `failClosedDeadlockRun`, and Apalache reaches
+the same `UpgradeProgressDespiteWebhookGap` violation from `init` within
+depth 4 using the narrowed `stepApalache` relation
+(`make verify-webhook-selfref-apalache`). The ignore-window unsafe branch
+is documented as a second explicit counterexample.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-76 — Serving cert rotates before apiserver trust cache refreshes CABundle
+
+**Provenance.** **Modelling** — issue #36 CABundle staleness slice
+(`WebhookCABundleStaleness.qnt`). The concrete anchors are the webhook
+cert-manager certificate resources, CABundle injection kustomizations,
+and the webhook manifest consumption path.
+
+**Trigger.** cert-manager rotates the webhook serving cert and the new CA
+is injected into the webhook configuration, but the kube-apiserver still
+holds the old CA in its internal cache for a short window. Admission then
+fails with x509 trust errors even though the webhook configuration already
+contains the new bundle.
+
+**Init / scenarios.** `refreshRecoveryRun` models the intended recovery
+path: serving cert rotates, CABundle is injected, one admission fails
+while trust is stale, then `ApiserverRefreshCache` aligns the trust bundle
+and admission succeeds again. `staleTrustOutageRun` models the minimal
+counterexample where the serving cert rotates and admission is attempted
+before cache refresh, violating `CurrentlyTrusted`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Core webhook cert-manager cert | `config/certmanager/certificate.yaml` | n/a |
+| Bootstrap webhook cert-manager cert | `bootstrap/kubeadm/config/certmanager/certificate.yaml` | n/a |
+| KCP webhook cert-manager cert | `controlplane/kubeadm/config/certmanager/certificate.yaml` | n/a |
+| Core CA injection kustomization | `config/default/kustomization.yaml` | n/a |
+| Bootstrap CA injection kustomization | `bootstrap/kubeadm/config/default/kustomization.yaml` | n/a |
+| KCP CA injection kustomization | `controlplane/kubeadm/config/default/kustomization.yaml` | n/a |
+| Webhook manifest consumption | `config/webhook/manifests.yaml` | n/a |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the stale-trust x509 window via `staleTrustOutageRun`, and Apalache
+reaches the same `CurrentlyTrusted` violation from `init` within depth 4
+(`make verify-webhook-cabundle-apalache`). The companion recovery run
+demonstrates that an eventual cache refresh clears the outage.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-78 — Dry-run admission probe triggers real side effects despite NoneOnDryRun
+
+**Provenance.** **Modelling** — issue #38 dry-run side-effects contract
+slice (`DryRunSideEffects.qnt`). The concrete anchors are the webhook
+manifests’ `sideEffects: None` declarations and the repo’s real
+controller-side SSA dry-run probes.
+
+**Trigger.** A controller performs a dry-run request (for example, an SSA
+probe while preparing an in-place update diff), the webhook declares that
+it has no side effects on dry-run, but the implementation still triggers
+an external call.
+
+**Init / scenarios.** `compliantDryRunProbeRun` models the intended safe
+regime: the dry-run request is queued, the webhook executes, and no real
+side effect is triggered. `violatingDryRunProbeRun` takes the explicit
+bug branch `WebhookFiresExternalCall`, violating `DryRunHasNoSideEffects`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Core webhook manifests (`sideEffects: None`) | `config/webhook/manifests.yaml` | 27, 48, 69, ... |
+| Bootstrap webhook manifests (`sideEffects: None`) | `bootstrap/kubeadm/config/webhook/manifests.yaml` | 26, 53, 74 |
+| KCP webhook manifests (`sideEffects: None`) | `controlplane/kubeadm/config/webhook/manifests.yaml` | 27, 53, 74, 94 |
+| Dry-run SSA option | `internal/util/ssa/patch.go` | 38-43, 119 |
+| In-place update dry-run probes | `controlplane/kubeadm/internal/controllers/inplace_canupdatemachine.go` | 160, 169, 178 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the violating dry-run probe via `violatingDryRunProbeRun`, and Apalache
+reaches the same `DryRunHasNoSideEffects` violation from the dedicated
+`violatingProbeInit` within depth 4
+(`make verify-dryrun-sideeffects-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-79 — Asymmetric partition creates a dual-leader window
+
+**Provenance.** **Modelling** — issue #39 directed-network-partition
+slice (`AsymmetricPartition.qnt`). The concrete symmetric grounding is
+the `Partition(m)` fault in `Lifecycle.qnt`; this standalone model makes
+the reachability loss directional instead of all-or-nothing.
+
+**Trigger.** Heartbeats or acknowledgements are blocked only in one
+direction. The follower side stops receiving the evidence it needs to
+keep following, starts an election, and advances term, while the
+original leader still has enough connectivity to keep accepting writes.
+
+**Init / scenarios.** `dualLeaderWindowRun` blocks only the `B -> A`
+direction, starts a follower-side election, and then takes
+`MinorityLeaderStillAcceptsWrites`, violating `NoSimultaneousLeaders`.
+`recoveredDirectionalPartitionRun` follows the same prefix but then
+heals the block and applies `RecoverToSingleLeader`, satisfying the
+recovered end-state `RecoveredToSingleLeader`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Symmetric partition grounding | `formal/specs/Lifecycle.qnt` | 2023-2042 |
+| Leader election grounding | `formal/specs/Lifecycle.qnt` | 613-628 |
+| Leader step-down grounding | `formal/specs/Lifecycle.qnt` | 858-875 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the dual-leader window via `dualLeaderWindowRun`, and Apalache reaches
+the same `NoSimultaneousLeaders` violation from the dedicated
+`dualLeaderInit` within depth 4
+(`make verify-asymmetric-partition-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-80 — Snapshot restore races concurrent compaction and KCP membership reconcile
+
+**Provenance.** **Modelling** — issue #40 restore/compaction race slice
+(`SnapshotRestoreCompaction.qnt`). The concrete operator restore surface
+is grounded in `Lifecycle.qnt`'s existing `RestoreClusterFromSnapshot`
+action; compaction is grounded in the same spec's `EtcdCompactionStart`
+and `EtcdCompactionDone` actions.
+
+**Trigger.** The operator begins restoring an older etcd snapshot while
+KCP still mutates the live member set, and compaction advances during the
+same window. The member set can then be rolled back to the snapshot while
+the log basis the restore expected has already been compacted away.
+
+**Init / scenarios.** `cleanRestoreRun` captures the intended regime
+where restore completes without overlap and
+`MemberSetMatchesSnapshotPostRestore` holds. `compactionRaceRun` begins a
+restore, lets KCP reconcile add a live member, then advances compaction
+before completing restore; `NoLogInconsistency` fails in that path.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Restore grounding | `formal/specs/Lifecycle.qnt` | 2522-2581 |
+| Compaction start grounding | `formal/specs/Lifecycle.qnt` | 3000-3077 |
+| Compaction done grounding | `formal/specs/Lifecycle.qnt` | 3623-3660 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run` reproduces
+the restore/compaction race via `compactionRaceRun`, and Apalache reaches
+the same `NoLogInconsistency` violation from the dedicated `raceInit`
+within depth 4 (`make verify-snapshot-restore-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-81 — Defrag overlaps a second maintenance fault and drops quorum
+
+**Provenance.** **Modelling** — issue #41 standalone defrag-maintenance
+slice (`DefragQuorumLoss.qnt`). The concrete quorum arithmetic is
+grounded in the existing etcd-member health logic in `Lifecycle.qnt`,
+with the single-defrag pause provenance anchored by FM-24.
+
+**Trigger.** One etcd member is paused for defrag, which is safe on a
+3-member cluster by itself. A second member then glitches during the same
+window, leaving only one active voter and dropping the cluster below
+quorum.
+
+**Init / scenarios.** `serialDefragRun` captures the intended regime:
+begin defrag on one member and end it without overlap, preserving
+`NoQuorumLossUnderSingleMaintenanceFault`. `overlapLossRun` takes the
+adversarial branch `BeginDefrag(1) -> MemberGlitchDuringDefrag(2)`,
+violating the same property.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Quorum arithmetic grounding | `formal/specs/Lifecycle.qnt` | 525-606 |
+| Maintenance glitch provenance | `formal/specs/Lifecycle.qnt` | 2913 |
+| Existing defrag pause provenance | `formal/failure-modes.md` | FM-24 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the defrag-overlap quorum-loss path via `overlapLossRun`, and
+Apalache reaches the same `NoQuorumLossUnderSingleMaintenanceFault`
+violation from `overlapInit` within depth 4
+(`make verify-defrag-quorum-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-82 — WAL corruption / disk-full fault silently removes an etcd member
+
+**Provenance.** **Modelling** — issue #42 standalone WAL-member-state
+slice (`EtcdWalFaults.qnt`). The detection/remediation vocabulary is
+grounded in the existing `RequestRemediation` surface in `Lifecycle.qnt`.
+
+**Trigger.** A member accumulates latent WAL corruption or a disk-full
+condition, then crashes or becomes opaque without an externally observed
+detection signal. The cluster can lose effective quorum participation
+without KCP immediately requesting remediation.
+
+**Init / scenarios.** `detectedFaultRun` captures the intended regime:
+the member enters a bad WAL state, crashes, is observed through the
+opaque-loss path, and KCP requests remediation, satisfying
+`KcpDetectsAndRemediates`. `silentCorruptionRun` takes the adversarial
+branch where corruption is followed by crash but no detection step,
+violating `NoSilentMemberLoss`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Request remediation grounding | `formal/specs/Lifecycle.qnt` | 1845-1889 |
+| Crash / glitch provenance | `formal/specs/Lifecycle.qnt` | 2913 |
+| Disk-pressure / custom-condition provenance | `formal/specs/Lifecycle.qnt` | 3522-3764 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the silent-member-loss path via `silentCorruptionRun`, and
+Apalache reaches the same `NoSilentMemberLoss` violation from
+`silentInit` within depth 4 (`make verify-wal-faults-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-83 — Etcd membership reconcile batches add and remove together
+
+**Provenance.** **Modelling** — issue #43 standalone membership-batch
+slice (`EtcdMembershipBatch.qnt`). The learner-add side is grounded in
+the existing `EtcdMembership.qnt` / `Lifecycle.qnt` add/promote actions,
+while the remove side is grounded in the real workload-cluster
+`RemoveMember` helper.
+
+**Trigger.** A single reconcile batch both adds/promotes a new member and
+removes an existing voter, rather than waiting for a clean post-join
+quorum checkpoint. This is the same family of churn the larger
+`Lifecycle.qnt` corpus already flags as unrealistic flip-flop behaviour.
+
+**Init / scenarios.** `serialMembershipRun` shows the intended regime:
+join/promote the new member, finish that batch, then remove the old
+member in a later batch. `sameBatchChurnRun` keeps the batch open and
+applies both sides together, violating `NoSameBatchAddRemove`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Learner add / promote grounding | `formal/specs/EtcdMembership.qnt` | 143-177 |
+| Kubeadm join -> add learner grounding | `formal/specs/Lifecycle.qnt` | 1415-1465 |
+| Remove member call | `controlplane/kubeadm/internal/workload_cluster_etcd.go` | 88-108 |
+| Etcd client remove primitive | `controlplane/kubeadm/internal/etcd/etcd.go` | 229-245 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the same-batch churn path via `sameBatchChurnRun`, and
+Apalache reaches the same `NoSameBatchAddRemove` violation from
+`sameBatchInit` within depth 4 (`make verify-etcd-batch-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-84 — 5-node / 3-failure recovery promotes too many learners in one window
+
+**Provenance.** **Modelling** — issue #44 standalone 5-node recovery
+slice (`EtcdFiveNodeFailure.qnt`). This avoids the blocked replica
+parameterisation work in issue #27 by fixing the carrier set to a 5-voter
+cluster plus two learner candidates.
+
+**Trigger.** A 5-node control plane loses three members. Instead of
+sequentially promoting one learner and stabilising, the recovery window
+requests or applies multiple learner promotions before the first recovery
+checkpoint has completed.
+
+**Init / scenarios.** `sequentialRecoveryRun` shows the intended regime:
+lose three voters, request remediation, promote one learner, recover one
+voter, and end the recovery window. `leaderFollowersLossRun` keeps the
+same incident open and applies two learner promotions, violating
+`NoDoublePromotionDuringRecovery`. `symmetricTripleLossRun` additionally
+checks the bounded-remediation surface via `RemediationBoundedPerScenario`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Existing 5-node carrier grounding | `formal/specs/Lifecycle.qnt` | 466-512 |
+| Existing 5-node alternative init grounding | `formal/specs/Lifecycle.qnt` | 5388-5429 |
+| Request remediation grounding | `formal/specs/Lifecycle.qnt` | 1845-1889 |
+| Learner promotion grounding | `formal/specs/EtcdMembership.qnt` | 168-186 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the leader+followers 3-failure path via
+`leaderFollowersLossRun`, and Apalache reaches the same
+`NoDoublePromotionDuringRecovery` violation from `leaderFollowersInit`
+within depth 4 (`make verify-etcd-5node-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-85 — Slow CRI / PLEG hang triggers over-eager remediation
+
+**Provenance.** **Modelling** — issue #45 standalone node-health /
+remediation slice (`KubeletPlegHang.qnt`). The repo does not contain
+PLEG-specific controller logic, so the abstraction is grounded to the
+existing `NodeReady` derivation surfaces plus the remediation vocabulary
+already used in the formal corpus.
+
+**Trigger.** Container runtime latency rises, PLEG stops observing pod
+state updates long enough to cross its threshold, kubelet derives
+`NodeReady = NotReady`, MHC observes the transient state, and remediation
+is requested before the CRI recovers.
+
+**Init / scenarios.** `transientSlowdownRun` shows the intended regime:
+slow CRI causes a short PLEG lag but the runtime recovers before any
+remediation is requested. `overeagerRemediationRun` crosses the PLEG
+threshold, fires MHC, requests remediation, and only then recovers the
+CRI, violating `RemediationAfterStableNotReady`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| NodeReady derivation helper | `controllers/noderefutil/util.go` | 62-82 |
+| Machine NodeReady condition synthesis | `internal/controllers/machine/machine_controller_status.go` | 323-360 |
+| Request remediation grounding | `formal/specs/Lifecycle.qnt` | 1845-1889 |
+| Alternative remediation grounding | `formal/specs/KCPReconcile.qnt` | 164-178 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the over-eager remediation path via
+`overeagerRemediationRun`, and Apalache reaches the same
+`RemediationAfterStableNotReady` violation from `slowCriInit`
+within depth 4 (`make verify-pleg-hang-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-86 — Registry throttle cascades into bootstrap stall
+
+**Provenance.** **Modelling** — issue #46 standalone bootstrap-timing
+slice (`RegistryPullBackoff.qnt`). The user-visible symptom grounding is
+the KCP condition surface that explicitly cites `ImagePullBackOff`, while
+the success latch is grounded in the existing control-plane-initialised
+status flow.
+
+**Trigger.** Registry throttling delays pulling the kube-apiserver image
+long enough that the bootstrap timeout fires before the transient backoff
+window clears, even though the image would eventually become available.
+
+**Init / scenarios.** `boundedThrottleRun` shows the intended regime:
+throttle once, back off, clear the throttle, pull successfully, and mark
+the control plane initialised before timeout. `timeoutBeforePullClearsRun`
+keeps the throttle in place long enough that `BootstrapTimeout` fires
+first, violating `NoFalseBootstrapFailure`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| KCP condition symptom surface (`ImagePullBackOff`) | `api/controlplane/kubeadm/v1beta2/kubeadm_control_plane_types.go` | 378 |
+| Legacy condition symptom surface | `api/controlplane/kubeadm/v1beta1/condition_consts.go` | 106 |
+| ControlPlaneInitialized latch | `controlplane/kubeadm/internal/controllers/status.go` | 173-188 |
+| Existing bootstrap progression grounding | `formal/specs/ClusterE2ERefined.qnt` | 214-247 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the timeout-before-pull-clears path via
+`timeoutBeforePullClearsRun`, and Apalache reaches the same
+`NoFalseBootstrapFailure` violation from `timeoutInit`
+within depth 4 (`make verify-registry-pull-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-87 — MemPressure evicts a mis-priority critical static pod
+
+**Provenance.** **Modelling** — issue #47 standalone eviction-under-
+memory-pressure slice (`StaticPodMemPressure.qnt`). The concrete
+customization surface is the kubeadm static-pod patch target set, while
+the concrete rendered outputs in `_artifacts/.../resources/...` show the
+intended `priorityClassName: system-node-critical` on the generated
+control-plane pods.
+
+**Trigger.** Node memory pressure builds an eviction candidate set and the
+kube-apiserver static pod is not priority-protected because its
+`priorityClassName` drifted from the intended critical value. Kubelet can
+then evict the static pod mid-reconcile, taking the apiserver down.
+
+**Init / scenarios.** `correctPriorityRun` shows the intended regime:
+the control-plane static pods keep critical priority and the workload pod
+is chosen for eviction instead. `misPriorityEvictionRun` first demotes
+the kube-apiserver pod to `normal`, then enters memory pressure and
+evicts it, violating `CriticalStaticPodsImmuneFromEviction`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Kubeadm static-pod patch target surface | `bootstrap/kubeadm/types/upstreamv1beta3/types.go` | 456-457 |
+| Static-pod health surfacing on machines | `controlplane/kubeadm/internal/workload_cluster_conditions.go` | 668-670, 758-966 |
+| CAPI drain path explicitly skipping static pods (contrast) | `internal/controllers/machine/drain/filters.go` | 237 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the mis-priority eviction path via `misPriorityEvictionRun`,
+and Apalache reaches the same
+`CriticalStaticPodsImmuneFromEviction` violation from `misPriorityInit`
+within depth 4 (`make verify-static-pod-eviction-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-88 — Static-pod hash collision or stale kubelet reload preserves the wrong intent
+
+**Provenance.** **Modelling** — issue #48 standalone manifest-identity /
+kubelet-reload slice (`StaticPodHashReloadRace.qnt`). The concrete
+surfaces are the rendered static-pod manifests, the kubeadm/kubelet
+ConfigMap update path, and the existing static-pod health surfacing in
+KCP conditions.
+
+**Trigger.** Two distinct intended static-pod identities render to the
+same manifest hash, or kubeadm rotates the desired kubelet config while
+the kubelet is still running the old generation. Reconcile then reasons
+from stale kubelet state and the wrong static-pod identity survives.
+
+**Init / scenarios.** `eventualReloadRun` shows the intended regime:
+kubeadm rotates, kubelet reloads, and observed intent converges to the
+desired manifest set. `hashCollisionRun` writes a second distinct intent
+with the same manifest hash and then observes only one identity,
+violating `NoHashCollisionAcrossDistinctIntents`. `staleReloadRun`
+rotates kubelet config but never reloads, violating
+`ReloadEventuallyConverges`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Rendered static-pod outputs with concrete identities | `_artifacts/.../resources/kube-system/Pod/*.yaml` | n/a |
+| Kubelet config ConfigMap grounding | `bootstrap/kubeadm/types/upstreamv1beta3/types.go` | 219 |
+| Workload-cluster config-map update path | `controlplane/kubeadm/internal/workload_cluster.go` | 171-211 |
+| Static-pod health surfacing on machines | `controlplane/kubeadm/internal/workload_cluster_conditions.go` | 668-670, 758-966 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the manifest-hash collision path via `hashCollisionRun`, and
+Apalache reaches the same
+`NoHashCollisionAcrossDistinctIntents` violation from `collisionInit`
+within depth 4 (`make verify-static-pod-hash-apalache`). The stale
+reload path is separately logged via `ReloadEventuallyConverges` on
+`staleReloadRun`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-89 — CSR approval lag strands kubelet until bootstrap timeout fires
+
+**Provenance.** **Modelling** — issue #49 standalone CSR queue / approval-lag
+slice (`BootstrapCsrLag.qnt`). The repo does not contain a dedicated CSR
+approval controller implementation, so the abstraction is grounded to the
+archived kubelet-authentication proposal's client CSR flow plus the
+existing bootstrap-failure symptom surface in the Docker test provider.
+
+**Trigger.** Kubelet submits a bootstrap CSR, the approval controller is
+slow or backlogged, kubelet retries, and bootstrap times out before the
+approval is processed even though approval would eventually have
+succeeded.
+
+**Init / scenarios.** `eventualApprovalRun` shows the intended regime:
+the first CSR is submitted, time advances, and approval is processed
+before bootstrap fails. `approvalTimeoutRun` reaches the timeout first,
+violating `BootstrapTimeoutCoversCsrLatency`. `strandedKubeletRun`
+demonstrates the second target by reaching a state where bootstrap has
+failed without kubelet holding a client cert, violating
+`NoStrandedKubelet`.
+
+**LSP grounding.**
+
+| Go / doc entry point | File | Line |
+|---|---|---|
+| Kubelet client CSR flow | `docs/proposals/archived/20210222-kubelet-authentication.md` | 412-422 |
+| Approval / signer policy surface | same document | 219-255 |
+| Bootstrap failure symptom surface | `test/infrastructure/docker/api/v1beta1/condition_consts.go` | 67-70 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the approval-timeout path via `approvalTimeoutRun`, and
+Apalache reaches the same `BootstrapTimeoutCoversCsrLatency` violation
+from `approvalTimeoutInit` within depth 4
+(`make verify-bootstrap-csr-apalache`). The stranded-kubelet variant is
+separately logged via `NoStrandedKubelet` on `strandedKubeletRun`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-90 — MTU drift silently fragments packets and stalls snapshot transfer
+
+**Provenance.** **Modelling** — issue #50 standalone MTU / fragmentation
+slice (`MtuFragmentation.qnt`). The repo does not model PMTU discovery
+directly, so the abstraction is grounded to the concrete Docker dev MTU
+setting (`vethMTU: 1450`) plus the operator-level etcd snapshot-transfer
+workflow.
+
+**Trigger.** An etcd snapshot transfer emits packets larger than the
+effective pod-network MTU with DF set, but the sender never receives
+usable ICMP fragmentation-needed feedback. The transfer keeps retrying
+without ever shrinking to a deliverable payload size and times out.
+
+**Init / scenarios.** `convergedPmtuRun` shows the intended regime:
+large packet sent, PMTU mismatch observed, path MTU learned, packet size
+reduced, transfer succeeds. `silentFragDropRun` takes the bad path:
+large packet sent, DF+MTU mismatch occurs, ICMP feedback is lost, and
+bootstrap times out before delivery, violating
+`EtcdSnapshotEventuallySucceeds`.
+
+**LSP grounding.**
+
+| Go / doc entry point | File | Line |
+|---|---|---|
+| Effective pod-network MTU | `test/e2e/config/docker-dev.yaml` | 7 |
+| Snapshot restore workflow grounding | `etcdadm-controller/docs/topics/etcd/howto/backup-restore.md` | 1-120 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the silent-fragmentation timeout path via
+`silentFragDropRun`, and Apalache reaches the same
+`EtcdSnapshotEventuallySucceeds` violation from `silentFragInit`
+within depth 4 (`make verify-mtu-frag-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-91 — Pod starts before CNI creates its veth, causing probe-loop restarts
+
+**Provenance.** **Modelling** — issue #51 standalone CNI/veth race slice
+(`CniVethRace.qnt`). The repo does not contain the kubelet/CNI handshake
+implementation itself, so the abstraction is grounded to Cluster API's
+explicit stance that CNI is an external post-bootstrap dependency plus
+the existing NodeReady / machine-status surfaces where the downstream
+symptom becomes visible.
+
+**Trigger.** Kubelet starts a workload container before the CNI plugin
+has created its veth. Startup/TCP probes fail, the container restarts,
+and the loop continues until CNI catches up.
+
+**Init / scenarios.** `cniReadyBeforeProbeRun` shows the intended safe
+regime: CNI is applied, the veth appears, then the container starts and
+probes succeed. `probeLoopBeforeVethRun` takes the bad path: kubelet
+starts the container first, probes fail twice before veth creation, and
+`NoContainerStartBeforeCni` is violated.
+
+**LSP grounding.**
+
+| Go / doc entry point | File | Line |
+|---|---|---|
+| CNI explicitly deferred until after control plane instantiation | `docs/book/src/developer/providers/contracts/control-plane.md` | 17 |
+| NodeReady derivation helper | `controllers/noderefutil/util.go` | 62-82 |
+| Machine node-status synthesis | `internal/controllers/machine/machine_controller_status.go` | 323-360 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the probe-loop race via `probeLoopBeforeVethRun`, and
+Apalache reaches the same `NoContainerStartBeforeCni` violation from
+`probeLoopInit` within depth 4 (`make verify-cni-veth-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-92 — Load balancer deregisters target before drain, blackholing existing requests
+
+**Provenance.** **Modelling** — issue #52 standalone LB drain / existing
+connection slice (`LoadBalancerDrain.qnt`). The provider side is grounded
+ to the CAPD load balancer configuration-update path, while the control-
+ plane side is grounded to the KCP pre-terminate sequencing surface.
+
+**Trigger.** The load balancer deregisters an apiserver target, but
+existing client TCP connections are not actively reset. If KCP kills the
+apiserver pod before drain completes, those clients hang on a dead target
+until timeout or eventual reset.
+
+**Init / scenarios.** `drainBeforeKillRun` shows the intended regime:
+KCP waits for drain completion (`lbDrainProgress == FULL_DRAIN`) before
+killing the apiserver, so `clientHung` never becomes true.
+`killBeforeDrainRun` takes the bad path: target deregistered, apiserver
+killed, then a client hangs, violating `KcpUpgradeAccountsForLbDrain`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Provider-side LB configuration update | `test/infrastructure/docker/internal/docker/loadbalancer.go` | 136-203 |
+| CAPD control-plane node add/remove -> LB target update | `test/infrastructure/docker/internal/controllers/backends/docker/dockermachine_backend.go` | 414-464 |
+| KCP pre-terminate sequencing | `controlplane/kubeadm/internal/controllers/controller.go` | 1362-1409 |
+| APIServer health surfacing | `controlplane/kubeadm/internal/workload_cluster_conditions.go` | 668-670 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the blackholed-request path via `killBeforeDrainRun`, and
+Apalache reaches the same `KcpUpgradeAccountsForLbDrain` violation from
+`killBeforeDrainInit` within depth 4 (`make verify-lb-drain-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-93 — NetworkPolicy cuts controller traffic mid-flight and long-lived watch stalls silently
+
+**Provenance.** **Modelling** — issue #53 standalone netpol / connection
+mode slice (`NetworkPolicyMidFlight.qnt`). The repo does not contain a
+concrete NetworkPolicy controller, so the abstraction is grounded to the
+existing split between long-lived cached/watch clients and uncached
+request/response clients in the cluster-cache layer.
+
+**Trigger.** An operator applies a NetworkPolicy that blocks controller
+egress to the apiserver after a controller already holds a long-lived
+watch connection. New connections fail fast, but the existing watch may
+survive silently and stall controller progress.
+
+**Init / scenarios.** `detectedPolicyCutRun` shows the intended regime:
+policy is applied, the existing connection is terminated or a reconnect
+fails fast, and the controller detects the cut. `silentWatchSurvivesRun`
+takes the bad path: policy is applied, the existing long-lived watch is
+not terminated, and the controller stalls silently, violating
+`NoSilentControllerStall`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Long-lived cached / uncached client split | `controllers/clustercache/cluster_accessor_client.go` | 75-109, 207-293 |
+| Controller reconnection surface (`ErrClusterNotConnected`) | `controllers/clustercache/cluster_accessor.go` | 402 |
+| Status/failure surfacing for remote conditions | `formal/specs/ControllerRuntime.qnt` and `formal/specs/CniVethRace.qnt` companion slices | n/a |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the silent-stall path via `silentWatchSurvivesRun`, and
+Apalache reaches the same `NoSilentControllerStall` violation from
+`silentWatchInit` within depth 4 (`make verify-netpol-stall-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-94 — Conntrack exhaustion under churn drops new kubelet→apiserver connections
+
+**Provenance.** **Modelling** — issue #54 standalone conntrack
+exhaustion slice (`ConntrackExhaustion.qnt`). The concrete configuration
+surface is the CAPD test provisioning that sets
+`net.netfilter.nf_conntrack_max` on nodes.
+
+**Trigger.** Pod or endpoint churn drives conntrack occupancy to the
+configured maximum, new connections are dropped, and kubelet/apiserver
+requests start timing out before occupancy can converge back below the
+sustainable threshold.
+
+**Init / scenarios.** `boundedChurnRun` shows the intended regime:
+churn rate stays low enough that expiry keeps occupancy below the table
+limit and `EventualConvergence` holds. `tableFullRun` raises the churn
+rate, fills the table, drops a new connection, and then times out the
+kubelet request, violating `EventualConvergence`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Cloud-init conntrack max setting | `test/infrastructure/docker/internal/provisioning/cloudinit/writefiles.go` | 45-46 |
+| Ignition conntrack max setting | `test/infrastructure/docker/internal/provisioning/ignition/kindadapter.go` | 40-41 |
+| CAPD test kind config conntrack setting | `tilt.d/capd-test/kind.yaml` | 16-17 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the saturation path via `tableFullRun`, and Apalache reaches
+the same `EventualConvergence` violation from `tableFullInit`
+within depth 4 (`make verify-conntrack-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-80 — Snapshot restore races compaction and concurrent membership reconcile
+
+**Provenance.** **Modelling** — issue #40 restore/compaction-race slice
+(`SnapshotRestoreCompaction.qnt`). The operator restore grounding comes
+from the existing `RestoreClusterFromSnapshot` step in `Lifecycle.qnt`.
+
+**Trigger.** The operator begins a snapshot restore, KCP continues to
+mutate the live etcd member set, and compaction advances during the same
+window. The member set can later be restored back to the snapshot while
+the effective log basis remains inconsistent.
+
+**Init / scenarios.** `cleanRestoreRun` shows the intended regime where
+restore starts and completes without overlap, satisfying
+`MemberSetMatchesSnapshotPostRestore`. `compactionRaceRun` takes the
+adversarial branch `KcpReconcileDuringRestore -> CompactDuringRestore -> CompleteRestoreWithRace`,
+violating `NoLogInconsistency`.
+
+**LSP grounding.**
+
+| Go / spec entry point | File | Line |
+|---|---|---|
+| Snapshot restore grounding | `formal/specs/Lifecycle.qnt` | 2522-2581 |
+| Etcd compaction grounding | `formal/specs/Lifecycle.qnt` | 3000-3077 |
+| Etcd compaction completion | `formal/specs/Lifecycle.qnt` | 3623-3660 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the restore/compaction race via `compactionRaceRun`, and
+Apalache reaches the same `NoLogInconsistency` violation from
+`raceInit` within depth 4 (`make verify-snapshot-restore-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
 
 ## FM-42 — In-place update admitted before CanUpdateMachineSet returns yes
 
@@ -2016,10 +3398,54 @@ reason that the operator can read.
 | FM-45 | Per-key reconcile serialisation under multi-worker | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` + 3 refinement modules (`FM45_PerKeySerialisation`) |
 | FM-46 | TerminalError suppresses requeue | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM46_TerminalErrorNoRequeue`) |
 | FM-47 | Cache lags API server | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ControllerRuntime.qnt` (`FM47_CacheBehindAPI`) |
-| FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM48_NoCpBeforeInfraReady`) + Lean 4 deductive (`Ordering.lean::fm48_no_cp_before_infra_ready`) |
-| FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM49_NoWorkersBeforeCpInit`) + Lean 4 deductive (`Ordering.lean::fm49_no_workers_before_cp_init`) |
-| FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` (`FM50_EndpointMonotonic`) + Lean 4 deductive (`Ordering.lean::fm50_endpoint_monotonic`) |
+| FM-69 | Bounded fault storm still permits legitimate reconcile completion | MODELLING | Token refill and eventual worker service | Verified in `specs/ControllerRuntime.qnt` (`FM69_BoundedFaultProgress`) on `boundedFaultStormRun` |
+| FM-70 | Fault-storm overload starves a legitimate reconcile | MODELLING | n/a — explicit counterexample threshold | Logged as deliberate counterexample candidate on `FM70_NoLegitReadyBacklog`; Apalache reaches the violation within depth 4 |
+| FM-71 | Cross-controller cyclic enqueue livelock | MODELLING | Cache stabilisation on one side breaks the cycle | Logged as deliberate counterexample candidate on `NoCyclicLivelock` in `specs/CrossControllerCycle.qnt`; Apalache reaches the violation within depth 4 |
+| FM-72 | Reflector relist storm duplicates a Machine create | MODELLING | Duplicate delivery is tolerated only if reconcile is idempotent | Logged as deliberate counterexample candidate on `NoDuplicateMachineLeak` in `specs/ReflectorRelistStorm.qnt`; Apalache reaches the violation within depth 4 |
+| FM-73 | Deleted object stays enqueued into a nil-read / shutdown-drain race | MODELLING | NotFound handling and in-flight drain avoid panic/leak | Logged as deliberate counterexample candidate on `NoNilReadAfterDelete` in `specs/StaleEnqueueShutdown.qnt`; Apalache reaches the violation within depth 4 |
+| FM-74 | Validator reads stale field before mutator default/replay converges | MODELLING | Reinvocation lets validator re-read the final value | Logged as deliberate counterexample candidate on `ObservedValueIsFinal` in `specs/WebhookOrdering.qnt`; Apalache reaches the violation within depth 4 |
+| FM-75 | Self-hosted webhook outage deadlocks upgrade or opens unsafe ignore window | MODELLING | Explicit safe fallback avoids broad ignore policy | Logged as deliberate counterexample candidate on `UpgradeProgressDespiteWebhookGap` in `specs/WebhookSelfReference.qnt`; Apalache reaches the fail-closed deadlock within depth 4 |
+| FM-76 | Serving cert rotates before apiserver trust cache refreshes CABundle | MODELLING | Cache refresh closes the short x509 outage window | Logged as deliberate counterexample candidate on `CurrentlyTrusted` in `specs/WebhookCABundleStaleness.qnt`; Apalache reaches the stale-trust violation within depth 4 |
+| FM-78 | Dry-run admission probe triggers real side effects despite NoneOnDryRun | MODELLING | Compliant webhooks observe dry-run and suppress external calls | Logged as deliberate counterexample candidate on `DryRunHasNoSideEffects` in `specs/DryRunSideEffects.qnt`; Apalache reaches the violating probe within depth 4 |
+| FM-79 | Asymmetric partition creates a dual-leader window | MODELLING | Healing the directed block collapses back to one leader | Logged as deliberate counterexample candidate on `NoSimultaneousLeaders` in `specs/AsymmetricPartition.qnt`; Apalache reaches the dual-leader window within depth 4 |
+| FM-80 | Snapshot restore races concurrent compaction and KCP membership reconcile | MODELLING | Restore completes cleanly when compaction and reconcile do not overlap | Logged as deliberate counterexample candidate on `NoLogInconsistency` in `specs/SnapshotRestoreCompaction.qnt`; Apalache reaches the inconsistency within depth 4 |
+| FM-81 | Defrag overlaps a second maintenance fault and drops quorum | MODELLING | Serial single-member defrag preserves quorum | Logged as deliberate counterexample candidate on `NoQuorumLossUnderSingleMaintenanceFault` in `specs/DefragQuorumLoss.qnt`; Apalache reaches the quorum-loss state within depth 4 |
+| FM-82 | WAL corruption / disk-full fault silently removes an etcd member | MODELLING | Explicit detection + remediation closes the opaque-loss window | Logged as deliberate counterexample candidate on `NoSilentMemberLoss` in `specs/EtcdWalFaults.qnt`; Apalache reaches the silent-loss state within depth 4 |
+| FM-83 | Etcd membership reconcile batches add and remove together | MODELLING | Join/promote completes before remove in the serial regime | Logged as deliberate counterexample candidate on `NoSameBatchAddRemove` in `specs/EtcdMembershipBatch.qnt`; Apalache reaches the churn state within depth 4 |
+| FM-84 | 5-node / 3-failure recovery promotes too many learners in one window | MODELLING | Sequential recovery keeps promotion to one learner per recovery window | Logged as deliberate counterexample candidate on `NoDoublePromotionDuringRecovery` in `specs/EtcdFiveNodeFailure.qnt`; Apalache reaches the counterexample within depth 4 |
+| FM-85 | Slow CRI / PLEG hang triggers over-eager remediation | MODELLING | Transient slowdown recovers before remediation in the safe regime | Logged as deliberate counterexample candidate on `RemediationAfterStableNotReady` in `specs/KubeletPlegHang.qnt`; Apalache reaches the counterexample within depth 4 |
+| FM-86 | Registry throttle cascades into bootstrap stall | MODELLING | Timeout budget exceeds transient pull backoff in the safe regime | Logged as deliberate counterexample candidate on `NoFalseBootstrapFailure` in `specs/RegistryPullBackoff.qnt`; Apalache reaches the timeout-before-pull-clears state within depth 4 |
+| FM-87 | MemPressure evicts a mis-priority critical static pod | MODELLING | Correct kubeadm output keeps static pods priority-protected | Logged as deliberate counterexample candidate on `CriticalStaticPodsImmuneFromEviction` in `specs/StaticPodMemPressure.qnt`; Apalache reaches the mis-priority eviction state within depth 4 |
+| FM-88 | Static-pod hash collision or stale kubelet reload preserves the wrong intent | MODELLING | Distinct intents hash differently and kubelet reload catches up in the safe regime | Logged as deliberate counterexample candidate on `NoHashCollisionAcrossDistinctIntents` / `ReloadEventuallyConverges` in `specs/StaticPodHashReloadRace.qnt`; Apalache reaches the collision state within depth 4 |
+| FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
+| FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
+| FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |
+| FM-92 | Load balancer deregisters target before drain, blackholing existing requests | MODELLING | KCP waits for drain completion before apiserver termination in the safe regime | Logged as deliberate counterexample candidate on `KcpUpgradeAccountsForLbDrain` in `specs/LoadBalancerDrain.qnt`; Apalache reaches the blackholed-request state within depth 4 |
+| FM-93 | NetworkPolicy cuts controller traffic mid-flight and long-lived watch stalls silently | MODELLING | Controller detects the cut or fail-fast reconnects in the safe regime | Logged as deliberate counterexample candidate on `NoSilentControllerStall` in `specs/NetworkPolicyMidFlight.qnt`; Apalache reaches the silent-stall state within depth 4 |
+| FM-95 | ClusterTopology reads a torn ClusterClass view mid-update | MODELLING | Reconcile pins a consistent ClusterClass version in the safe regime | Logged as deliberate counterexample candidate on `ConsistentCCViewPerReconcile` in `specs/ClusterClassTopologyRace.qnt`; Apalache reaches the torn-read state within depth 4 |
+| FM-96 | ClusterResourceSet ApplyOnce runs before kubelets join | MODELLING | Apply happens after kubelets join or Reconcile retries until readiness in the safe regime | Logged as deliberate counterexample candidate on `ApplyOnceEventuallyTakesEffect` in `specs/ClusterResourceSetTiming.qnt`; Apalache reaches the timing race within depth 4 |
+| FM-97 | KCP and MHC concurrently delete the same Machine | MODELLING | One controller owns old-machine deletion and replacements are not immediately reselected in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleDelete` / `NoReplacementCannibalisation` in `specs/KcpMhcDeleteRace.qnt`; Apalache reaches the double-delete state within depth 4 |
+| FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM48_NoCpBeforeInfraReady`) + Lean 4 deductive (`Ordering.lean::fm48_no_cp_before_infra_ready`) |
+| FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM49_NoWorkersBeforeCpInit`) + Lean 4 deductive (`Ordering.lean::fm49_no_workers_before_cp_init`) |
+| FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM50_EndpointMonotonic`) + Lean 4 deductive (`Ordering.lean::fm50_endpoint_monotonic`) |
 | FM-51 | Cross-spec preflight-gate transient violation | MODELLING | Level-triggered re-evaluation by MS controller | Surfaced + verified in `specs/WorkerLifecycle.qnt`; weakened `FM33_PreflightGate` accordingly |
+| FM-52 | MD rollout / MHC conflicting delete pressure | MODELLING | Concurrent rollout-owned and MHC-owned delete intent | Verified in `specs/MachineDeploymentRollout.qnt` (`MhcCannotDeleteScaleDownVictim`) + refinement |
+| FM-53 | Rollout availability snapshot invariant too strong | MODELLING | Replica increase while remediation drain is already in flight | Logged as deliberate counterexample candidate on `AvailabilityBound` |
+| FM-54 | Old-MS starvation snapshot invariant too strong | MODELLING | Template abort after earlier scale-down admission | Logged as deliberate counterexample candidate on `NoStarveOldMS` |
+| FM-55 | ClusterClass patch order non-confluence on overlapping fields | MODELLING | Two patches write the same JSON pointer and order flips final merge | Logged as deliberate counterexample candidate on `mergeDeterministicAllOrders` |
+| FM-56 | Immutable-field pre-validation snapshot too strong | MODELLING | Rejected immutable flip appears in merged candidate but never applies | Logged as deliberate counterexample candidate on `immutableMergedCandidate` |
+| FM-57 | Parent object disappears before child finalizers clear | MODELLING | Synthetic owner-deleted step removes a parent while descendant finalizers still block | Logged as deliberate counterexample candidate on `ownerDeletionWaitsForChildrenCandidate` |
+| FM-58 | Progress-from-any-state is too strong under deletion stalls | MODELLING | Deletion in flight but no `RemoveFinalizer` is enabled under acknowledgement / external blocks | Logged as deliberate counterexample candidate on `progressFromAnyStateCandidate` |
+| FM-59 | Restart invalidates in-memory hook cache, causing replay | MODELLING | Retry after restart replays transport call for same hook generation | Logged as deliberate counterexample candidate on `restartCacheReuseCandidate` |
+| FM-61 | Pivot crash leaves dual-live object without pause fence | MODELLING | Crash after destination restore begins but before pause / teardown completes | Logged as deliberate counterexample candidate on `crashMutualExclusionCandidate` |
+| FM-62 | Partial pivot restores leaf before owner chain | MODELLING | Destination sees a child object while its owner chain is still only on source | Logged as deliberate counterexample candidate on `partialPivotOrphanCandidate` |
+| FM-60 | Partial failure may require replay of the same hook generation | MODELLING | Retry after prefix-success partial failure replays transport call | Logged as deliberate counterexample candidate on `partialFailureSingleTransportCandidate` |
+| FM-63 | v1beta2 projection drops a legacy diagnostic key | MODELLING | Newer status surface omits a diagnostic tag still present in the legacy surface | Logged as deliberate counterexample candidate on `roundTripStatusInformative` via `statusProjectionLossRun` |
+| FM-64 | One-version-only status field is dropped without documentation | MODELLING | Conversion loses a one-version-only field and the drop is not recorded | Logged as deliberate counterexample candidate on `informationLossDocumented` via `undocumentedFieldLossRun` |
+| FM-65 | NoneConverter fallback serves a cross-version read | MODELLING | Conversion webhook is down but a different-version read is still served through NoneConverter fallback | Logged as deliberate counterexample candidate on `noneConverterCrossVersionCandidate` |
+| FM-66 | User-provided kubeconfig secret rotates without KCP ownership | MODELLING | Rotation path ignores the ownership guard and regenerates a user-managed Secret | Logged as deliberate counterexample candidate on `ownedSecretOnlyRotates` via `userSecretRotationRun` |
+| FM-67 | Cluster CA regenerates after KCP initialization | MODELLING | Missing post-init CA is silently re-minted instead of surfaced as unsupported | Logged as deliberate counterexample candidate on `caNotRecreatedAfterInit` via `postInitCARegenRun` |
+| FM-68 | Kubeconfig rotation rewrites the control-plane endpoint | MODELLING | Regeneration path changes the server address instead of preserving it from the existing Secret | Logged as deliberate counterexample candidate on `rotationPreservesEndpoint` via `endpointRewriteRun` |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus

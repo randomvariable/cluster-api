@@ -71,7 +71,7 @@ func TestKubeadmJoin_StuckLearnerRequiresEtcdRegistered(t *testing.T) {
 }
 
 func TestKubeadmJoin_IncidentShapeOK(t *testing.T) {
-	// The actual incident: kubelet starts, etcd learner registers,
+	// FM-1's shape: kubelet starts, etcd learner registers,
 	// then promotion stalls and join fails. The checker should
 	// accept this as well-formed (the bug is elsewhere — the
 	// fact that the trace records this transition correctly is

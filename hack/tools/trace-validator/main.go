@@ -35,13 +35,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"sigs.k8s.io/cluster-api/internal/trace"
 	"sigs.k8s.io/cluster-api/internal/trace/checkers"
 )
 
 func main() {
-	format := flag.String("format", "jsonl", "trace format: jsonl | itf")
+	format := flag.String("format", "jsonl", "trace format: jsonl | itf | capdlog")
+	differential := flag.Bool("differential", false, "classify checker failures as real-trace discrepancies")
+	defaultClassification := flag.String("default-classification", "controller-bug", "classification for checker failures in differential mode: controller-bug | spec-bug | translator-gap")
+	discrepancyLog := flag.String("discrepancy-log", "", "optional file to append discrepancy summaries to in differential mode")
 	flag.Parse()
 
 	args := flag.Args()
@@ -59,21 +63,47 @@ func main() {
 		defer closer.Close()
 	}
 
-	var records []trace.TraceRecord
-	switch *format {
-	case "jsonl":
-		records, err = trace.LoadJSONLines(rdr)
-	case "itf":
-		records, err = trace.LoadITF(rdr)
-	default:
-		fmt.Fprintf(os.Stderr, "error: unknown format %q\n", *format)
-		os.Exit(2)
-	}
+	records, err := loadRecords(*format, rdr)
 	if err != nil {
+		if *differential {
+			fmt.Printf("DISCREPANCY [translator-gap] load failure — %v\n", err)
+			maybeAppendDiscrepancy(*discrepancyLog, "translator-gap", *format, trace.Verdict{Reason: err.Error()})
+			os.Exit(1)
+		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
 	}
 
+	verdicts, failed := evaluate(records)
+	for _, v := range verdicts {
+		fmt.Println(v.String())
+		if *differential && v.IsFailure() {
+			classification := classify(v, *defaultClassification)
+			fmt.Printf("DISCREPANCY [%s] %s\n", classification, v.String())
+			maybeAppendDiscrepancy(*discrepancyLog, classification, *format, v)
+		}
+	}
+
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d checker(s) reported failures.\n", failed)
+		os.Exit(1)
+	}
+}
+
+func loadRecords(format string, rdr io.Reader) ([]trace.TraceRecord, error) {
+	switch format {
+	case "jsonl":
+		return trace.LoadJSONLines(rdr)
+	case "itf":
+		return trace.LoadITF(rdr)
+	case "capdlog":
+		return trace.LoadCAPDLogs(rdr)
+	default:
+		return nil, fmt.Errorf("unknown format %q", format)
+	}
+}
+
+func evaluate(records []trace.TraceRecord) ([]trace.Verdict, int) {
 	all := []trace.Checker{
 		checkers.EtcdMembership{},
 		checkers.KubeadmJoin{},
@@ -81,18 +111,47 @@ func main() {
 		checkers.MHC{},
 	}
 
+	verdicts := make([]trace.Verdict, 0, len(all))
 	failed := 0
 	for _, c := range all {
 		v := c.Check(records)
-		fmt.Println(v.String())
+		verdicts = append(verdicts, v)
 		if v.IsFailure() {
 			failed++
 		}
 	}
+	return verdicts, failed
+}
 
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "\n%d checker(s) reported failures.\n", failed)
-		os.Exit(1)
+func classify(v trace.Verdict, fallback string) string {
+	if v.Invariant == "MalformedRecord" {
+		return "translator-gap"
+	}
+	if fallback == "spec-bug" || fallback == "translator-gap" || fallback == "controller-bug" {
+		return fallback
+	}
+	return "controller-bug"
+}
+
+func maybeAppendDiscrepancy(path, classification, format string, v trace.Verdict) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: append discrepancy log: %v\n", err)
+		return
+	}
+	defer f.Close()
+	line := fmt.Sprintf("| pending | %s | %s | %s | %s | %s |\n",
+		classification,
+		format,
+		v.Spec,
+		strings.TrimSpace(v.Invariant),
+		strings.TrimSpace(v.Reason),
+	)
+	if _, err := f.WriteString(line); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write discrepancy log: %v\n", err)
 	}
 }
 

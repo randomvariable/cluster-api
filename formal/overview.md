@@ -97,7 +97,7 @@ For a contributor adding a new failure mode:
 | FM-39/40/41 | `specs/Topology.qnt` | Multi-step hook ordering, annotation gating, AfterClusterUpgrade quiescence |
 | FM-42/43/44 | `specs/InPlaceUpdate.qnt` | Premature admission, hook idempotence, multi-extension fast-fail |
 | FM-45/46/47 | `specs/ControllerRuntime.qnt` | Per-key serialisation under multi-worker, TerminalError no-requeue, cache lag |
-| FM-48/49/50 | `specs/ClusterE2E.qnt` | No CP before InfraReady, no workers before CPInit, endpoint monotonicity |
+| FM-48/49/50 | `specs/ClusterE2E.qnt`, `specs/ClusterE2ERefined.qnt` | No CP before InfraReady, no workers before CPInit, endpoint monotonicity |
 
 50 failure modes total. Per-spec verdicts:
 
@@ -108,11 +108,45 @@ For a contributor adding a new failure mode:
 | MachineSetPreflight.qnt | 3 | (deterministic) | — | — |
 | InPlaceUpdate.qnt | 5 | 2000×80 | **9/9 invariants** at depth 4 (FM-42 also at depth 8) | — |
 | ControllerRuntime.qnt | 6 | 500×60 | **7/7 invariants** at depth 4 (FM-45 also at depth 8) | — |
+| CrossControllerCycle.qnt | 2 | 300×40 | **2/2 stable invariants** under random walk; explicit livelock counterexample `NoCyclicLivelock` reachable at Apalache depth 4 | — |
+| ReflectorRelistStorm.qnt | 2 | 300×40 | **2/2 stable watch invariants** under random walk; explicit duplicate-create counterexample `NoDuplicateMachineLeak` reachable at Apalache depth 4 | — |
+| StaleEnqueueShutdown.qnt | 2 | 300×40 | **2/2 stable queue/object invariants** under random walk; explicit nil-read counterexample `NoNilReadAfterDelete` reachable at Apalache depth 4 | — |
+| WebhookOrdering.qnt | 2 | 300×40 | **1/1 stable admission-ordering invariants** under random walk; explicit stale-validator-read counterexample `ObservedValueIsFinal` reachable at Apalache depth 4 | — |
+| WebhookSelfReference.qnt | 2 | 300×40 | **1/1 stable policy-safety invariants** under random walk; explicit fail-closed deadlock counterexample `UpgradeProgressDespiteWebhookGap` reachable at Apalache depth 4 | — |
+| WebhookCABundleStaleness.qnt | 2 | 300×40 | **1/1 stable cache-refresh invariants** under random walk; explicit stale-trust counterexample `CurrentlyTrusted` reachable at Apalache depth 4 | — |
+| DryRunSideEffects.qnt | 2 | 300×40 | **2/2 stable bookkeeping invariants** under random walk; explicit dry-run side-effect counterexample `DryRunHasNoSideEffects` reachable at Apalache depth 4 | — |
+| AsymmetricPartition.qnt | 2 | 300×40 | **2/2 stable term/election invariants** under random walk; explicit dual-leader counterexample `NoSimultaneousLeaders` reachable at Apalache depth 4 | — |
+| SnapshotRestoreCompaction.qnt | 2 | 300×40 | **2/2 stable restore/compaction invariants** under random walk; explicit restore-race counterexample `NoLogInconsistency` reachable at Apalache depth 4 | — |
+| DefragQuorumLoss.qnt | 2 | 300×40 | **3/3 stable defrag bookkeeping invariants** under random walk; explicit quorum-loss counterexample `NoQuorumLossUnderSingleMaintenanceFault` reachable at Apalache depth 4 | — |
+| EtcdWalFaults.qnt | 2 | 300×40 | **2/2 stable remediation bookkeeping invariants** under random walk; explicit silent-member-loss counterexample `NoSilentMemberLoss` reachable at Apalache depth 4 | — |
+| EtcdMembershipBatch.qnt | 2 | 300×40 | **3/3 stable batch-membership invariants** under random walk; explicit same-batch churn counterexample `NoSameBatchAddRemove` reachable at Apalache depth 4 | — |
+| EtcdFiveNodeFailure.qnt | 2 | 300×40 | **3/3 stable 5-node recovery invariants** under random walk; explicit triple-failure remediation-ordering counterexample `NoDoublePromotionDuringRecovery` reachable at Apalache depth 4 | — |
+| KubeletPlegHang.qnt | 2 | 300×40 | **2/2 stable CRI/PLEG bookkeeping invariants** under random walk; explicit over-eager-remediation counterexample `RemediationAfterStableNotReady` reachable at Apalache depth 4 | — |
+| RegistryPullBackoff.qnt | 2 | 300×40 | **1/1 stable pull/backoff invariants** under random walk; explicit bootstrap-timeout counterexample `NoFalseBootstrapFailure` reachable at Apalache depth 4 | — |
+| StaticPodMemPressure.qnt | 2 | 300×40 | **1/1 stable mem-pressure bookkeeping invariant** under random walk; explicit mis-priority static-pod eviction counterexample `CriticalStaticPodsImmuneFromEviction` reachable at Apalache depth 4 | — |
+| StaticPodHashReloadRace.qnt | 2 | 300×40 | **2/2 stable manifest/reload bookkeeping invariants** under random walk; explicit manifest-hash collision counterexample `NoHashCollisionAcrossDistinctIntents` reachable at Apalache depth 4 | — |
+| BootstrapCsrLag.qnt | 2 | 300×40 | **2/2 stable CSR queue invariants** under random walk; explicit approval-timeout counterexample `BootstrapTimeoutCoversCsrLatency` reachable at Apalache depth 4 | — |
+| MtuFragmentation.qnt | 2 | 300×40 | **1/1 stable MTU bookkeeping invariant** under random walk; explicit silent-fragmentation counterexample `EtcdSnapshotEventuallySucceeds` reachable at Apalache depth 4 | — |
+| CniVethRace.qnt | 2 | 300×40 | **2/2 stable CNI/veth bookkeeping invariants** under random walk; explicit pre-veth probe-loop counterexample `NoContainerStartBeforeCni` reachable at Apalache depth 4 | — |
+| LoadBalancerDrain.qnt | 2 | 300×40 | **2/2 stable LB-drain bookkeeping invariants** under random walk; explicit blackholed-connection counterexample `KcpUpgradeAccountsForLbDrain` reachable at Apalache depth 4 | — |
+| ConntrackExhaustion.qnt | 2 | 300×40 | **2/2 stable conntrack bookkeeping invariants** under random walk; explicit saturation counterexample `EventualConvergence` reachable at Apalache depth 4 | — |
+| NetworkPolicyMidFlight.qnt | 2 | 300×40 | **2/2 stable policy/connection bookkeeping invariants** under random walk; explicit silent-stall counterexample `NoSilentControllerStall` reachable at Apalache depth 4 | — |
 | 3 refined modules | 6 | 300×40 each | — | — |
 | ClusterE2E.qnt | 3 | 300×60 | **11/11 invariants** at depth 4 | — |
+| ClusterE2ERefined.qnt | 2 | 500×60 | **6/6 joint invariants** at depth 4 | — |
 | WorkerLifecycle.qnt | 2 | 1000×60 | — (5 cross-cutting joint invariants verified) | — |
+| MachineDeploymentRollout.qnt | 2 | 1000×60 | **6/6 stable invariants** at depth 4; `AvailabilityBound` and `NoStarveOldMS` retained as counterexample candidates | — |
+| ClusterClassPatches.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `mergeDeterministicAllOrders` and `immutableMergedCandidate` retained as counterexample candidates | — |
+| ClusterClassTopologyRace.qnt | 2 | 300×40 | **2/2 stable ClusterClass topology invariants** under random walk; explicit torn-read counterexample `ConsistentCCViewPerReconcile` reachable at Apalache depth 4 | — |
+| ClusterResourceSetTiming.qnt | 2 | 300×40 | **2/2 stable CRS timing invariants** under random walk; explicit ApplyOnce timing counterexample `ApplyOnceEventuallyTakesEffect` reachable at Apalache depth 4 | — |
+| KcpMhcDeleteRace.qnt | 2 | 300×40 | **3/3 stable delete-race bookkeeping invariants** under random walk; explicit double-delete counterexample `NoDoubleDelete` reachable at Apalache depth 4 | — |
+| RuntimeSDK.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `restartCacheReuseCandidate` and `partialFailureSingleTransportCandidate` retained as counterexample candidates | — |
+| Finalizers.qnt | 1 | 1000×60 | **4/4 stable invariants** at depth 4; `ownerDeletionWaitsForChildrenCandidate` and `progressFromAnyStateCandidate` retained as counterexample candidates | `ControlPlane/Finalizers.lean::finalizer_set_eventually_empty` |
+| Pivot.qnt | 2 | 1000×60 | **6/6 stable invariants** at depth 4; `crashMutualExclusionCandidate` and `partialPivotOrphanCandidate` retained as counterexample candidates | — |
+| ConversionWebhook.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `roundTripStatusInformative`, `informationLossDocumented`, and `noneConverterCrossVersionCandidate` retained as concrete counterexample entry points via dedicated bad-state inits | `ControlPlane/Informativeness.lean::informativeness_obligation_violated_for_v1beta2_today` |
+| KubeletPKI.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `ownedSecretOnlyRotates`, `caNotRecreatedAfterInit`, and `rotationPreservesEndpoint` retained as concrete counterexample entry points via dedicated bad-state inits | — |
 
-Total: ~50 demo runs, ~3000 actions covered by random walks, 178
+Total: ~57 demo runs, ~3000 actions covered by random walks, 206
 abstraction-mapping rows under the drift check.
 
 ## Closed gaps
@@ -145,6 +179,14 @@ The corpus has progressed through several phases of expansion:
 | 21 | Mutation testing (issue #4): `hack/tools/quint-mutation-tester.py` applies 8 systematic mutation operators per invariant. 696 mutations attempted across 9 specs; 131 killed (load-bearing), 60 survived. See `formal/mutation-findings.md`. |
 | 22 | Depth bump (issue #5): random walks bumped to 200×40 (Topology), 2000×120 (InPlaceUpdate), 500×100 (ControllerRuntime), 300×100 (ClusterE2E), 1000×80 (WorkerLifecycle); all HOLD. Lifecycle FM-1 TLC at depth=12 (90k states, 1.3 s); FM-9 ConvergenceFair16 at depth=12 surfaced fairness-scope gap (EtcdCompactionStart lasso). Added `ConvergenceFair17`. Documented in counterexample-log.md. |
 | 23 | Apalache deadlock check (issue #6): all 10 spec modules at depth 4 — no deadlocks. TopologyRefined.qnt needed the same `(cpV+1).to(tV)` → `ALL_VERSIONS.filter` refactor applied earlier to Topology.qnt for Apalache compatibility. Make target `verify-deadlock-check`. |
+| 24 | MachineDeployment rollout / MHC / scale concurrency (issue #14): `MachineDeploymentRollout.qnt` + `MachineDeploymentRolloutRefined.qnt`; 6 stable invariants verified, 2 stronger snapshot-style obligations (`AvailabilityBound`, `NoStarveOldMS`) retained as documented counterexample candidates. Make targets `verify-md-rollout*`. |
+| 25 | ClusterClass patch ordering / variable scoping / immutable protection (issue #15): `ClusterClassPatches.qnt`; 5 stable invariants verified, plus two deliberate counterexample candidates (`mergeDeterministicAllOrders`, `immutableMergedCandidate`) for overlapping writes and pre-validation immutable-field flips. Make targets `verify-clusterclass-patches*`. |
+| 26 | Runtime SDK discovery / registration / partial failure (issue #16): `RuntimeSDK.qnt`; 5 stable invariants verified, Apalache battery holds at depth 4, and two stronger replay-style candidates (`restartCacheReuseCandidate`, `partialFailureSingleTransportCandidate`) are retained as documented counterexamples. Make targets `verify-runtimesdk*`. |
+| 27 | Finalizer chain ordering / deletion stalls (issue #18): `Finalizers.qnt` plus `formal/proofs/ControlPlane/Finalizers.lean`; 4 stable invariants verified, Apalache battery holds at depth 4, and two stronger candidates (`ownerDeletionWaitsForChildrenCandidate`, `progressFromAnyStateCandidate`) are retained as documented counterexamples. Make targets `verify-finalizers*`. |
+| 28 | clusterctl move / pivot graph preservation (issue #17): `Pivot.qnt`; 6 stable invariants verified, Apalache battery holds at depth 4, and two stronger candidates (`crashMutualExclusionCandidate`, `partialPivotOrphanCandidate`) are retained as documented counterexamples. Make targets `verify-pivot*`. |
+| 29 | v1beta1 ↔ v1beta2 conversion-webhook round-tripping (issue #19): `ConversionWebhook.qnt` plus the now-discharged witness in `formal/proofs/ControlPlane/Informativeness.lean`; 5 stable invariants verified, Apalache battery holds at depth 4, and three deliberate bad-state entries (`statusProjectionLossRun`, `undocumentedFieldLossRun`, `outageFallbackRun`) are retained as documented counterexamples. Make targets `verify-conversionwebhook*`. |
+| 30 | kubeconfig client-cert rotation / CA availability under KCP reconcile (issue #20): `KubeletPKI.qnt`; 5 stable invariants verified, Apalache battery holds at depth 4, and three deliberate bad-state entries (`userSecretRotationRun`, `postInitCARegenRun`, `endpointRewriteRun`) are retained as documented counterexamples. Make targets `verify-kubeletpki*`. |
+| 31 | end-to-end refinement onto controller-runtime substrate (issue #21): `ClusterE2ERefined.qnt`; 6 joint invariants verified at depth 4, random-walk sweep raised to 500×60, and FM-48/49/50 re-recorded against the substrate-aware model. Make target `verify-clustere2e-refined`. |
 
 Plus apiserver↔etcd modelling (`apiserverEtcdReachable`,
 `apiserverReady`, `etcdCompactionInProgress`, etc.) and
@@ -174,7 +216,6 @@ LSP-grounded refinement anchors across:
 |---|---|
 | Most FMs lack e2e specs (5 are blueprinted) | `e2e-blueprints.md` |
 | FM-9 fairness verdict beyond TLC's 16-conjunct cap (Lean 4 deductive proof closes this; TLC capacity gap remains) | `failure-modes.md` FM-9 §"Phase 11d" |
-| End-to-end refinement onto controller-runtime substrate (ClusterE2E.qnt is abstract; a `ClusterE2ERefined.qnt` would compose with the substrate but is not yet built) | (open) |
 
 ## Tooling state
 

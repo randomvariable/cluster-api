@@ -292,7 +292,7 @@ module KCPReconcile {
     .then(EvaluateCanSafelyRemediate(2))
     .then(CompleteRemediation(2))
 
-  // The incident shape: a fourth Machine joins the KCP, has no
+  // FM-1's shape: a fourth Machine joins the KCP, has no
   // NodeRef yet (because kubeadm-join is stuck), KCP cannot
   // match the etcd member set, remediation is blocked.
   run blockedByMatch = init

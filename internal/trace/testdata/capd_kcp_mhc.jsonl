@@ -1,0 +1,10 @@
+{"time":"2026-05-10T00:02:00Z","msg":"Discovered control plane machine","machine":"cp1"}
+{"time":"2026-05-10T00:02:01Z","msg":"Resolved machine nodeRef","machine":"cp1"}
+{"time":"2026-05-10T00:02:02Z","msg":"Discovered control plane machine","machine":"cp2"}
+{"time":"2026-05-10T00:02:03Z","msg":"Resolved machine nodeRef","machine":"cp2"}
+{"time":"2026-05-10T00:02:04Z","msg":"Discovered control plane machine","machine":"cp3"}
+{"time":"2026-05-10T00:02:05Z","msg":"Resolved machine nodeRef","machine":"cp3"}
+{"time":"2026-05-10T00:02:06Z","msg":"Requested remediation","machine":"cp1"}
+{"time":"2026-05-10T00:02:07Z","msg":"Evaluated remediation safety","machine":"cp1"}
+{"time":"2026-05-10T00:02:08Z","msg":"Completed remediation","machine":"cp1"}
+{"time":"2026-05-10T00:02:09Z","msg":"Derived machine health condition","machine":"cp2","v1beta1MessageTag":"failed to get etcdStatus: context deadline exceeded","v1beta2MessageTag":"failed to get etcdStatus: context deadline exceeded"}

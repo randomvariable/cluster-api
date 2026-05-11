@@ -14,6 +14,8 @@ spec bound makes the conjunct trivially true).
 
 ```sh
 make -C formal mutation-test                  # all specs
+make -C formal mutation-test-newer-sampled    # CI-sized subset of newer specs
+make -C formal mutation-test-newer-full       # full newer-spec nightly sweep
 hack/tools/quint-mutation-tester.py \
   formal/specs/<spec>.qnt --main=<spec>       # one spec
 ```
@@ -48,19 +50,20 @@ the weakening).
 
 | Spec | Mutations | Killed | Survived |
 |---|---|---|---|
-| ControllerRuntime.qnt | 72 | 11 | 8 |
+| ControllerRuntime.qnt | 72 | 12 | 7 |
 | InPlaceUpdate.qnt | 88 | 16 | 10 |
 | MachineSetPreflight.qnt | 24 | 8 | 0 |
 | Topology.qnt | 96 | 19 | 7 |
 | ClusterE2E.qnt | 104 | 24 | 9 |
 | WorkerLifecycle.qnt | 96 | 17 | 8 |
+| Lifecycle.multicluster.qnt | 16 | 6 | 0 |
 | SelfHosted.qnt | 8 | 0 | 0 (no invariants in filter) |
 | TopologyRefined.qnt | 72 | 12 | 5 |
 | InPlaceUpdateRefined.qnt | 72 | 11 | 8 |
 | MachineSetPreflightRefined.qnt | 64 | 13 | 5 |
-| **Total** | **696** | **131** | **60** |
+| **Total** | **712** | **138** | **59** |
 
-Of the 60 survivors, by mutation type:
+Of the 59 survivors, by mutation type:
 
 | Type | Count | Interpretation |
 |---|---|---|
@@ -69,11 +72,10 @@ Of the 60 survivors, by mutation type:
 | `DropImpliesLhs` | 8 | Precondition rarely activated in random walk; the invariant's antecedent state is hard to reach. Stronger random-walk parameters (`--max-samples=2000 --max-steps=80`) close most. |
 | `NegateRhs` | 3 | Consequent is a tautology in the reachable state space — i.e. the predicate is always true regardless of the precondition. |
 | `ExistsToForall` | 2 | Symmetric to ForallToExists. |
-| `FlipLeToLt` | 1 | Bound is loose — strict inequality also held throughout the random walk. |
 
 ## Per-spec findings
 
-### ControllerRuntime.qnt — 8 survivors
+### ControllerRuntime.qnt — 7 survivors
 
 | Invariant | Mutation | Interpretation |
 |---|---|---|
@@ -83,8 +85,7 @@ Of the 60 survivors, by mutation type:
 | `WorkerSentinelConsistency` | AndToOr | The two conjuncts are interdependent due to the spec's worker-key invariant — `workerOnKey != IDLE_KEY` implies the key is in KEYS by construction. Conjunct is mathematically redundant. |
 | `WorkerSentinelConsistency` | ForallToExists | Random-walk coverage. |
 | `InFlightHasWorker` | ForallToExists | Random-walk coverage. |
-| `RateLimitBounded` | ForallToExists | Random-walk coverage. |
-| `RateLimitBounded` | FlipLeToLt | Strict bound also held — the rate limiter never reaches RATE_LIMIT_CAP exactly in the random walk. Indicates the cap is loose; the actual ceiling is RATE_LIMIT_CAP - 1. |
+| `RateLimitBounded` | ForallToExists | Random-walk coverage. The older `FlipLeToLt` survivor was closed by tightening `RateLimitBounded` to `< RATE_LIMIT_CAP`. |
 
 ### InPlaceUpdate.qnt — 10 survivors
 
@@ -113,6 +114,29 @@ Includes `FM33_PreflightGate :: DropImpliesLhs` — surfaces the
 documented FM-51 race: the precondition `ActionInFlight` is
 rarely activated under non-stable CP in the random walk.
 
+### Lifecycle.multicluster.qnt — 0 survivors
+
+`LifecycleMultiCluster` contributed 16 attempted mutations, 6
+kills, and 0 survivors. The surviving-set follow-up work for
+issue #26 therefore focuses on the single-cluster newer specs;
+the multicluster slice is already load-bearing under the
+current mutation operators.
+
+## Issue #26 follow-through decisions
+
+The original issue asked for more than just raw mutation output:
+surviving mutations should either tighten the spec, be accepted
+as redundant guards, or be documented as scope limits. The
+following entries satisfy that follow-through for the newer-spec
+surviving set.
+
+| Spec | Invariant / mutation | Decision | Outcome |
+|---|---|---|---|
+| `ControllerRuntime.qnt` | `RateLimitBounded :: FlipLeToLt` | **Spec tightening** | Applied: `RateLimitBounded` now uses `< RATE_LIMIT_CAP` instead of `<= RATE_LIMIT_CAP`, matching the reachable retry ceiling observed in the mutation run. |
+| `InPlaceUpdate.qnt` | `MovingPendingShape :: AndToOr` | **Accepted redundant guard** | Kept as-is for readability. The conjunction documents the two coupled facts (`machineOnNewMs` and `machineInProgress`) even though `StartMoveMachine` currently establishes them together. |
+| `ClusterE2E.qnt` | `AfterClusterUpgradeAtTarget :: AndToOr` | **Accepted transitive redundancy** | Kept as-is. Both post-upgrade target conditions are transitively implied together in reachable states, but the paired form remains the clearest statement of the upgrade intent. |
+| `WorkerLifecycle.qnt` | `FM33_PreflightGate :: DropImpliesLhs` | **Scope-limitation entry** | Documented as a random-walk coverage limit tied to the FM-51 race window. The antecedent is hard to activate under short random traces; this is better closed by the composition proof / deeper bounded exploration than by weakening the invariant. |
+
 ## How to address survivors
 
 Three categories:
@@ -127,9 +151,9 @@ Three categories:
    drop the conjunct (cleaner spec) or document the redundancy.
 
 3. **Genuine over-strong / over-weak invariants** (a few
-   cases) — refine the invariant body. Example:
-   `RateLimitBounded :: FlipLeToLt` indicates the cap is one
-   higher than needed.
+   cases) — refine the invariant body. The concrete issue-26
+   tightening applied so far is `ControllerRuntime.RateLimitBounded`,
+   which now uses the stricter `< RATE_LIMIT_CAP` bound.
 
 ## Limitations
 

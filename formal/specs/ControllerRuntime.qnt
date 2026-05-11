@@ -175,6 +175,14 @@ module ControllerRuntime {
   // unbounded; the model treats it as a count.
   pure val RATE_LIMIT_CAP: int = 5
 
+  // MAX_BURST / REFILL_RATE: a compact per-key token-bucket model
+  // for fault-storm saturation experiments (issue #30).
+  pure val MAX_BURST: int = 2
+  pure val REFILL_RATE: int = 1
+
+  // Distinguished key used by the bounded-fault / overload runs.
+  pure val LEGIT_KEY: Key = 1
+
   // ===============================================================
   // State variables
   // ===============================================================
@@ -199,6 +207,10 @@ module ControllerRuntime {
   // Per-key NumRequeues counter. Refines the rate-limiter state
   // tracked at `priorityqueue.go:459`. Reset to 0 by `Forget`.
   var numRequeues: Key -> int
+
+  // Per-key dispatch budget. A ready key with no tokens left is
+  // deferred by RateLimitDeny until later refills.
+  var tokenBucket: Key -> int
 
   // Per-key "re-added while in flight" bit. Refines the upstream
   // semantics where Add(key) during InFlight inserts a fresh
@@ -273,6 +285,7 @@ module ControllerRuntime {
     leaderRunnablesStarted'   = false,
     queuePos'                 = KEYS.mapBy(_ => NotInQueue),
     numRequeues'              = KEYS.mapBy(_ => 0),
+    tokenBucket'              = KEYS.mapBy(_ => MAX_BURST),
     requeueWhileInFlight'     = KEYS.mapBy(_ => false),
     workerOnKey'              = WORKERS.mapBy(_ => IDLE_KEY),
     lastOutcome'              = KEYS.mapBy(_ => OutcomeSuccess),
@@ -298,6 +311,7 @@ module ControllerRuntime {
     leaderRunnablesStarted'   = leaderRunnablesStarted,
     queuePos'                 = queuePos,
     numRequeues'              = numRequeues,
+    tokenBucket'              = tokenBucket,
     requeueWhileInFlight'     = requeueWhileInFlight,
     workerOnKey'              = workerOnKey,
     lastOutcome'              = lastOutcome,
@@ -321,6 +335,7 @@ module ControllerRuntime {
     managerStarted'           = managerStarted,
     queuePos'                 = queuePos,
     numRequeues'              = numRequeues,
+    tokenBucket'              = tokenBucket,
     requeueWhileInFlight'     = requeueWhileInFlight,
     workerOnKey'              = workerOnKey,
     lastOutcome'              = lastOutcome,
@@ -347,6 +362,7 @@ module ControllerRuntime {
     leaderElected'            = leaderElected,
     queuePos'                 = queuePos,
     numRequeues'              = numRequeues,
+    tokenBucket'              = tokenBucket,
     requeueWhileInFlight'     = requeueWhileInFlight,
     workerOnKey'              = workerOnKey,
     lastOutcome'              = lastOutcome,
@@ -379,6 +395,7 @@ module ControllerRuntime {
     sourceStarted'            = sourceStarted,
     pendingEvent'             = pendingEvent,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // CacheSync refines the informer's watch event firing —
@@ -402,6 +419,7 @@ module ControllerRuntime {
     lastOutcome'              = lastOutcome,
     sourceStarted'            = sourceStarted,
     apiVersion'               = apiVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ===============================================================
@@ -428,6 +446,7 @@ module ControllerRuntime {
     sourceStarted'            = sourceStarted,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // EnqueueViaHandler refines an EventHandler.Create/Update/...
@@ -483,6 +502,7 @@ module ControllerRuntime {
     sourceStarted'            = sourceStarted,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // EnqueueAfterTimerExpires refines `handleWaitingItems` at
@@ -504,6 +524,7 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ===============================================================
@@ -523,8 +544,10 @@ module ControllerRuntime {
     leaderRunnablesStarted,                       // gate at :650
     workerOnKey.get(w) == IDLE_KEY,
     queuePos.get(k) == InReady,
+    tokenBucket.get(k) > 0,
     not(anyWorkerOnKey(k, workerOnKey)),          // per-key serialisation (:391)
     workerOnKey'  = workerOnKey.put(w, k),
+    tokenBucket'  = tokenBucket.put(k, tokenBucket.get(k) - 1),
     queuePos'     = queuePos.put(k, InFlight),
     // Frame:
     managerStarted'           = managerStarted,
@@ -567,6 +590,7 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ReconcileRequeueAfter refines the RequeueAfter branch at
@@ -589,6 +613,7 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ReconcileRequeue refines the deprecated Result.Requeue
@@ -613,6 +638,7 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ReconcileError refines the err != nil (non-terminal) branch
@@ -636,6 +662,7 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
   }
 
   // ReconcileTerminalError refines the terminal-error branch at
@@ -661,6 +688,71 @@ module ControllerRuntime {
     pendingEvent'             = pendingEvent,
     apiVersion'               = apiVersion,
     cacheVersion'             = cacheVersion,
+    tokenBucket'              = tokenBucket,
+  }
+
+  // EmitFault models a fault-triggered update for a specific key.
+  action EmitFault(k: Key): bool = all {
+    KEYS.contains(k),
+    apiVersion'               = apiVersion.put(k, apiVersion.get(k) + 1),
+    pendingEvent'             = pendingEvent.put(k, Some(UpdateEvent)),
+    // Frame:
+    managerStarted'           = managerStarted,
+    leaderElected'            = leaderElected,
+    leaderRunnablesStarted'   = leaderRunnablesStarted,
+    queuePos'                 = queuePos,
+    numRequeues'              = numRequeues,
+    tokenBucket'              = tokenBucket,
+    requeueWhileInFlight'     = requeueWhileInFlight,
+    workerOnKey'              = workerOnKey,
+    lastOutcome'              = lastOutcome,
+    sourceStarted'            = sourceStarted,
+    cacheVersion'             = cacheVersion,
+  }
+
+  // RefillTokens restores up to REFILL_RATE tokens per key.
+  action RefillTokens: bool = all {
+    tokenBucket' = KEYS.mapBy(k =>
+      if (tokenBucket.get(k) + REFILL_RATE <= MAX_BURST)
+      tokenBucket.get(k) + REFILL_RATE
+      else MAX_BURST),
+    // Frame:
+    managerStarted'           = managerStarted,
+    leaderElected'            = leaderElected,
+    leaderRunnablesStarted'   = leaderRunnablesStarted,
+    queuePos'                 = queuePos,
+    numRequeues'              = numRequeues,
+    requeueWhileInFlight'     = requeueWhileInFlight,
+    workerOnKey'              = workerOnKey,
+    lastOutcome'              = lastOutcome,
+    sourceStarted'            = sourceStarted,
+    pendingEvent'             = pendingEvent,
+    apiVersion'               = apiVersion,
+    cacheVersion'             = cacheVersion,
+  }
+
+  // RateLimitDeny defers a ready key whose token budget is empty.
+  action RateLimitDeny(k: Key): bool = all {
+    KEYS.contains(k),
+    queuePos.get(k) == InReady,
+    tokenBucket.get(k) == 0,
+    queuePos'                 = queuePos.put(k, InWaiting),
+    numRequeues'              = numRequeues.put(k,
+                                if (numRequeues.get(k) + 1 < RATE_LIMIT_CAP)
+                                numRequeues.get(k) + 1
+                                else numRequeues.get(k)),
+    // Frame:
+    managerStarted'           = managerStarted,
+    leaderElected'            = leaderElected,
+    leaderRunnablesStarted'   = leaderRunnablesStarted,
+    tokenBucket'              = tokenBucket,
+    requeueWhileInFlight'     = requeueWhileInFlight,
+    workerOnKey'              = workerOnKey,
+    lastOutcome'              = lastOutcome,
+    sourceStarted'            = sourceStarted,
+    pendingEvent'             = pendingEvent,
+    apiVersion'               = apiVersion,
+    cacheVersion'             = cacheVersion,
   }
 
   // ===============================================================
@@ -673,11 +765,14 @@ module ControllerRuntime {
     LeaderLose,
     nondet k = KEYS.oneOf(); ApiServerWrite(k),
     nondet k = KEYS.oneOf(); CacheSync(k),
+    nondet k = KEYS.oneOf(); EmitFault(k),
     nondet k = KEYS.oneOf(); SourceEmitCreate(k),
     nondet k = KEYS.oneOf();
       nondet d = Set(true, false).oneOf();
       EnqueueViaHandler(k, d),
     nondet k = KEYS.oneOf(); EnqueueAfterTimerExpires(k),
+    RefillTokens,
+    nondet k = KEYS.oneOf(); RateLimitDeny(k),
     nondet w = WORKERS.oneOf();
       nondet k = KEYS.oneOf();
       ProcessNextWorkItem(w, k),
@@ -755,7 +850,18 @@ module ControllerRuntime {
 
   // I-RL: rate-limiter retries are bounded.
   val RateLimitBounded =
-    KEYS.forall(k => numRequeues.get(k) <= RATE_LIMIT_CAP)
+    KEYS.forall(k => numRequeues.get(k) < RATE_LIMIT_CAP)
+
+  // FM-69: in the bounded-fault scenario, the distinguished legitimate
+  // key still completes a reconcile despite two flapping peers.
+  val FM69_BoundedFaultProgress =
+    lastOutcome.get(LEGIT_KEY) == OutcomeSuccess
+
+  // FM-70: a stronger anti-starvation claim for the overload scenario.
+  // The dedicated overload run deliberately violates this by leaving the
+  // legitimate key ready but not yet served after fault traffic.
+  val FM70_NoLegitReadyBacklog =
+    queuePos.get(LEGIT_KEY) != InReady
 
   val SafetyInvariants = all {
     FM45_PerKeySerialisation,
@@ -768,6 +874,41 @@ module ControllerRuntime {
   }
 
   val AllSafetyInvariants = SafetyInvariants
+
+  // ===============================================================
+  // Liveness properties (issue #24 — Apalache temporal checks)
+  // ===============================================================
+
+  val allVars = (managerStarted, leaderElected, leaderRunnablesStarted,
+    queuePos, numRequeues, tokenBucket, workerOnKey, cacheVersion, apiVersion,
+    lastOutcome)
+
+  temporal QueueProgressFair =
+    strongFair(LeaderAcquire, allVars)
+    and strongFair(any { nondet k = KEYS.oneOf(); nondet w = WORKERS.oneOf();
+                         ProcessNextWorkItem(w, k) }, allVars)
+    and strongFair(any { nondet k = KEYS.oneOf(); nondet w = WORKERS.oneOf();
+                         ReconcileSucceed(w, k) }, allVars)
+    and strongFair(any { nondet k = KEYS.oneOf(); nondet w = WORKERS.oneOf();
+                         ReconcileRequeueAfter(w, k) }, allVars)
+    and strongFair(any { nondet k = KEYS.oneOf(); nondet w = WORKERS.oneOf();
+                         ReconcileRequeue(w, k) }, allVars)
+    and strongFair(any { nondet k = KEYS.oneOf(); nondet w = WORKERS.oneOf();
+                         ReconcileError(w, k) }, allVars)
+
+  // CRTL1 — eventually no key remains actively in-flight.
+  temporal CRTL1_EventuallyNoInflight =
+    QueueProgressFair
+    implies eventually(KEYS.forall(k => queuePos.get(k) != InFlight))
+
+  // CRTL2 — under bounded enqueue fairness the queue drains infinitely often.
+  temporal CRTL2_AlwaysEventuallyQueueQuiescent =
+    QueueProgressFair
+    implies always(eventually(KEYS.forall(k => queuePos.get(k) != InFlight and queuePos.get(k) != InWaiting)))
+
+  temporal LT_StarvationFreeUnderBoundedFault =
+    QueueProgressFair
+    implies eventually(lastOutcome.get(LEGIT_KEY) == OutcomeSuccess)
 
   // ===============================================================
   // Demonstration runs
@@ -850,5 +991,31 @@ module ControllerRuntime {
     .then(ProcessNextWorkItem(1, 1))
     .then(ReconcileSucceed(1, 1))
     .then(LeaderLose)
+
+  run boundedFaultStormRun = init
+    .then(ManagerStart)
+    .then(LeaderAcquire)
+    .then(EmitFault(2))
+    .then(EnqueueViaHandler(2, false))
+    .then(EmitFault(3))
+    .then(EnqueueViaHandler(3, false))
+    .then(SourceEmitCreate(LEGIT_KEY))
+    .then(EnqueueViaHandler(LEGIT_KEY, false))
+    .then(ProcessNextWorkItem(1, LEGIT_KEY))
+    .then(ReconcileSucceed(1, LEGIT_KEY))
+
+  run faultStormOverloadRun = init
+    .then(ManagerStart)
+    .then(LeaderAcquire)
+    .then(EmitFault(2))
+    .then(EnqueueViaHandler(2, false))
+    .then(ProcessNextWorkItem(1, 2))
+    .then(ReconcileError(1, 2))
+    .then(EnqueueAfterTimerExpires(2))
+    .then(ProcessNextWorkItem(1, 2))
+    .then(ReconcileError(1, 2))
+    .then(SourceEmitCreate(LEGIT_KEY))
+    .then(EnqueueViaHandler(LEGIT_KEY, false))
+    .then(RateLimitDeny(LEGIT_KEY))
 
 }

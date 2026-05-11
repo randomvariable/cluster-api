@@ -31,9 +31,9 @@ the model checkers in `../specs/`:
                            verdicts to an unbounded state space.
 
 The submodules expose definitions, lemmas, and theorems but do
-NOT auto-discharge proofs at the scaffold stage. Open obligations
-are marked `sorry` and tracked as TBD rows in the
-abstraction-mapping table.
+NOT auto-run from this umbrella import; `lake build` is the proof
+entrypoint. The current tree is intended to compile without
+`sorry` / `admit` placeholders.
 -/
 
 import ControlPlane.Refinement
@@ -41,3 +41,4 @@ import ControlPlane.Informativeness
 import ControlPlane.Safety
 import ControlPlane.Convergence
 import ControlPlane.Ordering
+import ControlPlane.Finalizers

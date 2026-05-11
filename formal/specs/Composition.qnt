@@ -49,7 +49,7 @@ module Composition {
 
   // ── IncidentWitness ───────────────────────────────────────────
   //
-  // The user-reported incident: there is a Machine `m1` that has
+  // The modelled scenario: there is a Machine `m1` that has
   // started kubeadm-join, registered as an etcd learner, and is
   // currently stuck (LearnerStuckOnPromote); plus a Machine `m2`
   // that is reporting EtcdMemberHealthy=Unknown. Under those
@@ -79,7 +79,7 @@ module Composition {
   //
   // For every Machine and every diagnostic key carried by the
   // v1beta1 projection, the v1beta2 projection MUST carry the
-  // same diagnostic key. The user-reported incident produces a
+  // same diagnostic key. The modelled scenario produces a
   // counterexample: under UnreachableTimeout, v1beta1 carries
   // "context deadline exceeded"; v1beta2 carries the generic
   // "Please check controller logs for errors".
@@ -127,7 +127,7 @@ module Composition {
     // produces a counterexample to it; that counterexample is the
     // bug. Keeping it out of AllInvariants lets the rest of the
     // model check while the counterexample remains visible
-    // through `quint run` of the incident scenario.
+    // through `quint run` of the FM-1 scenario.
   }
 
 }
