@@ -618,6 +618,20 @@ triggered a refresh-aware retry.
 | ServiceAccountTokenRotation | `RetryOn401WithRefreshedToken` / `refreshAfter401Run` | same | Show the intended regime where a stale token causes a 401 and reconcile retries with a refreshed token. |
 | ServiceAccountTokenRotation | `NoSilentReconcileFailure` / `staleTokenFailureRun` | same | Express the issue's counterexample target: a stale token yields a 401 and reconcile fails without a rotation-aware retry. |
 
+### CloudIamPermissionLoss.qnt
+
+Standalone IAM revocation / partial cloud-call 403 model for issue #60.
+This spec keeps one in-flight provisioning operation, a role-policy bit,
+the last cloud-call authorization result, and whether the machine has
+been left in a zombie partially-provisioned state.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| CloudIamPermissionLoss | `RevokeIamPolicy` / `CloudCallReturns403` | `controllers/clustercache/cluster_accessor.go:345-371`; `controllers/clustercache/cluster_cache.go:531-545` | Ground the concrete "authorization no longer works" surface already used by the cluster cache health probe and disconnect logic. |
+| CloudIamPermissionLoss | `StartProvisioning` / `PartialProvisionSucceeds` | same plus `internal/runtime/client/client_test.go:933` | Model the real-world mixed state where some cloud calls already succeeded before the IAM policy drift/revocation takes effect. |
+| CloudIamPermissionLoss | `InFlightProvisioningEventuallyAborts` / `abortAfterPersistent403Run` | same | Show the intended regime where repeated 403s force provisioning to abort cleanly rather than limping onward. |
+| CloudIamPermissionLoss | `NoZombieMachine` / `zombieMachineRun` | same | Express the issue's counterexample target: IAM revocation lands mid-provisioning, calls start returning 403, and a non-ready zombie machine remains behind. |
+
 ### ConditionMessageTruncation.qnt
 
 Standalone condition-message truncation model for issue #72. This spec

@@ -95,6 +95,7 @@ SKIPUPGRADE   := $(SPECS_DIR)/SkipVersionUpgrade.qnt
 ROLLBACKSURGE := $(SPECS_DIR)/RollbackSurgeRace.qnt
 BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
 SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
+CLOUDIAM      := $(SPECS_DIR)/CloudIamPermissionLoss.qnt
 MSGTRUNC      := $(SPECS_DIR)/ConditionMessageTruncation.qnt
 STATUSLAG     := $(SPECS_DIR)/StatusSubresourceLag.qnt
 CLUSTERDELRACE := $(SPECS_DIR)/ClusterEditDeleteRace.qnt
@@ -2000,6 +2001,43 @@ verify-bootstrap-infra-race-apalache:  ## Apalache missing-event stuck-unready c
 
 .PHONY: verify-bootstrap-infra-race
 verify-bootstrap-infra-race: verify-bootstrap-infra-race-happy verify-bootstrap-infra-race-counterexample verify-bootstrap-infra-race-random verify-bootstrap-infra-race-apalache  ## Full bootstrap/infra readiness race suite
+
+.PHONY: verify-cloud-iam-happy
+verify-cloud-iam-happy:  ## Drive persistent-403 abort after authorization loss
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CloudIamPermissionLoss --init=abortAfterPersistent403Run --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CLOUDIAM)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CloudIamPermissionLoss --init=abortAfterPersistent403Run --step=step \
+	             --invariant=InFlightProvisioningEventuallyAborts --max-steps=0 \
+	             $(CLOUDIAM)
+
+.PHONY: verify-cloud-iam-counterexample
+verify-cloud-iam-counterexample:  ## Drive zombie machine after IAM revocation counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=CloudIamPermissionLoss --init=zombieMachineRun --step=step \
+	              --invariant=NoZombieMachine --max-steps=0 \
+	              $(CLOUDIAM)
+
+.PHONY: verify-cloud-iam-random
+verify-cloud-iam-random:  ## Random-walk stable IAM/provisioning bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants Observed403ImpliesRevokedPolicy LastCallAuthKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=CloudIamPermissionLoss \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CLOUDIAM) || exit 1; \
+	done
+
+.PHONY: verify-cloud-iam-apalache
+verify-cloud-iam-apalache:  ## Apalache zombie-machine counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=CloudIamPermissionLoss --init=zombieMachineInit \
+	                  --step=stepApalache --invariant=NoZombieMachine \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CLOUDIAM)
+
+.PHONY: verify-cloud-iam
+verify-cloud-iam: verify-cloud-iam-happy verify-cloud-iam-counterexample verify-cloud-iam-random verify-cloud-iam-apalache  ## Full IAM revocation / cloud-call 403 suite
 
 .PHONY: verify-sa-token-rotation-happy
 verify-sa-token-rotation-happy:  ## Drive token refresh after 401 path

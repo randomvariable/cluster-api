@@ -3340,6 +3340,43 @@ Apalache reaches the same `NoSilentReconcileFailure` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-112 — IAM policy revocation strands partially provisioned machines
+
+**Provenance.** **Modelling** — issue #60 standalone IAM revocation /
+partial cloud-call 403 slice (`CloudIamPermissionLoss.qnt`). The model is
+grounded in the real `controllers/clustercache` unauthorized-health-probe
+surface and the fact that long-running provisioning can already have
+partially succeeded before credentials drift.
+
+**Trigger.** A machine is mid-provisioning when the controller's IAM
+policy is revoked. Some earlier calls may already have succeeded, but
+subsequent cloud calls start returning 403. If the controller does not
+surface the failure and abort cleanly, a zombie not-ready machine can be
+left behind.
+
+**Init / scenarios.** `abortAfterPersistent403Run` shows the intended
+regime: provisioning starts, IAM policy is revoked, repeated 403s are
+observed, and the controller aborts before leaving a zombie machine,
+satisfying `InFlightProvisioningEventuallyAborts`. `zombieMachineRun`
+takes the adversarial branch where partial provisioning succeeds, the IAM
+policy is revoked, a 403 is observed, and the machine is left in the
+zombie state, violating `NoZombieMachine`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Unauthorized-health-probe handling | `controllers/clustercache/cluster_accessor.go` | 345-371 |
+| Unauthorized disconnect behaviour | `controllers/clustercache/cluster_cache.go` | 531-545 |
+| Runtime client credentials surface | `internal/runtime/client/client_test.go` | 933 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the zombie-machine path via `zombieMachineRun`, and Apalache
+reaches the same `NoZombieMachine` violation from `zombieMachineInit`
+within depth 4 (`make verify-cloud-iam-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-109 — Status subresource lags and another controller acts on stale phase
 
 **Provenance.** **Modelling** — issue #70 standalone spec/status lag
@@ -3869,6 +3906,7 @@ reason that the operator can read.
 | FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
+| FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |

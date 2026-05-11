@@ -1841,6 +1841,39 @@ echo y | quint verify --main=ServiceAccountTokenRotation --init=expiredTokenInit
 
 Or, from `formal/`: `make verify-sa-token-rotation`.
 
+### IAM policy revoked mid-reconcile — cloud-controller permission lost (issue #60)
+
+```sh
+# Persistent 403s are detected and provisioning aborts cleanly.
+quint run --main=CloudIamPermissionLoss --init=abortAfterPersistent403Run --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/CloudIamPermissionLoss.qnt
+
+quint run --main=CloudIamPermissionLoss --init=abortAfterPersistent403Run --step=step \
+          --invariant=InFlightProvisioningEventuallyAborts --max-steps=0 \
+          formal/specs/CloudIamPermissionLoss.qnt
+
+# Explicit zombie-machine counterexample.
+quint run --main=CloudIamPermissionLoss --init=zombieMachineRun --step=step \
+          --invariant=NoZombieMachine --max-steps=0 \
+          formal/specs/CloudIamPermissionLoss.qnt
+
+# Random-walk stable IAM/provisioning bookkeeping.
+for inv in StableSafetyInvariants Observed403ImpliesRevokedPolicy LastCallAuthKnown; do
+  quint run --main=CloudIamPermissionLoss --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/CloudIamPermissionLoss.qnt
+done
+
+# Backend verdict: zombie machine reachable within depth 4.
+echo y | quint verify --main=CloudIamPermissionLoss --init=zombieMachineInit --step=stepApalache \
+                      --invariant=NoZombieMachine \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/CloudIamPermissionLoss.qnt
+```
+
+Or, from `formal/`: `make verify-cloud-iam`.
+
 ### Condition message truncation silently drops root-cause diagnostics (issue #72)
 
 ```sh

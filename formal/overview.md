@@ -127,6 +127,7 @@ For a contributor adding a new failure mode:
 | StaticPodHashReloadRace.qnt | 2 | 300×40 | **2/2 stable manifest/reload bookkeeping invariants** under random walk; explicit manifest-hash collision counterexample `NoHashCollisionAcrossDistinctIntents` reachable at Apalache depth 4 | — |
 | BootstrapCsrLag.qnt | 2 | 300×40 | **2/2 stable CSR queue invariants** under random walk; explicit approval-timeout counterexample `BootstrapTimeoutCoversCsrLatency` reachable at Apalache depth 4 | — |
 | ServiceAccountTokenRotation.qnt | 2 | 300×40 | **1/1 stable token bookkeeping invariant** under random walk; explicit stale-token auth failure counterexample `NoSilentReconcileFailure` reachable at Apalache depth 4 | — |
+| CloudIamPermissionLoss.qnt | 2 | 300×40 | **2/2 stable IAM/provisioning bookkeeping invariants** under random walk; explicit zombie-machine counterexample `NoZombieMachine` reachable at Apalache depth 4 | — |
 | ConditionMessageTruncation.qnt | 2 | 300×40 | **2/2 stable truncation bookkeeping invariants** under random walk; explicit tail-loss counterexample `RootCauseSurvivesTruncation` reachable at Apalache depth 4 | — |
 | MtuFragmentation.qnt | 2 | 300×40 | **1/1 stable MTU bookkeeping invariant** under random walk; explicit silent-fragmentation counterexample `EtcdSnapshotEventuallySucceeds` reachable at Apalache depth 4 | — |
 | CniVethRace.qnt | 2 | 300×40 | **2/2 stable CNI/veth bookkeeping invariants** under random walk; explicit pre-veth probe-loop counterexample `NoContainerStartBeforeCni` reachable at Apalache depth 4 | — |
