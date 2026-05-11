@@ -86,6 +86,16 @@ MTUFRAG       := $(SPECS_DIR)/MtuFragmentation.qnt
 TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
+CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
+ASKCPSURGE    := $(SPECS_DIR)/AutoscalerKcpSurgeRace.qnt
+ETCDK8SSKEW   := $(SPECS_DIR)/EtcdKubernetesVersionSkew.qnt
+SKIPUPGRADE   := $(SPECS_DIR)/SkipVersionUpgrade.qnt
+ROLLBACKSURGE := $(SPECS_DIR)/RollbackSurgeRace.qnt
+BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
+SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
+CMREPLAY      := $(SPECS_DIR)/ControllerManagerReplay.qnt
+CMSPLITBRAIN  := $(SPECS_DIR)/ControllerLeaderSplitBrain.qnt
+MPSCALECONFLICT := $(SPECS_DIR)/MachinePoolScaleConflict.qnt
 INPLACE_REFINED := $(SPECS_DIR)/InPlaceUpdateRefined.qnt
 MSPREFLIGHT_REFINED := $(SPECS_DIR)/MachineSetPreflightRefined.qnt
 E2E           := $(SPECS_DIR)/ClusterE2E.qnt
@@ -341,6 +351,27 @@ verify-selfhosted-recovery:  ## Drive selfHostedRecoveryTrace; expect resolved
 	$(QUINT) run --backend=$(QUINT_BACKEND) \
 	             --main=SelfHosted --init=selfHostedRecoveryTrace \
 	             --step=step --max-steps=0 $(SELFHOSTED)
+
+.PHONY: verify-selfhosted-etcd-trap
+verify-selfhosted-etcd-trap:  ## Drive selfHostedEtcdTrapTrace; expect deadlock without escape hatch
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SelfHosted --init=selfHostedEtcdTrapTrace \
+	             --step=step --invariant='not(Deadlocked)' \
+	             --max-steps=0 $(SELFHOSTED)
+
+.PHONY: verify-selfhosted-etcd-escape
+verify-selfhosted-etcd-escape:  ## Drive selfHostedEtcdEscapeTrace; expect escape hatch to clear trap
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SelfHosted --init=selfHostedEtcdEscapeTrace \
+	             --step=step --invariant=EscapeHatchExists \
+	             --max-steps=0 $(SELFHOSTED)
+
+.PHONY: verify-selfhosted-etcd-apalache
+verify-selfhosted-etcd-apalache:  ## Apalache etcd-roll trap counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=SelfHosted --init=selfHostedUpgradeMidFlightInit \
+	                  --step=stepNoRecovery --invariant='not(Deadlocked)' \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(SELFHOSTED)
 
 ## --------------------------------------
 ## FM-35 — multicluster (Phase 12 full per-cluster spec)
@@ -1627,6 +1658,380 @@ verify-crs-timing-apalache:  ## Apalache ApplyOnce timing counterexample at dept
 
 .PHONY: verify-crs-timing
 verify-crs-timing: verify-crs-timing-happy verify-crs-timing-counterexample verify-crs-timing-random verify-crs-timing-apalache  ## Full ClusterResourceSet ApplyOnce timing suite
+
+.PHONY: verify-concurrent-spec-edits-happy
+verify-concurrent-spec-edits-happy:  ## Drive serial application of version+replica edits
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConcurrentClusterSpecEdits --init=serialEditsRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CONCSPEC)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ConcurrentClusterSpecEdits --init=serialEditsRun --step=step \
+	             --invariant=EventualConvergenceToFinalSpec --max-steps=0 \
+	             $(CONCSPEC)
+
+.PHONY: verify-concurrent-spec-edits-counterexample
+verify-concurrent-spec-edits-counterexample:  ## Drive lost-edit / surge race counterexamples
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ConcurrentClusterSpecEdits --init=lostEditRun --step=step \
+	              --invariant=NoLostEdit --max-steps=0 \
+	              $(CONCSPEC)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ConcurrentClusterSpecEdits --init=surgeRaceRun --step=step \
+	              --invariant=NoSurgeBoundViolation --max-steps=0 \
+	              $(CONCSPEC)
+
+.PHONY: verify-concurrent-spec-edits-random
+verify-concurrent-spec-edits-random:  ## Random-walk stable concurrent-edit invariants (300x40)
+	@for inv in StableSafetyInvariants AppliedSpecSubsetOfPending LastWriterPreservesFieldDomain; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ConcurrentClusterSpecEdits \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CONCSPEC) || exit 1; \
+	done
+
+.PHONY: verify-concurrent-spec-edits-apalache
+verify-concurrent-spec-edits-apalache:  ## Apalache concurrent-edit counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ConcurrentClusterSpecEdits --init=lostEditInit \
+	                  --step=stepApalache --invariant=NoLostEdit \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CONCSPEC)
+
+.PHONY: verify-concurrent-spec-edits
+verify-concurrent-spec-edits: verify-concurrent-spec-edits-happy verify-concurrent-spec-edits-counterexample verify-concurrent-spec-edits-random verify-concurrent-spec-edits-apalache  ## Full concurrent Cluster.spec edit suite
+
+.PHONY: verify-autoscaler-kcp-happy
+verify-autoscaler-kcp-happy:  ## Drive serialized autoscaler scale-up then rollout path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AutoscalerKcpSurgeRace --init=serializedScaleRollRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ASKCPSURGE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AutoscalerKcpSurgeRace --init=serializedScaleRollRun --step=step \
+	             --invariant=AutoscalerKcpArbitrated --max-steps=0 \
+	             $(ASKCPSURGE)
+
+.PHONY: verify-autoscaler-kcp-counterexample
+verify-autoscaler-kcp-counterexample:  ## Drive concurrent autoscale+rollout surge counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=AutoscalerKcpSurgeRace --init=concurrentScaleRollRun --step=step \
+	              --invariant=SurgeBoundUnderConcurrentScale --max-steps=0 \
+	              $(ASKCPSURGE)
+
+.PHONY: verify-autoscaler-kcp-random
+verify-autoscaler-kcp-random:  ## Random-walk stable autoscaler/KCP bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants ActualReplicasWithinDomain LastWriterOwnsIntent; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=AutoscalerKcpSurgeRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ASKCPSURGE) || exit 1; \
+	done
+
+.PHONY: verify-autoscaler-kcp-apalache
+verify-autoscaler-kcp-apalache:  ## Apalache concurrent autoscale+rollout counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=AutoscalerKcpSurgeRace --init=concurrentScaleInit \
+	                  --step=stepApalache --invariant=SurgeBoundUnderConcurrentScale \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ASKCPSURGE)
+
+.PHONY: verify-autoscaler-kcp
+verify-autoscaler-kcp: verify-autoscaler-kcp-happy verify-autoscaler-kcp-counterexample verify-autoscaler-kcp-random verify-autoscaler-kcp-apalache  ## Full autoscaler+KCP surge-race suite
+
+.PHONY: verify-etcd-k8s-skew-happy
+verify-etcd-k8s-skew-happy:  ## Drive ordered Kubernetes then etcd upgrade path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdKubernetesVersionSkew --init=orderedUpgradeRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ETCDK8SSKEW)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdKubernetesVersionSkew --init=orderedUpgradeRun --step=step \
+	             --invariant=EtcdUpgradeAfterControlPlaneGate --max-steps=0 \
+	             $(ETCDK8SSKEW)
+
+.PHONY: verify-etcd-k8s-skew-counterexample
+verify-etcd-k8s-skew-counterexample:  ## Drive mid-rollout etcd/k8s dependency trap counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdKubernetesVersionSkew --init=midRolloutEtcdBumpRun --step=step \
+	              --invariant=NoMidRolloutDependencyTrap --max-steps=0 \
+	              $(ETCDK8SSKEW)
+
+.PHONY: verify-etcd-k8s-skew-random
+verify-etcd-k8s-skew-random:  ## Random-walk stable version/bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants VersionStringsKnown PreflightBlocksUnsupportedOrder; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EtcdKubernetesVersionSkew \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ETCDK8SSKEW) || exit 1; \
+	done
+
+.PHONY: verify-etcd-k8s-skew-apalache
+verify-etcd-k8s-skew-apalache:  ## Apalache mid-rollout dependency-trap counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EtcdKubernetesVersionSkew --init=dependencyTrapInit \
+	                  --step=stepApalache --invariant=NoMidRolloutDependencyTrap \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ETCDK8SSKEW)
+
+.PHONY: verify-etcd-k8s-skew
+verify-etcd-k8s-skew: verify-etcd-k8s-skew-happy verify-etcd-k8s-skew-counterexample verify-etcd-k8s-skew-random verify-etcd-k8s-skew-apalache  ## Full mid-rollout etcd-version × Kubernetes-version dependency suite
+
+.PHONY: verify-skip-version-happy
+verify-skip-version-happy:  ## Drive one-minor-at-a-time upgrade path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SkipVersionUpgrade --init=oneMinorStepRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(SKIPUPGRADE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SkipVersionUpgrade --init=oneMinorStepRun --step=step \
+	             --invariant=UpgradeRespectsSkewBound --max-steps=0 \
+	             $(SKIPUPGRADE)
+
+.PHONY: verify-skip-version-counterexample
+verify-skip-version-counterexample:  ## Drive skip-version preflight violation counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=SkipVersionUpgrade --init=skipMinorRun --step=step \
+	              --invariant=UpgradeRespectsSkewBound --max-steps=0 \
+	              $(SKIPUPGRADE)
+
+.PHONY: verify-skip-version-random
+verify-skip-version-random:  ## Random-walk stable skew bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants TargetVersionKnown PreflightBlocksSkippedMinor; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=SkipVersionUpgrade \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(SKIPUPGRADE) || exit 1; \
+	done
+
+.PHONY: verify-skip-version-apalache
+verify-skip-version-apalache:  ## Apalache skip-version violation counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=SkipVersionUpgrade --init=skipMinorInit \
+	                  --step=stepApalache --invariant=UpgradeRespectsSkewBound \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(SKIPUPGRADE)
+
+.PHONY: verify-skip-version
+verify-skip-version: verify-skip-version-happy verify-skip-version-counterexample verify-skip-version-random verify-skip-version-apalache  ## Full skip-version skew-bound suite
+
+.PHONY: verify-rollback-surge-happy
+verify-rollback-surge-happy:  ## Drive serialized rollback after surge cleanup
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=RollbackSurgeRace --init=serializedRollbackRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ROLLBACKSURGE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=RollbackSurgeRace --init=serializedRollbackRun --step=step \
+	             --invariant=RollbackAppliedAfterDrainPoint --max-steps=0 \
+	             $(ROLLBACKSURGE)
+
+.PHONY: verify-rollback-surge-counterexample
+verify-rollback-surge-counterexample:  ## Drive partial-cycle rollback surge counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=RollbackSurgeRace --init=rollbackMidCycleRun --step=step \
+	              --invariant=NoTransientSurgeBeyondBound --max-steps=0 \
+	              $(ROLLBACKSURGE)
+
+.PHONY: verify-rollback-surge-random
+verify-rollback-surge-random:  ## Random-walk stable rollback/surge bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants OldAndNewReplicaCountsNonNegative DrainPointKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=RollbackSurgeRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ROLLBACKSURGE) || exit 1; \
+	done
+
+.PHONY: verify-rollback-surge-apalache
+verify-rollback-surge-apalache:  ## Apalache rollback surge counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=RollbackSurgeRace --init=rollbackMidCycleInit \
+	                  --step=stepApalache --invariant=NoTransientSurgeBeyondBound \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ROLLBACKSURGE)
+
+.PHONY: verify-rollback-surge
+verify-rollback-surge: verify-rollback-surge-happy verify-rollback-surge-counterexample verify-rollback-surge-random verify-rollback-surge-apalache  ## Full rollback-during-partial-cycle surge suite
+
+.PHONY: verify-controller-replay-happy
+verify-controller-replay-happy:  ## Drive replay after OOM without double effect
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerManagerReplay --init=cleanReplayRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CMREPLAY)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerManagerReplay --init=cleanReplayRun --step=step \
+	             --invariant=RecoveryWithoutInMemoryStateAssumption --max-steps=0 \
+	             $(CMREPLAY)
+
+.PHONY: verify-controller-replay-counterexample
+verify-controller-replay-counterexample:  ## Drive lost in-memory marker / replay double-effect counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ControllerManagerReplay --init=doubleEffectReplayRun --step=step \
+	              --invariant=NoDoubleEffect --max-steps=0 \
+	              $(CMREPLAY)
+
+.PHONY: verify-controller-replay-random
+verify-controller-replay-random:  ## Random-walk stable leader/replay bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants LeaderOwnsCacheGen ReplayNeedsNewLeader; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ControllerManagerReplay \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CMREPLAY) || exit 1; \
+	done
+
+.PHONY: verify-controller-replay-apalache
+verify-controller-replay-apalache:  ## Apalache replay double-effect counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ControllerManagerReplay --init=doubleEffectInit \
+	                  --step=stepApalache --invariant=NoDoubleEffect \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CMREPLAY)
+
+.PHONY: verify-controller-replay
+verify-controller-replay: verify-controller-replay-happy verify-controller-replay-counterexample verify-controller-replay-random verify-controller-replay-apalache  ## Full controller-manager OOM / replay suite
+
+.PHONY: verify-controller-splitbrain-happy
+verify-controller-splitbrain-happy:  ## Drive lease convergence before duplicate effect
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerLeaderSplitBrain --init=leaseConvergesRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CMSPLITBRAIN)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ControllerLeaderSplitBrain --init=leaseConvergesRun --step=step \
+	             --invariant=SingleWriterAfterConvergence --max-steps=0 \
+	             $(CMSPLITBRAIN)
+
+.PHONY: verify-controller-splitbrain-counterexample
+verify-controller-splitbrain-counterexample:  ## Drive two-active-leaders duplicate-effect counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ControllerLeaderSplitBrain --init=splitBrainRun --step=step \
+	              --invariant=NoDuplicateEffectAcrossLeaders --max-steps=0 \
+	              $(CMSPLITBRAIN)
+
+.PHONY: verify-controller-splitbrain-random
+verify-controller-splitbrain-random:  ## Random-walk stable split-brain bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants LeaseOwnersKnown ConvergedImpliesSingleLeader; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ControllerLeaderSplitBrain \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CMSPLITBRAIN) || exit 1; \
+	done
+
+.PHONY: verify-controller-splitbrain-apalache
+verify-controller-splitbrain-apalache:  ## Apalache split-brain duplicate-effect counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ControllerLeaderSplitBrain --init=splitBrainInit \
+	                  --step=stepApalache --invariant=NoDuplicateEffectAcrossLeaders \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CMSPLITBRAIN)
+
+.PHONY: verify-controller-splitbrain
+verify-controller-splitbrain: verify-controller-splitbrain-happy verify-controller-splitbrain-counterexample verify-controller-splitbrain-random verify-controller-splitbrain-apalache  ## Full controller-manager split-brain suite
+
+.PHONY: verify-bootstrap-infra-race-happy
+verify-bootstrap-infra-race-happy:  ## Drive Machine readiness after both children report ready
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=BootstrapInfraReadyRace --init=bothReadyObservedRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(BIMREADYRACE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=BootstrapInfraReadyRace --init=bothReadyObservedRun --step=step \
+	             --invariant=MachineReadyEventuallyReflectsBoth --max-steps=0 \
+	             $(BIMREADYRACE)
+
+.PHONY: verify-bootstrap-infra-race-counterexample
+verify-bootstrap-infra-race-counterexample:  ## Drive missing-event stuck-unready counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=BootstrapInfraReadyRace --init=missingInfraEventRun --step=step \
+	              --invariant=NoStuckUnreadyDespiteBothChildrenReady --max-steps=0 \
+	              $(BIMREADYRACE)
+
+.PHONY: verify-bootstrap-infra-race-random
+verify-bootstrap-infra-race-random:  ## Random-walk stable bootstrap/infra readiness invariants (300x40)
+	@for inv in StableSafetyInvariants LastObservedSubsetOfTruth ReadyNeedsObservedTrue; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=BootstrapInfraReadyRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(BIMREADYRACE) || exit 1; \
+	done
+
+.PHONY: verify-bootstrap-infra-race-apalache
+verify-bootstrap-infra-race-apalache:  ## Apalache missing-event stuck-unready counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=BootstrapInfraReadyRace --init=missingEventInit \
+	                  --step=stepApalache --invariant=NoStuckUnreadyDespiteBothChildrenReady \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(BIMREADYRACE)
+
+.PHONY: verify-bootstrap-infra-race
+verify-bootstrap-infra-race: verify-bootstrap-infra-race-happy verify-bootstrap-infra-race-counterexample verify-bootstrap-infra-race-random verify-bootstrap-infra-race-apalache  ## Full bootstrap/infra readiness race suite
+
+.PHONY: verify-sa-token-rotation-happy
+verify-sa-token-rotation-happy:  ## Drive token refresh after 401 path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ServiceAccountTokenRotation --init=refreshAfter401Run --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(SATOKENROT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ServiceAccountTokenRotation --init=refreshAfter401Run --step=step \
+	             --invariant=RetryOn401WithRefreshedToken --max-steps=0 \
+	             $(SATOKENROT)
+
+.PHONY: verify-sa-token-rotation-counterexample
+verify-sa-token-rotation-counterexample:  ## Drive stale token 401 without refresh counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ServiceAccountTokenRotation --init=staleTokenFailureRun --step=step \
+	              --invariant=NoSilentReconcileFailure --max-steps=0 \
+	              $(SATOKENROT)
+
+.PHONY: verify-sa-token-rotation-random
+verify-sa-token-rotation-random:  ## Random-walk stable token/bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants CapturedTokenNotNewerThanCurrent; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ServiceAccountTokenRotation \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(SATOKENROT) || exit 1; \
+	done
+
+.PHONY: verify-sa-token-rotation-apalache
+verify-sa-token-rotation-apalache:  ## Apalache stale-token auth failure counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ServiceAccountTokenRotation --init=expiredTokenInit \
+	                  --step=stepApalache --invariant=NoSilentReconcileFailure \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(SATOKENROT)
+
+.PHONY: verify-sa-token-rotation
+verify-sa-token-rotation: verify-sa-token-rotation-happy verify-sa-token-rotation-counterexample verify-sa-token-rotation-random verify-sa-token-rotation-apalache  ## Full ServiceAccount token rotation / auth retry suite
+
+.PHONY: verify-machinepool-scale-happy
+verify-machinepool-scale-happy:  ## Drive arbitrated MachinePool scale ownership path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachinePoolScaleConflict --init=arbitratedScaleRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(MPSCALECONFLICT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=MachinePoolScaleConflict --init=arbitratedScaleRun --step=step \
+	             --invariant=EventualConvergence --max-steps=0 \
+	             $(MPSCALECONFLICT)
+
+.PHONY: verify-machinepool-scale-counterexample
+verify-machinepool-scale-counterexample:  ## Drive spec-vs-provider oscillation counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=MachinePoolScaleConflict --init=oscillationRun --step=step \
+	              --invariant=NoOscillation --max-steps=0 \
+	              $(MPSCALECONFLICT)
+
+.PHONY: verify-machinepool-scale-random
+verify-machinepool-scale-random:  ## Random-walk stable MachinePool scale bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants ProviderActualNonNegative LastReconcileIsKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=MachinePoolScaleConflict \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(MPSCALECONFLICT) || exit 1; \
+	done
+
+.PHONY: verify-machinepool-scale-apalache
+verify-machinepool-scale-apalache:  ## Apalache oscillation counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=MachinePoolScaleConflict --init=oscillationInit \
+	                  --step=stepApalache --invariant=NoOscillation \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(MPSCALECONFLICT)
+
+.PHONY: verify-machinepool-scale
+verify-machinepool-scale: verify-machinepool-scale-happy verify-machinepool-scale-counterexample verify-machinepool-scale-random verify-machinepool-scale-apalache  ## Full MachinePool spec-vs-provider scale conflict suite
 
 ## --------------------------------------
 ## CAPI refinements onto controller-runtime

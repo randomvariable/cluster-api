@@ -1828,6 +1828,283 @@ The replacement-cannibalisation variant is separately captured via
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-98 — Machine readiness gets stuck because bootstrap and infra ready edges are observed separately
+
+**Provenance.** **Modelling** — issue #86 standalone Machine readiness
+race slice (`BootstrapInfraReadyRace.qnt`). The model is grounded in the
+two independent readiness mirrors the Machine controller already maintains
+for bootstrap and infrastructure providers.
+
+**Trigger.** Bootstrap readiness becomes true and is observed first.
+Infrastructure readiness later becomes true in reality, but the follow-up
+event is lost or never reaches the next Machine reconcile. The Machine
+controller remains stuck with `lastObserved = bootstrap` and never flips
+Machine ready even though both children are ready in truth.
+
+**Init / scenarios.** `bothReadyObservedRun` shows the intended regime:
+both child-ready edges are observed and `MachineReadyEventuallyReflectsBoth`
+holds. `missingInfraEventRun` drives the bad path: bootstrap is observed,
+infra flips ready, the event is dropped, and
+`NoStuckUnreadyDespiteBothChildrenReady` is violated.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Bootstrap-ready mirror | `internal/controllers/machine/machine_controller_status.go` | 78-164 |
+| Bootstrap-ready phase integration | `internal/controllers/machine/machine_controller_phases.go` | 180-205 |
+| Infra-ready mirror | `internal/controllers/machine/machine_controller_status.go` | 167-255 |
+| Infra-ready phase integration | `internal/controllers/machine/machine_controller_phases.go` | 305-373 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the missing-event stuck-unready path via
+`missingInfraEventRun`, and Apalache reaches the same
+`NoStuckUnreadyDespiteBothChildrenReady` violation from
+`missingEventInit` within depth 4 (`make verify-bootstrap-infra-race-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-99 — Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions
+
+**Provenance.** **Modelling** — issue #65 standalone concurrent-edit
+slice (`ConcurrentClusterSpecEdits.qnt`). The spec is grounded in the
+existing SSA/co-authorship topology helper and the KCP scale path that
+turns the desired version/replica spec into actual control-plane size.
+
+**Trigger.** Operator A updates `spec.topology.version`, while operator B
+concurrently updates `spec.topology.controlPlane.replicas`. In the safe
+case both intents converge. In the bad cases, a stale full-object apply
+drops the version edit or rollout surge and replica scale-up together
+push actual replicas beyond the intended surge bound.
+
+**Init / scenarios.** `serialEditsRun` shows the intended regime: the
+version edit is applied, rollout progresses, then the replica edit is
+applied and the final state converges to version `1.30` and replicas `5`.
+`lostEditRun` models a stale full-object overwrite and violates
+`NoLostEdit`. `surgeRaceRun` models rollout surge and scale-up both
+growing the population, violating `NoSurgeBoundViolation`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| SSA/co-authorship helper | `internal/controllers/topology/cluster/structuredmerge/serversidepathhelper.go` | 1-262 |
+| SSA co-authoring tests | `internal/controllers/topology/cluster/structuredmerge/serversidepathhelper_test.go` | 50-51, 637-638 |
+| KCP scale path grounding | `controlplane/kubeadm/internal/controllers/scale.go` | 1-260 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-overwrite path via `lostEditRun`, and Apalache
+reaches the same `NoLostEdit` violation from `lostEditInit` within depth
+4 (`make verify-concurrent-spec-edits-apalache`). The surge-race variant
+is separately captured via `NoSurgeBoundViolation` on `surgeRaceRun`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-100 — Autoscaler scale-up and KCP rollout surge overproduce replicas
+
+**Provenance.** **Modelling** — issue #87 standalone autoscaler + rollout
+surge slice (`AutoscalerKcpSurgeRace.qnt`). The spec is grounded in the
+existing MachineDeployment surge arithmetic and the API contract that an
+external autoscaler may manage replica count.
+
+**Trigger.** Cluster-autoscaler raises desired worker replicas while a
+rollout path still computes surge from a stale desired count. Before the
+two intents are arbitrated into one source of truth, both the autoscaler
+and the rollout logic independently grow the worker pool.
+
+**Init / scenarios.** `serializedScaleRollRun` shows the intended regime:
+autoscaler scale-up is applied first, then rollout surge is computed from
+the updated desired count and `AutoscalerKcpArbitrated` holds.
+`concurrentScaleRollRun` keeps the stale autoscaler intent alive while
+applying rollout surge on top of the scaled-up pool, violating
+`SurgeBoundUnderConcurrentScale`.
+
+**LSP grounding.**
+
+| Go / API entry point | File | Line |
+|---|---|---|
+| External autoscaler ownership hint | `api/core/v1beta1/cluster_types.go` | 733, 921 |
+| MD surge arithmetic | `internal/controllers/machinedeployment/mdutil/util.go` | 295-302, 336, 663-684 |
+| Rollout planner / surge usage | `internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go` | 481-515 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the concurrent autoscale+rollout path via
+`concurrentScaleRollRun`, and Apalache reaches the same
+`SurgeBoundUnderConcurrentScale` violation from `concurrentScaleInit`
+within depth 4 (`make verify-autoscaler-kcp-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-105 — Mid-rollout etcd tag bump traps the control-plane upgrade
+
+**Provenance.** **Modelling** — issue #81 standalone version-coupling
+slice (`EtcdKubernetesVersionSkew.qnt`). The model is grounded in the
+fact that the real upgrade helpers expose Kubernetes version and
+`etcdImageTag` as separate knobs, while the Kubernetes-side preflight
+logic enforces skew/order constraints.
+
+**Trigger.** A control-plane Kubernetes upgrade is already mid-rollout
+when `etcdImageTag` is bumped. The new etcd image is now coupled to a
+Kubernetes/kubeadm state that has not fully converged, so preflight
+blocks the next step and the rollout becomes trapped until versions are
+realigned.
+
+**Init / scenarios.** `orderedUpgradeRun` shows the intended regime:
+Kubernetes rollout completes first, then the etcd tag changes, and
+`EtcdUpgradeAfterControlPlaneGate` holds. `midRolloutEtcdBumpRun` bumps
+the etcd tag while `midRollout=true`, triggering `dependencyTrap=true`
+and violating `NoMidRolloutDependencyTrap`.
+
+**LSP grounding.**
+
+| Go / test entry point | File | Line |
+|---|---|---|
+| Control-plane helper etcd tag override | `test/framework/controlplane_helpers.go` | 340-341 |
+| Topology helper etcd tag variable injection | `test/framework/cluster_topology_helpers.go` | 98-100 |
+| E2E etcd upgrade knob | `test/e2e/cluster_upgrade.go` | 184, 221 |
+| Kubernetes-side skew / preflight gate | `internal/controllers/machineset/machineset_preflight.go` | 100-122, 191-220 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the mid-rollout dependency trap via `midRolloutEtcdBumpRun`,
+and Apalache reaches the same `NoMidRolloutDependencyTrap` violation from
+`dependencyTrapInit` within depth 4 (`make verify-etcd-k8s-skew-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-104 — Rollback during partial cycling temporarily exceeds surge bound
+
+**Provenance.** **Modelling** — issue #82 standalone rollback-during-
+partial-cycle surge slice (`RollbackSurgeRace.qnt`). The model is
+grounded in the same MachineDeployment surge arithmetic as the autoscaler
+race, but with the second actor replaced by an operator rollback intent.
+
+**Trigger.** A rollout already has surge replicas in flight when an
+operator rollback is requested. Instead of waiting until the old-version
+drain point is reached, rollback restores old replicas immediately,
+temporarily pushing total replicas beyond `desiredReplicas + maxSurge`.
+
+**Init / scenarios.** `serializedRollbackRun` shows the intended regime:
+surge starts, an old replica drains, rollback is requested, and the old
+replica is only restored at the safe point. `rollbackMidCycleRun`
+requests rollback while surge is still present and immediately restores
+an old replica, violating `NoTransientSurgeBeyondBound`.
+
+**LSP grounding.**
+
+| Go / test entry point | File | Line |
+|---|---|---|
+| MD surge arithmetic | `internal/controllers/machinedeployment/mdutil/util.go` | 295-302, 336, 663-684 |
+| Rollout planner / surge usage | `internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go` | 481-515 |
+| Rollback partial-changes test hint | `internal/controllers/machineset/machineset_controller_test.go` | 2724 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the rollback-mid-cycle surge path via `rollbackMidCycleRun`,
+and Apalache reaches the same `NoTransientSurgeBeyondBound` violation
+from `rollbackMidCycleInit` within depth 4
+(`make verify-rollback-surge-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-101 — Controller-manager replay re-applies an effect after leader failover
+
+**Provenance.** **Modelling** — issue #90 standalone controller-manager
+OOM / replay slice (`ControllerManagerReplay.qnt`). The leader-election
+and replay substrate is grounded in the existing `ControllerRuntime.qnt`
+formal model and the test-framework note that failed leader election /
+restarts extend retries.
+
+**Trigger.** The leader controller-manager applies an effect, OOM-kills,
+loses its in-memory "already did X" marker, another replica acquires the
+lease with a cold cache, and replay logic re-applies the same effect
+instead of reconstructing completion from durable state.
+
+**Init / scenarios.** `cleanReplayRun` shows the intended regime: the
+original leader applies the effect once, dies, the new leader takes over,
+and `ReplayFromDurableState` restores the in-memory marker without
+changing `effectCount`. `doubleEffectReplayRun` takes the bad path and
+increments `effectCount` a second time, violating `NoDoubleEffect`.
+
+**LSP grounding.**
+
+| Go / formal entry point | File | Line |
+|---|---|---|
+| Existing leader/replay substrate | `formal/specs/ControllerRuntime.qnt` | 1-427 |
+| Restart/retry note | `test/framework/cluster_proxy.go` | 58 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the replay double-effect path via `doubleEffectReplayRun`, and
+Apalache reaches the same `NoDoubleEffect` violation from
+`doubleEffectInit` within depth 4 (`make verify-controller-replay-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-103 — Management-cluster split-brain yields two active leader controllers
+
+**Provenance.** **Modelling** — issue #94 standalone split-brain slice
+(`ControllerLeaderSplitBrain.qnt`). The model is grounded in the same
+leader-election surface as `ControllerManagerReplay.qnt`, but explores the
+more adversarial case where lease ownership temporarily diverges and two
+leaders both believe they are active.
+
+**Trigger.** The management-cluster apiserver or lease view splits such
+that controller-manager replica A and replica B both believe they own the
+lease. Before convergence, both apply the same controller effect.
+
+**Init / scenarios.** `leaseConvergesRun` shows the intended regime:
+single leader applies the effect and lease convergence preserves that
+single-writer history. `splitBrainRun` first enters `LeaseSplit`, then
+lets both leaders apply the effect, violating
+`NoDuplicateEffectAcrossLeaders`.
+
+**LSP grounding.**
+
+| Go / formal entry point | File | Line |
+|---|---|---|
+| Main manager leader-election flags | `main.go` | 364-369 |
+| KCP manager leader-election flags | `controlplane/kubeadm/main.go` | 287-292 |
+| Existing single-leader replay substrate | `formal/specs/ControllerManagerReplay.qnt` | 1-67 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the split-brain duplicate-effect path via `splitBrainRun`, and
+Apalache reaches the same `NoDuplicateEffectAcrossLeaders` violation from
+`splitBrainInit` within depth 4 (`make verify-controller-splitbrain-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
+## FM-102 — MachinePool spec replicas and provider actual scale oscillate
+
+**Provenance.** **Modelling** — issue #89 standalone MachinePool
+scale-conflict slice (`MachinePoolScaleConflict.qnt`). The CAPI side is
+grounded in the desired-state generator that computes
+`MachinePool.spec.replicas`, while the provider side is grounded in the
+API contract that an external autoscaler/provider may own scale.
+
+**Trigger.** CAPI keeps forcing `MachinePool.spec.replicas` to one value
+while the provider/autoscaler keeps rebalancing actual instances to
+another. Without explicit ownership arbitration, the system alternates
+between the two intents and never converges.
+
+**Init / scenarios.** `arbitratedScaleRun` shows the intended regime:
+provider scale ownership is marked, provider actual is rebalanced, and
+CAPI adopts provider actual as the new desired replica count so
+`EventualConvergence` holds. `oscillationRun` takes the bad path:
+CAPI sets replicas to `5`, the provider rebalances to `8`, and the model
+records the oscillation, violating `NoOscillation`.
+
+**LSP grounding.**
+
+| Go / API entry point | File | Line |
+|---|---|---|
+| Desired MachinePool replicas | `exp/topology/desiredstate/desired_state.go` | 1337-1415 |
+| External autoscaler ownership hint | `api/core/v1beta1/cluster_types.go` | 733, 921 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the spec-vs-provider oscillation via `oscillationRun`, and
+Apalache reaches the same `NoOscillation` violation from
+`oscillationInit` within depth 4 (`make verify-machinepool-scale-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-66 — User-provided kubeconfig secret is rotated as if KCP owned it
 
 **Provenance.** **Modelling** — first issue-20 counterexample
@@ -2961,6 +3238,42 @@ separately logged via `NoStrandedKubelet` on `strandedKubeletRun`.
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-107 — Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401
+
+**Provenance.** **Modelling** — issue #73 standalone token-rotation
+slice (`ServiceAccountTokenRotation.qnt`). The model is grounded in the
+real `TokenRequest` issuance surfaces used in tests and the cached/remote
+cluster client surfaces used by long-running controllers.
+
+**Trigger.** A reconcile captures a client using token version 1, the
+projected ServiceAccount token rotates to version 2 while the reconcile
+continues, and the next API call returns 401 because the stale token is
+still attached to the cached client. The controller fails instead of
+refreshing and retrying.
+
+**Init / scenarios.** `refreshAfter401Run` shows the intended regime:
+token rotates, the call gets 401, and the controller refreshes before
+retrying, satisfying `RetryOn401WithRefreshedToken`. `staleTokenFailureRun`
+takes the adversarial branch where the 401 is observed but reconcile ends
+in failure, violating `NoSilentReconcileFailure`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| TokenRequest helper | `test/framework/autoscaler_helpers.go` | 596-604 |
+| TokenRequest helper | `test/e2e/kcp_remediations.go` | 709-717 |
+| Cached client construction | `controllers/clustercache/cluster_accessor_client.go` | 210-268 |
+| Long-running cached client usage | `controlplane/kubeadm/internal/controllers/remediation.go` | 656 |
+| Long-running cached client usage | `controlplane/kubeadm/internal/cluster.go` | 136 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-token failure path via `staleTokenFailureRun`, and
+Apalache reaches the same `NoSilentReconcileFailure` violation from
+`expiredTokenInit` within depth 4 (`make verify-sa-token-rotation-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-90 — MTU drift silently fragments packets and stalls snapshot transfer
 
 **Provenance.** **Modelling** — issue #50 standalone MTU / fragmentation
@@ -3418,12 +3731,21 @@ reason that the operator can read.
 | FM-87 | MemPressure evicts a mis-priority critical static pod | MODELLING | Correct kubeadm output keeps static pods priority-protected | Logged as deliberate counterexample candidate on `CriticalStaticPodsImmuneFromEviction` in `specs/StaticPodMemPressure.qnt`; Apalache reaches the mis-priority eviction state within depth 4 |
 | FM-88 | Static-pod hash collision or stale kubelet reload preserves the wrong intent | MODELLING | Distinct intents hash differently and kubelet reload catches up in the safe regime | Logged as deliberate counterexample candidate on `NoHashCollisionAcrossDistinctIntents` / `ReloadEventuallyConverges` in `specs/StaticPodHashReloadRace.qnt`; Apalache reaches the collision state within depth 4 |
 | FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
+| FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |
 | FM-92 | Load balancer deregisters target before drain, blackholing existing requests | MODELLING | KCP waits for drain completion before apiserver termination in the safe regime | Logged as deliberate counterexample candidate on `KcpUpgradeAccountsForLbDrain` in `specs/LoadBalancerDrain.qnt`; Apalache reaches the blackholed-request state within depth 4 |
 | FM-93 | NetworkPolicy cuts controller traffic mid-flight and long-lived watch stalls silently | MODELLING | Controller detects the cut or fail-fast reconnects in the safe regime | Logged as deliberate counterexample candidate on `NoSilentControllerStall` in `specs/NetworkPolicyMidFlight.qnt`; Apalache reaches the silent-stall state within depth 4 |
 | FM-95 | ClusterTopology reads a torn ClusterClass view mid-update | MODELLING | Reconcile pins a consistent ClusterClass version in the safe regime | Logged as deliberate counterexample candidate on `ConsistentCCViewPerReconcile` in `specs/ClusterClassTopologyRace.qnt`; Apalache reaches the torn-read state within depth 4 |
 | FM-96 | ClusterResourceSet ApplyOnce runs before kubelets join | MODELLING | Apply happens after kubelets join or Reconcile retries until readiness in the safe regime | Logged as deliberate counterexample candidate on `ApplyOnceEventuallyTakesEffect` in `specs/ClusterResourceSetTiming.qnt`; Apalache reaches the timing race within depth 4 |
+| FM-99 | Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions | MODELLING | Both edits converge to the final spec and surge stays within bound in the safe regime | Logged as deliberate counterexample candidate on `NoLostEdit` / `NoSurgeBoundViolation` in `specs/ConcurrentClusterSpecEdits.qnt`; Apalache reaches the lost-edit state within depth 4 |
+| FM-100 | Autoscaler scale-up and KCP rollout surge overproduce replicas | MODELLING | Autoscaler intent is incorporated before rollout surge in the safe regime | Logged as deliberate counterexample candidate on `SurgeBoundUnderConcurrentScale` in `specs/AutoscalerKcpSurgeRace.qnt`; Apalache reaches the over-replica state within depth 4 |
+| FM-105 | Mid-rollout etcd tag bump traps the control-plane upgrade | MODELLING | etcd upgrade waits until the control-plane rollout gate has cleared in the safe regime | Logged as deliberate counterexample candidate on `NoMidRolloutDependencyTrap` in `specs/EtcdKubernetesVersionSkew.qnt`; Apalache reaches the dependency-trap state within depth 4 |
+| FM-104 | Rollback during partial cycling temporarily exceeds surge bound | MODELLING | Rollback waits for the drain point in the safe regime | Logged as deliberate counterexample candidate on `NoTransientSurgeBeyondBound` in `specs/RollbackSurgeRace.qnt`; Apalache reaches the mid-cycle rollback surge state within depth 4 |
+| FM-101 | Controller-manager replay re-applies an effect after leader failover | MODELLING | New leader reconstructs completion from durable state in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleEffect` in `specs/ControllerManagerReplay.qnt`; Apalache reaches the replay state within depth 4 |
+| FM-103 | Management-cluster split-brain yields two active leader controllers | MODELLING | Lease converges to a single writer before duplicate effects in the safe regime | Logged as deliberate counterexample candidate on `NoDuplicateEffectAcrossLeaders` in `specs/ControllerLeaderSplitBrain.qnt`; Apalache reaches the duplicate-effect state within depth 4 |
+| FM-98 | Machine readiness gets stuck because bootstrap and infra ready edges are observed separately | MODELLING | Reconcile observes both child-ready edges and eventually marks Machine ready in the safe regime | Logged as deliberate counterexample candidate on `NoStuckUnreadyDespiteBothChildrenReady` in `specs/BootstrapInfraReadyRace.qnt`; Apalache reaches the stuck-unready state within depth 4 |
+| FM-102 | MachinePool spec replicas and provider actual scale oscillate | MODELLING | Scale ownership is arbitrated and converges in the safe regime | Logged as deliberate counterexample candidate on `NoOscillation` in `specs/MachinePoolScaleConflict.qnt`; Apalache reaches the oscillation state within depth 4 |
 | FM-97 | KCP and MHC concurrently delete the same Machine | MODELLING | One controller owns old-machine deletion and replacements are not immediately reselected in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleDelete` / `NoReplacementCannibalisation` in `specs/KcpMhcDeleteRace.qnt`; Apalache reaches the double-delete state within depth 4 |
 | FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM48_NoCpBeforeInfraReady`) + Lean 4 deductive (`Ordering.lean::fm48_no_cp_before_infra_ready`) |
 | FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM49_NoWorkersBeforeCpInit`) + Lean 4 deductive (`Ordering.lean::fm49_no_workers_before_cp_init`) |
@@ -3503,11 +3825,26 @@ non-paused Machine.
 **Recovery.** `KcpReconcileResume` (operator-driven KCP pod
 failover via `kubectl delete pod`).
 
+**Issue #96 deepening.** `SelfHosted.qnt` now also models the more
+concrete etcd-roll trap shape: `EnterEtcdRoll` moves the self-hosted
+upgrade into the etcd rollout sub-step, `EtcdRollRequiresEtcdWrite`
+captures the chicken-and-egg dependency on the hosted etcd write path,
+and `EnableEscapeHatch` / `ResumeEtcdRollWithEscapeHatch` capture the
+operator workaround (external/staged etcd write path, read-only window,
+or equivalent escape hatch).
+
 **Verdict.** Two specs verify FM-35 from complementary angles:
 
 1. **`SelfHosted.qnt`** — focused dynamics: `selfHostedDeadlockTrace`
    reaches the `Deadlocked` invariant; `selfHostedRecoveryTrace`
-   clears it.
+   clears it. Issue #96 further adds:
+   - `selfHostedEtcdTrapTrace` (mid-flight upgrade → `EnterEtcdRoll`
+     → `EtcdRollRequiresEtcdWrite`) reaches the same deadlock class via
+     the explicit etcd-write trap.
+   - `selfHostedEtcdEscapeTrace` (mid-flight upgrade → etcd roll →
+     `EnableEscapeHatch` → `ResumeEtcdRollWithEscapeHatch`) keeps
+     `EscapeHatchExists` true and clears the trap without relying on the
+     hosted etcd write path.
 2. **`Lifecycle.multicluster.qnt`** (Phase 12 full) — per-cluster
    expansion of the KCP lifecycle. Every state variable is
    `ClusterId -> X` and every action takes a `cl: ClusterId`

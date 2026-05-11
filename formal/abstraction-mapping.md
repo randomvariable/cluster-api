@@ -191,6 +191,10 @@ dimension differs.
 | SelfHosted | KcpUpgradeMachine | controlplane/kubeadm/internal/controllers/upgrade.go (per-Machine rollout). | KCP rolls a single Machine to the new template. |
 | SelfHosted | KcpUpgradeOwnHost | (self-hosted-specific path; no dedicated CAPI entry yet — rolling-update controller treats own-host as any other Machine). | KCP attempts to upgrade the Node hosting its own pod. Pauses the host; KCP cannot reconcile until pod fails over. The FM-35 deadlock entry. |
 | SelfHosted | KcpReconcileResume | (operator workaround — manual KCP pod failover via kubectl delete pod or controller-manager pod failover). | KCP reconciler pod fails over to a healthy Machine; reconciliation resumes. |
+| SelfHosted | EnterEtcdRoll | controlplane/kubeadm/internal/controllers/upgrade.go; controlplane/kubeadm/internal/workload_cluster_etcd.go | Concrete upgrade sub-step where self-hosted control-plane upgrade starts rolling its own etcd. |
+| SelfHosted | EtcdRollRequiresEtcdWrite | controlplane/kubeadm/internal/workload_cluster_etcd.go:88-108; controlplane/kubeadm/internal/etcd/etcd.go:229-245 | Express the chicken-and-egg trap: rolling self-hosted etcd still requires writes to that same etcd. |
+| SelfHosted | EnableEscapeHatch / ResumeEtcdRollWithEscapeHatch | operator-driven workaround (external etcd, staged write, read-only window) | Explicit escape hatch that lets the etcd-roll step proceed without depending on the hosted etcd write path. |
+| SelfHosted | EscapeHatchExists / selfHostedEtcdTrapTrace | same | Deepen FM-35 with the concrete etcd-roll trap shape requested by issue #96. |
 | SelfHosted | selfHostedSteadyInit | (initialiser — no Go entry). | 3-CP healthy steady-state init. |
 | SelfHosted | selfHostedUpgradeMidFlightInit | (initialiser — no Go entry). | Upgrade in flight init. |
 | SelfHosted | selfHostedDeadlockInit | (initialiser — no Go entry). | FM-35 deadlock init: KCP host paused mid-upgrade. |
@@ -600,6 +604,20 @@ kubelet client-cert latch, and a bootstrap timeout counter.
 | BootstrapCsrLag | `BootstrapTimeout` / `BootstrapTimeoutCoversCsrLatency` | `test/infrastructure/docker/api/v1beta1/condition_consts.go:67-70` (`BootstrapFailed`) | Ground the user-visible failure surface when bootstrap times out even though approval would eventually succeed. |
 | BootstrapCsrLag | `NoStrandedKubelet` / `strandedKubeletRun` | same | Express the second issue target: kubelet should not end up without a client cert and without any CSR left in flight. |
 
+### ServiceAccountTokenRotation.qnt
+
+Standalone projected ServiceAccountToken rotation model for issue #73.
+This spec keeps the current token version, the token version captured by
+a long-running reconcile call, a current expiry time, and whether a 401
+triggered a refresh-aware retry.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| ServiceAccountTokenRotation | `RotateToken` / `Returns401` | `test/framework/autoscaler_helpers.go:596-604`; `test/e2e/kcp_remediations.go:709-717` | Ground the concrete token-issuance surface via `TokenRequest` and the fact that tokens are expected to rotate over time. |
+| ServiceAccountTokenRotation | `CaptureClient` / `RefreshTokenAndRetry` | `controllers/clustercache/cluster_accessor_client.go`; `controlplane/kubeadm/internal/controllers/remediation.go:656`; `controlplane/kubeadm/internal/cluster.go:136` | Ground the long-lived/cached client surface where a reconcile can hold credentials across time and later reacquire a client. |
+| ServiceAccountTokenRotation | `RetryOn401WithRefreshedToken` / `refreshAfter401Run` | same | Show the intended regime where a stale token causes a 401 and reconcile retries with a refreshed token. |
+| ServiceAccountTokenRotation | `NoSilentReconcileFailure` / `staleTokenFailureRun` | same | Express the issue's counterexample target: a stale token yields a 401 and reconcile fails without a rotation-aware retry. |
+
 ### MtuFragmentation.qnt
 
 Standalone MTU/fragmentation model for issue #50. This spec keeps one
@@ -749,6 +767,88 @@ ever becomes effective.
 | ClusterResourceSetTiming | `MarkControlPlaneInitialised` / `KubeletsJoin` | `internal/controllers/topology/cluster/cluster_controller.go:354` | Ground the race between control-plane init and later kubelet/node join readiness. |
 | ClusterResourceSetTiming | `ApplyOnceEventuallyTakesEffect` / `applyBeforeJoinRun` | same | Express the issue's counterexample: `ApplyOnce` consumes the one-shot apply window before kubelets have joined, so the payload never takes effect. |
 
+### AutoscalerKcpSurgeRace.qnt
+
+Standalone autoscaler + KCP surge-race model for issue #87. This spec
+keeps autoscaler desired replicas, KCP rollout desired replicas, the
+actual worker replica count, and whether the two actors have arbitrated a
+single source of truth.
+
+| Spec | Action / invariant | Go / API reference | Purpose |
+| ---- | ------------------ | ------------------ | ------- |
+| AutoscalerKcpSurgeRace | `AutoscalerSetReplicas` | `api/core/v1beta1/cluster_types.go:733,921` | Ground the fact that an external actor like cluster-autoscaler may manage replica count. |
+| AutoscalerKcpSurgeRace | `KcpUpgradeRoll` / `ApplyRolloutSurge` | `internal/controllers/machinedeployment/mdutil/util.go:295-302,336,663-684`; `internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go:481-515` | Ground the rollout side's use of `replicas + maxSurge` while a rolling update is in progress. |
+| AutoscalerKcpSurgeRace | `SurgeBoundUnderConcurrentScale` / `concurrentScaleRollRun` | same | Express the issue's core counterexample: autoscaler scale-up and rollout surge both grow the pool before a single desired count is arbitrated. |
+| AutoscalerKcpSurgeRace | `AutoscalerKcpArbitrated` / `serializedScaleRollRun` | same | Show the safe regime where autoscaler intent is incorporated before rollout surge is computed. |
+
+### EtcdKubernetesVersionSkew.qnt
+
+Standalone mid-rollout etcd-version × Kubernetes-version dependency model
+for issue #81. This spec keeps the control-plane Kubernetes version, the
+explicit `etcdImageTag`, old/new replica counts, and a preflight/dependency
+trap bit.
+
+| Spec | Action / invariant | Go / test reference | Purpose |
+| ---- | ------------------ | ------------------- | ------- |
+| EtcdKubernetesVersionSkew | `StartKubernetesUpgrade` / `FinishKubernetesRoll` | `test/framework/controlplane_helpers.go:340-341`; `test/framework/cluster_topology_helpers.go:98-100` | Ground the fact that Kubernetes version and `etcdImageTag` are separate upgrade knobs in the real topology/control-plane helpers. |
+| EtcdKubernetesVersionSkew | `BumpEtcdTagOrdered` / `BumpEtcdTagMidRollout` | same plus `test/e2e/cluster_upgrade.go:184,221` | Model the difference between bumping etcd only after the control-plane rollout has settled vs bumping etcd while the rollout is still mid-flight. |
+| EtcdKubernetesVersionSkew | `PreflightBlocksUnsupportedOrder` | `internal/controllers/machineset/machineset_preflight.go:100-122,191-220` | Ground the fact that version-skew ordering is enforced on the Kubernetes side, which the model abstracts as a preflight gate that should trip on unsupported ordering. |
+| EtcdKubernetesVersionSkew | `NoMidRolloutDependencyTrap` / `midRolloutEtcdBumpRun` | same | Express the issue's counterexample target: etcd is bumped while the control plane is still mid-rollout, tripping a dependency trap before convergence. |
+
+### RollbackSurgeRace.qnt
+
+Standalone rollback-during-partial-cycle surge model for issue #82. This
+spec keeps only old/new replica counts, desired replicas, `maxSurge`, and
+a rollback-requested bit.
+
+| Spec | Action / invariant | Go / test reference | Purpose |
+| ---- | ------------------ | ------------------- | ------- |
+| RollbackSurgeRace | `StartSurge` / `DrainOldReplica` | `internal/controllers/machinedeployment/mdutil/util.go:295-302,336,663-684`; `internal/controllers/machinedeployment/machinedeployment_rollout_rollingupdate.go:481-515` | Ground the standard rolling-update surge arithmetic and drain ordering. |
+| RollbackSurgeRace | `RequestRollback` / `ApplyRollbackSurge` | `internal/controllers/machineset/machineset_controller_test.go:2724` (rollback partial changes test intent) | Ground the operator rollback arriving mid-cycle while surge replicas still exist. |
+| RollbackSurgeRace | `NoTransientSurgeBeyondBound` / `rollbackMidCycleRun` | same | Express the issue's counterexample target: rollback reintroduces old replicas before surge cleanup, temporarily exceeding the intended bound. |
+| RollbackSurgeRace | `RollbackAppliedAfterDrainPoint` / `serializedRollbackRun` | same | Show the safe regime where rollback waits until the drain point before restoring old replicas. |
+
+### ConcurrentClusterSpecEdits.qnt
+
+Standalone concurrent `Cluster.spec` edit model for issue #65. This spec
+keeps the desired version, desired replicas, operator intent bits, and a
+compact split between old-version and new-version replica counts.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| ConcurrentClusterSpecEdits | `OperatorEditVersion` / `FreshApplyReplicaEdit` | `internal/controllers/topology/cluster/structuredmerge/serversidepathhelper.go`; `internal/controllers/topology/cluster/structuredmerge/serversidepathhelper_test.go:50-51, 637-638` | Ground the SSA/co-authorship surface where concurrent operators edit different Cluster spec fields. |
+| ConcurrentClusterSpecEdits | `StaleApplyReplicaEdit` | same SSA/co-authorship surface | Express the stale full-object apply path that can overwrite a concurrently written version field while still applying the replica edit. |
+| ConcurrentClusterSpecEdits | `AddSurgeReplica` / `AddScaleReplica` | `controlplane/kubeadm/internal/controllers/scale.go` | Ground the fact that version rollouts and replica scale-up both change the actual control-plane population and can interact on surge bounds. |
+| ConcurrentClusterSpecEdits | `NoLostEdit` / `lostEditRun` | same | Express the issue's first counterexample target: both operators' intents exist, but the final applied spec silently drops one of them. |
+| ConcurrentClusterSpecEdits | `NoSurgeBoundViolation` / `surgeRaceRun` | same | Express the second counterexample target: concurrent rollout and scale-up temporarily exceed `desiredReplicas + maxSurge`. |
+
+### BootstrapInfraReadyRace.qnt
+
+Standalone Machine readiness race model for issue #86. This spec keeps
+bootstrap readiness, infrastructure readiness, the Machine-ready bit, and
+a compact `lastObserved` view that captures which child readiness events
+the Machine controller has seen.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| BootstrapInfraReadyRace | `BootstrapFlipsReady` / `MachineReconcileBootstrapOnly` | `internal/controllers/machine/machine_controller_status.go:78-164`; `internal/controllers/machine/machine_controller_phases.go:180-205` | Ground the bootstrap-side readiness mirror from the bootstrap config into Machine conditions / status. |
+| BootstrapInfraReadyRace | `InfraFlipsReady` / `MachineReconcileInfraOnly` | `internal/controllers/machine/machine_controller_status.go:167-255`; `internal/controllers/machine/machine_controller_phases.go:305-373` | Ground the infrastructure-side readiness mirror from the infra machine into Machine conditions / status. |
+| BootstrapInfraReadyRace | `NoStuckUnreadyDespiteBothChildrenReady` / `missingInfraEventRun` | same | Express the issue’s counterexample target: both children are ready in truth, but the Machine reconcile never observes the infra-ready edge and remains stuck unready. |
+
+### MachinePoolScaleConflict.qnt
+
+Standalone MachinePool provider-managed scale vs CAPI desired scale model
+for issue #89. This spec keeps one MachinePool desired replica count,
+one provider-managed actual count, and one coarse `lastReconcile` owner
+marker.
+
+| Spec | Action / invariant | Go / API reference | Purpose |
+| ---- | ------------------ | ------------------ | ------- |
+| MachinePoolScaleConflict | `CapiSetReplicas` | `exp/topology/desiredstate/desired_state.go:1337-1415` | Ground the CAPI-side desired-state path that computes `MachinePool.spec.replicas`. |
+| MachinePoolScaleConflict | `ProviderRebalance` / `providerOwnsScale` | `api/core/v1beta1/cluster_types.go:733,921` (external autoscaler ownership hint) | Ground the fact that an external provider/autoscaler may also own the actual pool size. |
+| MachinePoolScaleConflict | `EventualConvergence` / `arbitratedScaleRun` | same | Show the safe regime where scale ownership is arbitrated and spec converges to the provider's actual size. |
+| MachinePoolScaleConflict | `NoOscillation` / `oscillationRun` | same | Express the issue's counterexample target: CAPI and provider alternately rewrite desired vs actual scale and never converge. |
+
 ### KcpMhcDeleteRace.qnt
 
 Standalone KCP + MHC concurrent-delete race model for issue #83. This
@@ -761,6 +861,31 @@ selection bits, and which actor currently owns deletion.
 | KcpMhcDeleteRace | `MhcFlagUnhealthyOld` / `ConcurrentDeleteOldByMhc` | `internal/controllers/machinehealthcheck/machinehealthcheck_controller.go:421-521,795-813` | Ground the MHC-side unhealthy selection and remediation-request/delete authority on the same old machine. |
 | KcpMhcDeleteRace | `NoDoubleDelete` / `concurrentDeleteRun` | same plus existing `KCPReconcile.qnt` remediation vocabulary | Express the issue's first counterexample: both KCP and MHC believe they own deletion of the same machine. |
 | KcpMhcDeleteRace | `NoReplacementCannibalisation` / `replacementCannibalisedRun` | same | Express the second counterexample: the newly created replacement lands on the same node/failure domain and is immediately selected for MHC-driven deletion. |
+
+### ControllerManagerReplay.qnt
+
+Standalone controller-manager OOM / leader failover / replay model for
+issue #90. This spec keeps the current leader replica, leader-alive bit,
+cache generation, one durable side effect, and one in-memory completion
+marker that is lost when the leader dies.
+
+| Spec | Action / invariant | Go / formal reference | Purpose |
+| ---- | ------------------ | --------------------- | ------- |
+| ControllerManagerReplay | `OomKillLeader` / `LeaseExpiryAndFailover` | `formal/specs/ControllerRuntime.qnt`; `test/framework/cluster_proxy.go:58` | Ground the fact that leader-election loss and controller restarts already induce replay/retry windows in the existing substrate. |
+| ControllerManagerReplay | `ReplayFromDurableState` | same substrate grounding | Show the safe replay regime: the new leader infers from durable state that the effect already happened and only restores its in-memory marker. |
+| ControllerManagerReplay | `ReplayDoubleEffect` / `NoDoubleEffect` | same | Express the issue's counterexample target: the new leader replays an already-applied effect because only in-memory state recorded completion. |
+
+### ControllerLeaderSplitBrain.qnt
+
+Standalone management-cluster apiserver split-brain model for issue #94.
+This spec keeps only the controller-manager lease view, a durable effect
+count, and whether the lease has converged back to one writer.
+
+| Spec | Action / invariant | Go / formal reference | Purpose |
+| ---- | ------------------ | --------------------- | ------- |
+| ControllerLeaderSplitBrain | `LeaseSplit` / `LeaseConvergeToA` / `LeaseConvergeToB` | controller-manager leader-election flags in `main.go`, `controlplane/kubeadm/main.go`; `formal/specs/ControllerManagerReplay.qnt` | Ground the concrete lease-based leader-election surface and the fact that failover/replay already exists as a formal substrate. |
+| ControllerLeaderSplitBrain | `ApplyEffectByA` / `ApplyEffectByB` | same | Model two active leaders each applying the same controller effect during a split-brain window. |
+| ControllerLeaderSplitBrain | `NoDuplicateEffectAcrossLeaders` / `splitBrainRun` | same | Express the issue's counterexample target: lease split-brain yields duplicate effect application before convergence. |
 
 ### RuntimeSDK.qnt
 

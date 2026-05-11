@@ -1163,6 +1163,208 @@ echo y | quint verify --main=ClusterResourceSetTiming --init=applyBeforeJoinInit
 
 Or, from `formal/`: `make verify-crs-timing`.
 
+### Concurrent `Cluster.spec` edits from two operators (issue #65)
+
+```sh
+# Safe serial application of version and replica edits.
+quint run --main=ConcurrentClusterSpecEdits --init=serialEditsRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ConcurrentClusterSpecEdits.qnt
+
+quint run --main=ConcurrentClusterSpecEdits --init=serialEditsRun --step=step \
+          --invariant=EventualConvergenceToFinalSpec --max-steps=0 \
+          formal/specs/ConcurrentClusterSpecEdits.qnt
+
+# Explicit lost-edit and surge-race counterexamples.
+quint run --main=ConcurrentClusterSpecEdits --init=lostEditRun --step=step \
+          --invariant=NoLostEdit --max-steps=0 \
+          formal/specs/ConcurrentClusterSpecEdits.qnt
+
+quint run --main=ConcurrentClusterSpecEdits --init=surgeRaceRun --step=step \
+          --invariant=NoSurgeBoundViolation --max-steps=0 \
+          formal/specs/ConcurrentClusterSpecEdits.qnt
+
+# Random-walk stable edit bookkeeping.
+for inv in StableSafetyInvariants AppliedSpecSubsetOfPending LastWriterPreservesFieldDomain; do
+  quint run --main=ConcurrentClusterSpecEdits --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ConcurrentClusterSpecEdits.qnt
+done
+
+# Backend verdict: stale full-object overwrite reachable within depth 4.
+echo y | quint verify --main=ConcurrentClusterSpecEdits --init=lostEditInit --step=stepApalache \
+                      --invariant=NoLostEdit \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ConcurrentClusterSpecEdits.qnt
+```
+
+Or, from `formal/`: `make verify-concurrent-spec-edits`.
+
+### Cluster autoscaler scale-up + KCP rolling upgrade surge race (issue #87)
+
+```sh
+# Autoscaler scale-up is incorporated before rollout surge is computed.
+quint run --main=AutoscalerKcpSurgeRace --init=serializedScaleRollRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/AutoscalerKcpSurgeRace.qnt
+
+quint run --main=AutoscalerKcpSurgeRace --init=serializedScaleRollRun --step=step \
+          --invariant=AutoscalerKcpArbitrated --max-steps=0 \
+          formal/specs/AutoscalerKcpSurgeRace.qnt
+
+# Explicit concurrent autoscale+rollout surge counterexample.
+quint run --main=AutoscalerKcpSurgeRace --init=concurrentScaleRollRun --step=step \
+          --invariant=SurgeBoundUnderConcurrentScale --max-steps=0 \
+          formal/specs/AutoscalerKcpSurgeRace.qnt
+
+# Random-walk stable autoscaler/KCP bookkeeping.
+for inv in StableSafetyInvariants ActualReplicasWithinDomain LastWriterOwnsIntent; do
+  quint run --main=AutoscalerKcpSurgeRace --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/AutoscalerKcpSurgeRace.qnt
+done
+
+# Backend verdict: concurrent scale+surge race reachable within depth 4.
+echo y | quint verify --main=AutoscalerKcpSurgeRace --init=concurrentScaleInit --step=stepApalache \
+                      --invariant=SurgeBoundUnderConcurrentScale \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/AutoscalerKcpSurgeRace.qnt
+```
+
+Or, from `formal/`: `make verify-autoscaler-kcp`.
+
+### Mid-rollout etcd-version × Kubernetes-version dependency trap (issue #81)
+
+```sh
+# Kubernetes rollout completes before etcd tag changes.
+quint run --main=EtcdKubernetesVersionSkew --init=orderedUpgradeRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/EtcdKubernetesVersionSkew.qnt
+
+quint run --main=EtcdKubernetesVersionSkew --init=orderedUpgradeRun --step=step \
+          --invariant=EtcdUpgradeAfterControlPlaneGate --max-steps=0 \
+          formal/specs/EtcdKubernetesVersionSkew.qnt
+
+# Explicit mid-rollout etcd bump dependency-trap counterexample.
+quint run --main=EtcdKubernetesVersionSkew --init=midRolloutEtcdBumpRun --step=step \
+          --invariant=NoMidRolloutDependencyTrap --max-steps=0 \
+          formal/specs/EtcdKubernetesVersionSkew.qnt
+
+# Random-walk stable version bookkeeping.
+for inv in StableSafetyInvariants VersionStringsKnown PreflightBlocksUnsupportedOrder; do
+  quint run --main=EtcdKubernetesVersionSkew --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/EtcdKubernetesVersionSkew.qnt
+done
+
+# Backend verdict: mid-rollout dependency trap reachable within depth 4.
+echo y | quint verify --main=EtcdKubernetesVersionSkew --init=dependencyTrapInit --step=stepApalache \
+                      --invariant=NoMidRolloutDependencyTrap \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/EtcdKubernetesVersionSkew.qnt
+```
+
+Or, from `formal/`: `make verify-etcd-k8s-skew`.
+
+### Rollback during partial control-plane cycling overshoots surge bound (issue #82)
+
+```sh
+# Rollback waits until the drain point before restoring old replicas.
+quint run --main=RollbackSurgeRace --init=serializedRollbackRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/RollbackSurgeRace.qnt
+
+quint run --main=RollbackSurgeRace --init=serializedRollbackRun --step=step \
+          --invariant=RollbackAppliedAfterDrainPoint --max-steps=0 \
+          formal/specs/RollbackSurgeRace.qnt
+
+# Explicit partial-cycle rollback surge counterexample.
+quint run --main=RollbackSurgeRace --init=rollbackMidCycleRun --step=step \
+          --invariant=NoTransientSurgeBeyondBound --max-steps=0 \
+          formal/specs/RollbackSurgeRace.qnt
+
+# Random-walk stable rollback/surge bookkeeping.
+for inv in StableSafetyInvariants OldAndNewReplicaCountsNonNegative DrainPointKnown; do
+  quint run --main=RollbackSurgeRace --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/RollbackSurgeRace.qnt
+done
+
+# Backend verdict: rollback-mid-cycle surge reachable within depth 4.
+echo y | quint verify --main=RollbackSurgeRace --init=rollbackMidCycleInit --step=stepApalache \
+                      --invariant=NoTransientSurgeBeyondBound \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/RollbackSurgeRace.qnt
+```
+
+Or, from `formal/`: `make verify-rollback-surge`.
+
+### Bootstrap + Infra providers race — Machine ready miscomputed (issue #86)
+
+```sh
+# Machine reconciler observes both child-ready edges and sets Machine ready.
+quint run --main=BootstrapInfraReadyRace --init=bothReadyObservedRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/BootstrapInfraReadyRace.qnt
+
+quint run --main=BootstrapInfraReadyRace --init=bothReadyObservedRun --step=step \
+          --invariant=MachineReadyEventuallyReflectsBoth --max-steps=0 \
+          formal/specs/BootstrapInfraReadyRace.qnt
+
+# Explicit missing-event stuck-unready counterexample.
+quint run --main=BootstrapInfraReadyRace --init=missingInfraEventRun --step=step \
+          --invariant=NoStuckUnreadyDespiteBothChildrenReady --max-steps=0 \
+          formal/specs/BootstrapInfraReadyRace.qnt
+
+# Random-walk stable observed-view bookkeeping.
+for inv in StableSafetyInvariants LastObservedSubsetOfTruth ReadyNeedsObservedTrue; do
+  quint run --main=BootstrapInfraReadyRace --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/BootstrapInfraReadyRace.qnt
+done
+
+# Backend verdict: missing-event stuck-unready reachable within depth 4.
+echo y | quint verify --main=BootstrapInfraReadyRace --init=missingEventInit --step=stepApalache \
+                      --invariant=NoStuckUnreadyDespiteBothChildrenReady \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/BootstrapInfraReadyRace.qnt
+```
+
+Or, from `formal/`: `make verify-bootstrap-infra-race`.
+
+### MachinePool provider-managed scale vs CAPI source-of-truth conflict (issue #89)
+
+```sh
+# Scale ownership is arbitrated and spec converges to provider actual.
+quint run --main=MachinePoolScaleConflict --init=arbitratedScaleRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/MachinePoolScaleConflict.qnt
+
+quint run --main=MachinePoolScaleConflict --init=arbitratedScaleRun --step=step \
+          --invariant=EventualConvergence --max-steps=0 \
+          formal/specs/MachinePoolScaleConflict.qnt
+
+# Explicit oscillation counterexample.
+quint run --main=MachinePoolScaleConflict --init=oscillationRun --step=step \
+          --invariant=NoOscillation --max-steps=0 \
+          formal/specs/MachinePoolScaleConflict.qnt
+
+# Random-walk stable scale bookkeeping.
+for inv in StableSafetyInvariants ProviderActualNonNegative LastReconcileIsKnown; do
+  quint run --main=MachinePoolScaleConflict --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/MachinePoolScaleConflict.qnt
+done
+
+# Backend verdict: oscillation reachable within depth 4.
+echo y | quint verify --main=MachinePoolScaleConflict --init=oscillationInit --step=stepApalache \
+                      --invariant=NoOscillation \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/MachinePoolScaleConflict.qnt
+```
+
+Or, from `formal/`: `make verify-machinepool-scale`.
+
 ### KCP rolling upgrade + MHC remediation both delete the same Machine (issue #83)
 
 ```sh
@@ -1199,6 +1401,99 @@ echo y | quint verify --main=KcpMhcDeleteRace --init=doubleDeleteInit --step=ste
 ```
 
 Or, from `formal/`: `make verify-kcp-mhc-delete`.
+
+### Controller-manager OOMKilled — leader lost; replay required (issue #90)
+
+```sh
+# New leader rebuilds its in-memory marker from durable state without replaying the effect.
+quint run --main=ControllerManagerReplay --init=cleanReplayRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerManagerReplay.qnt
+
+quint run --main=ControllerManagerReplay --init=cleanReplayRun --step=step \
+          --invariant=RecoveryWithoutInMemoryStateAssumption --max-steps=0 \
+          formal/specs/ControllerManagerReplay.qnt
+
+# Explicit replay double-effect counterexample.
+quint run --main=ControllerManagerReplay --init=doubleEffectReplayRun --step=step \
+          --invariant=NoDoubleEffect --max-steps=0 \
+          formal/specs/ControllerManagerReplay.qnt
+
+# Random-walk stable leader/replay bookkeeping.
+for inv in StableSafetyInvariants LeaderOwnsCacheGen ReplayNeedsNewLeader; do
+  quint run --main=ControllerManagerReplay --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ControllerManagerReplay.qnt
+done
+
+# Backend verdict: replay double-effect reachable within depth 4.
+echo y | quint verify --main=ControllerManagerReplay --init=doubleEffectInit --step=stepApalache \
+                      --invariant=NoDoubleEffect \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ControllerManagerReplay.qnt
+```
+
+Or, from `formal/`: `make verify-controller-replay`.
+
+### Management cluster apiserver split-brain — two leader controllers (issue #94)
+
+```sh
+# Lease converges before any duplicate effect is applied.
+quint run --main=ControllerLeaderSplitBrain --init=leaseConvergesRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ControllerLeaderSplitBrain.qnt
+
+quint run --main=ControllerLeaderSplitBrain --init=leaseConvergesRun --step=step \
+          --invariant=SingleWriterAfterConvergence --max-steps=0 \
+          formal/specs/ControllerLeaderSplitBrain.qnt
+
+# Explicit split-brain duplicate-effect counterexample.
+quint run --main=ControllerLeaderSplitBrain --init=splitBrainRun --step=step \
+          --invariant=NoDuplicateEffectAcrossLeaders --max-steps=0 \
+          formal/specs/ControllerLeaderSplitBrain.qnt
+
+# Random-walk stable lease bookkeeping.
+for inv in StableSafetyInvariants LeaseOwnersKnown ConvergedImpliesSingleLeader; do
+  quint run --main=ControllerLeaderSplitBrain --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ControllerLeaderSplitBrain.qnt
+done
+
+# Backend verdict: split-brain duplicate effect reachable within depth 4.
+echo y | quint verify --main=ControllerLeaderSplitBrain --init=splitBrainInit --step=stepApalache \
+                      --invariant=NoDuplicateEffectAcrossLeaders \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ControllerLeaderSplitBrain.qnt
+```
+
+Or, from `formal/`: `make verify-controller-splitbrain`.
+
+### Self-hosted control-plane upgrade trapped on its own etcd (issue #96)
+
+```sh
+# Existing FM-35 deadlock entry.
+quint run --main=SelfHosted --init=selfHostedDeadlockTrace --step=step \
+          --invariant='not(Deadlocked)' --max-steps=0 \
+          formal/specs/SelfHosted.qnt
+
+# New concrete etcd-roll trap.
+quint run --main=SelfHosted --init=selfHostedEtcdTrapTrace --step=step \
+          --invariant='not(Deadlocked)' --max-steps=0 \
+          formal/specs/SelfHosted.qnt
+
+# Escape hatch clears the trap and advances to the next sub-step.
+quint run --main=SelfHosted --init=selfHostedEtcdEscapeTrace --step=step \
+          --invariant=EscapeHatchExists --max-steps=0 \
+          formal/specs/SelfHosted.qnt
+
+# Backend verdict: etcd-roll trap reachable from mid-flight self-hosted upgrade.
+echo y | quint verify --main=SelfHosted --init=selfHostedUpgradeMidFlightInit --step=stepNoRecovery \
+                      --invariant='not(Deadlocked)' \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/SelfHosted.qnt
+```
+
+Or, from `formal/`: `make verify-selfhosted-etcd-trap verify-selfhosted-etcd-escape verify-selfhosted-etcd-apalache`.
 
 ### 5-node etcd cluster with simultaneous 3-failure scenarios (issue #44)
 
@@ -1413,6 +1708,39 @@ echo y | quint verify --main=BootstrapCsrLag --init=approvalTimeoutInit --step=s
 ```
 
 Or, from `formal/`: `make verify-bootstrap-csr`.
+
+### ServiceAccount token volume rotates mid-reconcile (issue #73)
+
+```sh
+# Stale token yields 401, then the controller refreshes and retries.
+quint run --main=ServiceAccountTokenRotation --init=refreshAfter401Run --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ServiceAccountTokenRotation.qnt
+
+quint run --main=ServiceAccountTokenRotation --init=refreshAfter401Run --step=step \
+          --invariant=RetryOn401WithRefreshedToken --max-steps=0 \
+          formal/specs/ServiceAccountTokenRotation.qnt
+
+# Explicit stale-token auth failure counterexample.
+quint run --main=ServiceAccountTokenRotation --init=staleTokenFailureRun --step=step \
+          --invariant=NoSilentReconcileFailure --max-steps=0 \
+          formal/specs/ServiceAccountTokenRotation.qnt
+
+# Random-walk stable token/bookkeeping invariants.
+for inv in StableSafetyInvariants CapturedTokenNotNewerThanCurrent; do
+  quint run --main=ServiceAccountTokenRotation --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ServiceAccountTokenRotation.qnt
+done
+
+# Backend verdict: stale-token auth failure reachable within depth 4.
+echo y | quint verify --main=ServiceAccountTokenRotation --init=expiredTokenInit --step=stepApalache \
+                      --invariant=NoSilentReconcileFailure \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ServiceAccountTokenRotation.qnt
+```
+
+Or, from `formal/`: `make verify-sa-token-rotation`.
 
 ### MTU drift / silent packet fragmentation stalls etcd snapshot transfer (issue #50)
 

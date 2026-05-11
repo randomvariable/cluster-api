@@ -60,6 +60,15 @@ module SelfHosted {
     | UpgradeComplete
     | UpgradeDeadlock        // FM-35's terminal state
 
+  // Concrete sub-step for issue #96.
+  // EtcdRoll is the problematic phase for a self-hosted control plane:
+  // the upgrade needs to persist etcd membership/config changes via the
+  // same etcd instance that is currently being rolled.
+  type UpgradeStep =
+    | Idle
+    | EtcdRoll
+    | ApiserverRoll
+
   // -------------------------------------------------------------
   // Bounds
   // -------------------------------------------------------------
@@ -88,6 +97,13 @@ module SelfHosted {
   var wlIsMgmt: bool
   // Upgrade phase.
   var upgradePhase: UpgradePhase
+  // Current concrete sub-step of the upgrade.
+  var upgradeStep: UpgradeStep
+  // Whether the current sub-step still requires a write to the hosted etcd.
+  var etcdWriteRequired: bool
+  // Operator escape hatch: external etcd, manual staged write, or other
+  // side-channel that lets the upgrade continue despite the self-hosted trap.
+  var escapeHatch: bool
 
   // -------------------------------------------------------------
   // Initial states
@@ -107,6 +123,9 @@ module SelfHosted {
     desiredMgmtTemplate' = 1,
     wlIsMgmt'            = true,
     upgradePhase'        = NoUpgrade,
+    upgradeStep'         = Idle,
+    etcdWriteRequired'   = false,
+    escapeHatch'         = false,
   }
 
   // Upgrade in flight: operator bumped desiredMgmtTemplate to 2;
@@ -121,6 +140,9 @@ module SelfHosted {
     desiredMgmtTemplate' = 2,
     wlIsMgmt'            = true,
     upgradePhase'        = UpgradeInProgress,
+    upgradeStep'         = Idle,
+    etcdWriteRequired'   = false,
+    escapeHatch'         = false,
   }
 
   // FM-35's deadlock scenario: KCP pod's host Node has been paused
@@ -136,6 +158,9 @@ module SelfHosted {
     desiredMgmtTemplate' = 2,
     wlIsMgmt'            = true,
     upgradePhase'        = UpgradeInProgress,
+    upgradeStep'         = Idle,
+    etcdWriteRequired'   = false,
+    escapeHatch'         = false,
   }
 
   // -------------------------------------------------------------
@@ -163,6 +188,9 @@ module SelfHosted {
     kcpStatus' = kcpStatus, machinePaused' = machinePaused,
     machineTemplate' = machineTemplate,
     wlIsMgmt' = wlIsMgmt,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
   }
 
   // KcpStartUpgrade — KCP detects template mismatch (operator
@@ -177,6 +205,9 @@ module SelfHosted {
     machineTemplate' = machineTemplate,
     desiredMgmtTemplate' = desiredMgmtTemplate,
     wlIsMgmt' = wlIsMgmt,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
   }
 
   // KcpUpgradeMachine — KCP reconciles a Machine to the new
@@ -195,6 +226,9 @@ module SelfHosted {
     desiredMgmtTemplate' = desiredMgmtTemplate,
     wlIsMgmt' = wlIsMgmt,
     upgradePhase' = upgradePhase,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
   }
 
   // KcpUpgradeOwnHost — KCP must upgrade its own host. To do so,
@@ -214,6 +248,9 @@ module SelfHosted {
     desiredMgmtTemplate' = desiredMgmtTemplate,
     wlIsMgmt' = wlIsMgmt,
     upgradePhase' = UpgradeDeadlock,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
   }
 
   // KcpReconcileResume — operator workaround: KCP reconciler pod
@@ -237,6 +274,87 @@ module SelfHosted {
     wlIsMgmt' = wlIsMgmt,
     // After failover, the deadlock is broken; upgrade resumes.
     upgradePhase' = UpgradeInProgress,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
+  }
+
+  // EnterEtcdRoll — concrete issue-96 sub-step. The management cluster
+  // is now rolling the etcd member that also hosts the management API.
+  action EnterEtcdRoll: bool = all {
+    upgradePhase == UpgradeInProgress,
+    upgradeStep == Idle,
+    upgradeStep' = EtcdRoll,
+    etcdWriteRequired' = true,
+    mgmtMachines' = mgmtMachines,
+    kcpHost' = kcpHost,
+    kcpStatus' = kcpStatus,
+    machinePaused' = machinePaused,
+    machineTemplate' = machineTemplate,
+    desiredMgmtTemplate' = desiredMgmtTemplate,
+    wlIsMgmt' = wlIsMgmt,
+    upgradePhase' = upgradePhase,
+    escapeHatch' = escapeHatch,
+  }
+
+  // EtcdRollRequiresEtcdWrite — the concrete chicken-and-egg trap. A
+  // self-hosted upgrade step needs to write to the same etcd instance it
+  // is currently trying to roll. Without an escape hatch, progress halts.
+  action EtcdRollRequiresEtcdWrite: bool = all {
+    upgradePhase == UpgradeInProgress,
+    upgradeStep == EtcdRoll,
+    etcdWriteRequired,
+    wlIsMgmt,
+    not(escapeHatch),
+    upgradePhase' = UpgradeDeadlock,
+    mgmtMachines' = mgmtMachines,
+    kcpHost' = kcpHost,
+    kcpStatus' = kcpStatus,
+    machinePaused' = machinePaused,
+    machineTemplate' = machineTemplate,
+    desiredMgmtTemplate' = desiredMgmtTemplate,
+    wlIsMgmt' = wlIsMgmt,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+    escapeHatch' = escapeHatch,
+  }
+
+  // EnableEscapeHatch — operator-driven external etcd, staged write, or
+  // read-only window that lets the etcd roll step proceed.
+  action EnableEscapeHatch: bool = all {
+    upgradePhase == UpgradeInProgress,
+    upgradeStep == EtcdRoll,
+    escapeHatch' = true,
+    mgmtMachines' = mgmtMachines,
+    kcpHost' = kcpHost,
+    kcpStatus' = kcpStatus,
+    machinePaused' = machinePaused,
+    machineTemplate' = machineTemplate,
+    desiredMgmtTemplate' = desiredMgmtTemplate,
+    wlIsMgmt' = wlIsMgmt,
+    upgradePhase' = upgradePhase,
+    upgradeStep' = upgradeStep,
+    etcdWriteRequired' = etcdWriteRequired,
+  }
+
+  // ResumeEtcdRollWithEscapeHatch — once an escape hatch exists, the
+  // problematic etcd write can be satisfied and the upgrade proceeds.
+  action ResumeEtcdRollWithEscapeHatch: bool = all {
+    upgradePhase == UpgradeInProgress,
+    upgradeStep == EtcdRoll,
+    etcdWriteRequired,
+    escapeHatch,
+    upgradeStep' = ApiserverRoll,
+    etcdWriteRequired' = false,
+    mgmtMachines' = mgmtMachines,
+    kcpHost' = kcpHost,
+    kcpStatus' = kcpStatus,
+    machinePaused' = machinePaused,
+    machineTemplate' = machineTemplate,
+    desiredMgmtTemplate' = desiredMgmtTemplate,
+    wlIsMgmt' = wlIsMgmt,
+    upgradePhase' = upgradePhase,
+    escapeHatch' = escapeHatch,
   }
 
   // -------------------------------------------------------------
@@ -249,6 +367,10 @@ module SelfHosted {
     nondet m = MGMT_MACHINES.oneOf(); KcpUpgradeMachine(m),
     KcpUpgradeOwnHost,
     KcpReconcileResume,
+    EnterEtcdRoll,
+    EtcdRollRequiresEtcdWrite,
+    EnableEscapeHatch,
+    ResumeEtcdRollWithEscapeHatch,
   }
 
   // stepNoRecovery — KCP cannot fail over (no operator
@@ -258,6 +380,8 @@ module SelfHosted {
     KcpStartUpgrade,
     nondet m = MGMT_MACHINES.oneOf(); KcpUpgradeMachine(m),
     KcpUpgradeOwnHost,
+    EnterEtcdRoll,
+    EtcdRollRequiresEtcdWrite,
   }
 
   // -------------------------------------------------------------
@@ -276,9 +400,14 @@ module SelfHosted {
   // reconcile, and at least one Machine is still on the old template.
   val Deadlocked =
     upgradePhase == UpgradeDeadlock and
-    kcpStatus == Paused and
-    mgmtMachines.exists(m =>
-      machineTemplate.get(m) != desiredMgmtTemplate)
+    (
+      (kcpStatus == Paused and
+        mgmtMachines.exists(m => machineTemplate.get(m) != desiredMgmtTemplate)) or
+      (upgradeStep == EtcdRoll and etcdWriteRequired and wlIsMgmt and not(escapeHatch))
+    )
+
+  val EscapeHatchExists =
+    upgradeStep != EtcdRoll or not(etcdWriteRequired) or escapeHatch
 
   val AllInvariants = all {
     // Self-hosted invariant: management = workload.
@@ -306,5 +435,18 @@ module SelfHosted {
   run selfHostedRecoveryTrace = selfHostedDeadlockInit
     .then(KcpReconcileResume)
     // KCP is now on a non-paused Machine, can resume reconciling.
+
+  // issue-96 trap: upgrade reaches the EtcdRoll step, which still needs
+  // a write to the hosted etcd, but no escape hatch exists.
+  run selfHostedEtcdTrapTrace = selfHostedUpgradeMidFlightInit
+    .then(EnterEtcdRoll)
+    .then(EtcdRollRequiresEtcdWrite)
+
+  // issue-96 escape hatch: operator enables an out-of-band write path,
+  // then the etcd roll step can resume into the next upgrade phase.
+  run selfHostedEtcdEscapeTrace = selfHostedUpgradeMidFlightInit
+    .then(EnterEtcdRoll)
+    .then(EnableEscapeHatch)
+    .then(ResumeEtcdRollWithEscapeHatch)
 
 }

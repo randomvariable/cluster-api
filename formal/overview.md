@@ -126,6 +126,7 @@ For a contributor adding a new failure mode:
 | StaticPodMemPressure.qnt | 2 | 300×40 | **1/1 stable mem-pressure bookkeeping invariant** under random walk; explicit mis-priority static-pod eviction counterexample `CriticalStaticPodsImmuneFromEviction` reachable at Apalache depth 4 | — |
 | StaticPodHashReloadRace.qnt | 2 | 300×40 | **2/2 stable manifest/reload bookkeeping invariants** under random walk; explicit manifest-hash collision counterexample `NoHashCollisionAcrossDistinctIntents` reachable at Apalache depth 4 | — |
 | BootstrapCsrLag.qnt | 2 | 300×40 | **2/2 stable CSR queue invariants** under random walk; explicit approval-timeout counterexample `BootstrapTimeoutCoversCsrLatency` reachable at Apalache depth 4 | — |
+| ServiceAccountTokenRotation.qnt | 2 | 300×40 | **1/1 stable token bookkeeping invariant** under random walk; explicit stale-token auth failure counterexample `NoSilentReconcileFailure` reachable at Apalache depth 4 | — |
 | MtuFragmentation.qnt | 2 | 300×40 | **1/1 stable MTU bookkeeping invariant** under random walk; explicit silent-fragmentation counterexample `EtcdSnapshotEventuallySucceeds` reachable at Apalache depth 4 | — |
 | CniVethRace.qnt | 2 | 300×40 | **2/2 stable CNI/veth bookkeeping invariants** under random walk; explicit pre-veth probe-loop counterexample `NoContainerStartBeforeCni` reachable at Apalache depth 4 | — |
 | LoadBalancerDrain.qnt | 2 | 300×40 | **2/2 stable LB-drain bookkeeping invariants** under random walk; explicit blackholed-connection counterexample `KcpUpgradeAccountsForLbDrain` reachable at Apalache depth 4 | — |
@@ -139,7 +140,15 @@ For a contributor adding a new failure mode:
 | ClusterClassPatches.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `mergeDeterministicAllOrders` and `immutableMergedCandidate` retained as counterexample candidates | — |
 | ClusterClassTopologyRace.qnt | 2 | 300×40 | **2/2 stable ClusterClass topology invariants** under random walk; explicit torn-read counterexample `ConsistentCCViewPerReconcile` reachable at Apalache depth 4 | — |
 | ClusterResourceSetTiming.qnt | 2 | 300×40 | **2/2 stable CRS timing invariants** under random walk; explicit ApplyOnce timing counterexample `ApplyOnceEventuallyTakesEffect` reachable at Apalache depth 4 | — |
+| ConcurrentClusterSpecEdits.qnt | 2 | 300×40 | **3/3 stable concurrent-edit invariants** under random walk; explicit lost-edit counterexample `NoLostEdit` reachable at Apalache depth 4 | — |
+| AutoscalerKcpSurgeRace.qnt | 2 | 300×40 | **3/3 stable autoscaler/rollout bookkeeping invariants** under random walk; explicit concurrent-scale counterexample `SurgeBoundUnderConcurrentScale` reachable at Apalache depth 4 | — |
+| EtcdKubernetesVersionSkew.qnt | 2 | 300×40 | **2/2 stable version/dependency invariants** under random walk; explicit mid-rollout dependency-trap counterexample `NoMidRolloutDependencyTrap` reachable at Apalache depth 4 | — |
+| RollbackSurgeRace.qnt | 2 | 300×40 | **2/2 stable rollback/surge bookkeeping invariants** under random walk; explicit mid-cycle rollback counterexample `NoTransientSurgeBeyondBound` reachable at Apalache depth 4 | — |
+| BootstrapInfraReadyRace.qnt | 2 | 300×40 | **2/2 stable observed-readiness invariants** under random walk; explicit missing-event counterexample `NoStuckUnreadyDespiteBothChildrenReady` reachable at Apalache depth 4 | — |
+| MachinePoolScaleConflict.qnt | 2 | 300×40 | **2/2 stable MachinePool scale bookkeeping invariants** under random walk; explicit oscillation counterexample `NoOscillation` reachable at Apalache depth 4 | — |
 | KcpMhcDeleteRace.qnt | 2 | 300×40 | **3/3 stable delete-race bookkeeping invariants** under random walk; explicit double-delete counterexample `NoDoubleDelete` reachable at Apalache depth 4 | — |
+| ControllerManagerReplay.qnt | 2 | 300×40 | **2/2 stable leader/replay bookkeeping invariants** under random walk; explicit replay double-effect counterexample `NoDoubleEffect` reachable at Apalache depth 4 | — |
+| ControllerLeaderSplitBrain.qnt | 2 | 300×40 | **2/2 stable split-brain lease invariants** under random walk; explicit duplicate-effect counterexample `NoDuplicateEffectAcrossLeaders` reachable at Apalache depth 4 | — |
 | RuntimeSDK.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `restartCacheReuseCandidate` and `partialFailureSingleTransportCandidate` retained as counterexample candidates | — |
 | Finalizers.qnt | 1 | 1000×60 | **4/4 stable invariants** at depth 4; `ownerDeletionWaitsForChildrenCandidate` and `progressFromAnyStateCandidate` retained as counterexample candidates | `ControlPlane/Finalizers.lean::finalizer_set_eventually_empty` |
 | Pivot.qnt | 2 | 1000×60 | **6/6 stable invariants** at depth 4; `crashMutualExclusionCandidate` and `partialPivotOrphanCandidate` retained as counterexample candidates | — |
@@ -167,7 +176,7 @@ The corpus has progressed through several phases of expansion:
 | 9 | FM-34 `mhcCacheStale` + `MhcCacheStale` / `MhcCacheRefresh` |
 | 10 | FM-37 `hooksTriggered` + `TriggerPreUpgradeHook` |
 | 11 | FM-9 `ConvergenceFair` temporal property + Lean 4 deductive proof |
-| 12 | FM-35 dual-cluster `SelfHosted.qnt` + `Lifecycle.multicluster.qnt` per-cluster expansion |
+| 12 | FM-35 dual-cluster `SelfHosted.qnt` + `Lifecycle.multicluster.qnt` per-cluster expansion; issue #96 deepens `SelfHosted.qnt` with explicit `EtcdRollRequiresEtcdWrite` trap and `EscapeHatchExists` recovery path |
 | 13 | FM-33 worker-MachineSet preflight (`MachineSetPreflight.qnt`) |
 | 14 | FM-39/40/41 Topology + runtime extensions (`Topology.qnt`) |
 | 15 | FM-42/43/44 in-place machine updates (`InPlaceUpdate.qnt`) |
