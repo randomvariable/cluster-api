@@ -3274,6 +3274,41 @@ Apalache reaches the same `NoSilentReconcileFailure` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-109 — Status subresource lags and another controller acts on stale phase
+
+**Provenance.** **Modelling** — issue #70 standalone spec/status lag
+slice (`StatusSubresourceLag.qnt`). The model is grounded in the real
+controller status paths where phase/status are written through separate
+status-subresource updates after spec/template changes.
+
+**Trigger.** A reconciler updates `spec.template`, incrementing desired
+generation. Another controller later reads `status.phase=Running` before
+the status subresource catches up and makes a contradictory level-triggered
+decision based on the stale phase.
+
+**Init / scenarios.** `convergedStatusRun` shows the intended regime:
+spec changes, status catches up via the status subresource, and the drift
+is cleared. `staleStatusDecisionRun` drives the bad path: `specGen`
+advances to `2`, `statusGen` remains `1`, and another controller takes a
+decision while the stale phase still says `Running`, violating
+`LevelTriggeredControllersTolerateLag`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Cluster status phase write | `internal/controllers/cluster/cluster_controller_status.go` | 45-112 |
+| Machine status phase write | `internal/controllers/machine/machine_controller_status.go` | 900-932 |
+| MachineDeployment status phase write | `internal/controllers/machinedeployment/machinedeployment_status.go` | 90-110 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-status decision path via `staleStatusDecisionRun`,
+and Apalache reaches the same `LevelTriggeredControllersTolerateLag`
+violation from `staleStatusInit` within depth 4
+(`make verify-status-lag-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-108 — Condition message truncation silently drops the root-cause-bearing tail
 
 **Provenance.** **Modelling** — issue #72 standalone truncation slice
@@ -3768,6 +3803,7 @@ reason that the operator can read.
 | FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
+| FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |
 | FM-92 | Load balancer deregisters target before drain, blackholing existing requests | MODELLING | KCP waits for drain completion before apiserver termination in the safe regime | Logged as deliberate counterexample candidate on `KcpUpgradeAccountsForLbDrain` in `specs/LoadBalancerDrain.qnt`; Apalache reaches the blackholed-request state within depth 4 |

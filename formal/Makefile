@@ -94,6 +94,7 @@ ROLLBACKSURGE := $(SPECS_DIR)/RollbackSurgeRace.qnt
 BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
 SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
 MSGTRUNC      := $(SPECS_DIR)/ConditionMessageTruncation.qnt
+STATUSLAG     := $(SPECS_DIR)/StatusSubresourceLag.qnt
 CMREPLAY      := $(SPECS_DIR)/ControllerManagerReplay.qnt
 CMSPLITBRAIN  := $(SPECS_DIR)/ControllerLeaderSplitBrain.qnt
 MPSCALECONFLICT := $(SPECS_DIR)/MachinePoolScaleConflict.qnt
@@ -2033,6 +2034,43 @@ verify-msg-truncation-apalache:  ## Apalache tail-loss counterexample at depth 4
 
 .PHONY: verify-msg-truncation
 verify-msg-truncation: verify-msg-truncation-happy verify-msg-truncation-counterexample verify-msg-truncation-random verify-msg-truncation-apalache  ## Full condition-message truncation suite
+
+.PHONY: verify-status-lag-happy
+verify-status-lag-happy:  ## Drive status update catching up to spec change
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StatusSubresourceLag --init=convergedStatusRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(STATUSLAG)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StatusSubresourceLag --init=convergedStatusRun --step=step \
+	             --invariant=StatusEventuallyConverges --max-steps=0 \
+	             $(STATUSLAG)
+
+.PHONY: verify-status-lag-counterexample
+verify-status-lag-counterexample:  ## Drive stale status phase causing contradictory decision
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StatusSubresourceLag --init=staleStatusDecisionRun --step=step \
+	              --invariant=LevelTriggeredControllersTolerateLag --max-steps=0 \
+	              $(STATUSLAG)
+
+.PHONY: verify-status-lag-random
+verify-status-lag-random:  ## Random-walk stable spec/status lag invariants (300x40)
+	@for inv in StableSafetyInvariants StatusNeverLeadsSpec PhaseKnownValues; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=StatusSubresourceLag \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(STATUSLAG) || exit 1; \
+	done
+
+.PHONY: verify-status-lag-apalache
+verify-status-lag-apalache:  ## Apalache stale-status decision counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=StatusSubresourceLag --init=staleStatusInit \
+	                  --step=stepApalache --invariant=LevelTriggeredControllersTolerateLag \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(STATUSLAG)
+
+.PHONY: verify-status-lag
+verify-status-lag: verify-status-lag-happy verify-status-lag-counterexample verify-status-lag-random verify-status-lag-apalache  ## Full status-subresource lag suite
 
 .PHONY: verify-machinepool-scale-happy
 verify-machinepool-scale-happy:  ## Drive arbitrated MachinePool scale ownership path

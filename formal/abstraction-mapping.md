@@ -849,6 +849,19 @@ the Machine controller has seen.
 | BootstrapInfraReadyRace | `InfraFlipsReady` / `MachineReconcileInfraOnly` | `internal/controllers/machine/machine_controller_status.go:167-255`; `internal/controllers/machine/machine_controller_phases.go:305-373` | Ground the infrastructure-side readiness mirror from the infra machine into Machine conditions / status. |
 | BootstrapInfraReadyRace | `NoStuckUnreadyDespiteBothChildrenReady` / `missingInfraEventRun` | same | Express the issue’s counterexample target: both children are ready in truth, but the Machine reconcile never observes the infra-ready edge and remains stuck unready. |
 
+### StatusSubresourceLag.qnt
+
+Standalone spec/status lag model for issue #70. This spec keeps a spec
+generation, a status generation, a compact status phase, and one flag
+recording whether another controller already took a stale decision based
+on lagging status.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| StatusSubresourceLag | `UpdateSpecTemplate` | `internal/controllers/machineset/machineset_controller.go`; `internal/controllers/machineset/machineset_preflight.go` | Ground the spec-template change side where generation moves first. |
+| StatusSubresourceLag | `UpdateStatusSubresource` | `internal/controllers/cluster/cluster_controller_status.go:45-112`; `internal/controllers/machine/machine_controller_status.go:900-932`; `internal/controllers/machinedeployment/machinedeployment_status.go:90-110` | Ground the fact that phase/status are written through a separate status-subresource update path later than the spec write. |
+| StatusSubresourceLag | `LevelTriggeredControllersTolerateLag` / `staleStatusDecisionRun` | same | Express the issue's counterexample target: another controller acts on stale `status.phase=Running` even though the new spec generation implies a scaling/upgrade transition. |
+
 ### MachinePoolScaleConflict.qnt
 
 Standalone MachinePool provider-managed scale vs CAPI desired scale model

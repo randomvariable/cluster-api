@@ -1332,6 +1332,39 @@ echo y | quint verify --main=BootstrapInfraReadyRace --init=missingEventInit --s
 
 Or, from `formal/`: `make verify-bootstrap-infra-race`.
 
+### Status subresource lags after `spec.template` changes (issue #70)
+
+```sh
+# Status update catches up and clears the drift.
+quint run --main=StatusSubresourceLag --init=convergedStatusRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/StatusSubresourceLag.qnt
+
+quint run --main=StatusSubresourceLag --init=convergedStatusRun --step=step \
+          --invariant=StatusEventuallyConverges --max-steps=0 \
+          formal/specs/StatusSubresourceLag.qnt
+
+# Explicit stale-status contradictory decision counterexample.
+quint run --main=StatusSubresourceLag --init=staleStatusDecisionRun --step=step \
+          --invariant=LevelTriggeredControllersTolerateLag --max-steps=0 \
+          formal/specs/StatusSubresourceLag.qnt
+
+# Random-walk stable spec/status bookkeeping.
+for inv in StableSafetyInvariants StatusNeverLeadsSpec PhaseKnownValues; do
+  quint run --main=StatusSubresourceLag --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/StatusSubresourceLag.qnt
+done
+
+# Backend verdict: stale-status decision reachable within depth 4.
+echo y | quint verify --main=StatusSubresourceLag --init=staleStatusInit --step=stepApalache \
+                      --invariant=LevelTriggeredControllersTolerateLag \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/StatusSubresourceLag.qnt
+```
+
+Or, from `formal/`: `make verify-status-lag`.
+
 ### MachinePool provider-managed scale vs CAPI source-of-truth conflict (issue #89)
 
 ```sh

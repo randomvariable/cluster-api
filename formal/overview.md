@@ -146,6 +146,7 @@ For a contributor adding a new failure mode:
 | EtcdKubernetesVersionSkew.qnt | 2 | 300×40 | **2/2 stable version/dependency invariants** under random walk; explicit mid-rollout dependency-trap counterexample `NoMidRolloutDependencyTrap` reachable at Apalache depth 4 | — |
 | RollbackSurgeRace.qnt | 2 | 300×40 | **2/2 stable rollback/surge bookkeeping invariants** under random walk; explicit mid-cycle rollback counterexample `NoTransientSurgeBeyondBound` reachable at Apalache depth 4 | — |
 | BootstrapInfraReadyRace.qnt | 2 | 300×40 | **2/2 stable observed-readiness invariants** under random walk; explicit missing-event counterexample `NoStuckUnreadyDespiteBothChildrenReady` reachable at Apalache depth 4 | — |
+| StatusSubresourceLag.qnt | 2 | 300×40 | **2/2 stable spec/status bookkeeping invariants** under random walk; explicit stale-status counterexample `LevelTriggeredControllersTolerateLag` reachable at Apalache depth 4 | — |
 | MachinePoolScaleConflict.qnt | 2 | 300×40 | **2/2 stable MachinePool scale bookkeeping invariants** under random walk; explicit oscillation counterexample `NoOscillation` reachable at Apalache depth 4 | — |
 | KcpMhcDeleteRace.qnt | 2 | 300×40 | **3/3 stable delete-race bookkeeping invariants** under random walk; explicit double-delete counterexample `NoDoubleDelete` reachable at Apalache depth 4 | — |
 | ControllerManagerReplay.qnt | 2 | 300×40 | **2/2 stable leader/replay bookkeeping invariants** under random walk; explicit replay double-effect counterexample `NoDoubleEffect` reachable at Apalache depth 4 | — |
