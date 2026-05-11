@@ -78,6 +78,7 @@ KCPMHCDEL     := $(SPECS_DIR)/KcpMhcDeleteRace.qnt
 CNIVETH       := $(SPECS_DIR)/CniVethRace.qnt
 LBDRAIN       := $(SPECS_DIR)/LoadBalancerDrain.qnt
 NETPOLSTALL   := $(SPECS_DIR)/NetworkPolicyMidFlight.qnt
+WATCHCOALESCE := $(SPECS_DIR)/WatchEventCoalescing.qnt
 CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
 STACPODMEM    := $(SPECS_DIR)/StaticPodMemPressure.qnt
 HASHRELOAD    := $(SPECS_DIR)/StaticPodHashReloadRace.qnt
@@ -1389,6 +1390,43 @@ verify-netpol-stall-apalache:  ## Apalache silent-stall counterexample at depth 
 
 .PHONY: verify-netpol-stall
 verify-netpol-stall: verify-netpol-stall-happy verify-netpol-stall-counterexample verify-netpol-stall-random verify-netpol-stall-apalache  ## Full NetworkPolicy mid-flight / silent-stall suite
+
+.PHONY: verify-watch-coalescing-happy
+verify-watch-coalescing-happy:  ## Deliver update before delete coalesces away
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WatchEventCoalescing --init=updateDeliveredRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(WATCHCOALESCE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=WatchEventCoalescing --init=updateDeliveredRun --step=step \
+	             --invariant=ReconcileCorrectUnderCoalescing --max-steps=0 \
+	             $(WATCHCOALESCE)
+
+.PHONY: verify-watch-coalescing-counterexample
+verify-watch-coalescing-counterexample:  ## Collapse add/update/delete to final delete only
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=WatchEventCoalescing --init=deleteOnlyAfterCoalesceRun --step=step \
+	              --invariant=ReconcileCorrectUnderCoalescing --max-steps=0 \
+	              $(WATCHCOALESCE)
+
+.PHONY: verify-watch-coalescing-random
+verify-watch-coalescing-random:  ## Random-walk stable watch-coalescing invariants (300x40)
+	@for inv in StableSafetyInvariants DeliveredDeleteImpliesObjectAbsent CoalescedEventKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=WatchEventCoalescing \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(WATCHCOALESCE) || exit 1; \
+	done
+
+.PHONY: verify-watch-coalescing-apalache
+verify-watch-coalescing-apalache:  ## Apalache delete-only coalescing counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=WatchEventCoalescing --init=deleteOnlyInit \
+	                  --step=stepApalache --invariant=ReconcileCorrectUnderCoalescing \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(WATCHCOALESCE)
+
+.PHONY: verify-watch-coalescing
+verify-watch-coalescing: verify-watch-coalescing-happy verify-watch-coalescing-counterexample verify-watch-coalescing-random verify-watch-coalescing-apalache  ## Full watch event coalescing suite
 
 .PHONY: verify-conntrack-happy
 verify-conntrack-happy:  ## Drive churn below conntrack saturation threshold
