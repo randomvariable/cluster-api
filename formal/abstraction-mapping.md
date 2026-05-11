@@ -836,6 +836,20 @@ compact split between old-version and new-version replica counts.
 | ConcurrentClusterSpecEdits | `NoLostEdit` / `lostEditRun` | same | Express the issue's first counterexample target: both operators' intents exist, but the final applied spec silently drops one of them. |
 | ConcurrentClusterSpecEdits | `NoSurgeBoundViolation` / `surgeRaceRun` | same | Express the second counterexample target: concurrent rollout and scale-up temporarily exceed `desiredReplicas + maxSurge`. |
 
+### PartialRollbackDrop.qnt
+
+Standalone backup/apply rollback-default loop model for issue #67. This
+spec keeps a single field value, who most recently defaulted it, whether
+the operator backup omitted the field, and whether the redefine loop has
+been observed.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| PartialRollbackDrop | `OperatorBackup` / `OperatorApplyOmittedField` | `internal/util/ssa/managedfields.go:49-197`; `internal/controllers/topology/cluster/structuredmerge/dryrun.go:220-281` | Ground the apply/managed-fields surface where omitted fields in a stale backup can null out server-defaulted values on a later apply. |
+| PartialRollbackDrop | `ControllerRedefault` | `internal/webhooks/cluster.go`; `internal/controllers/topology/cluster/cluster_controller.go:607-608` | Ground the controller/webhook side re-defaulting that restores omitted/defaulted fields after the operator's apply. |
+| PartialRollbackDrop | `RedefaultConverges` / `rollbackLoopRun` | same | Express the issue's likely counterexample target: backup/apply drops the field, controller re-defaults it, and the operator is confused because state drifts away from the backup instead of converging to it. |
+| PartialRollbackDrop | `OperatorActionRecoverable` / `singleRedefaultRun` | same | Show the safe regime where the field is re-defaulted once and the system returns to a stable defaulted state. |
+
 ### ClusterEditDeleteRace.qnt
 
 Standalone Cluster edit/delete race model for issue #68. This spec keeps

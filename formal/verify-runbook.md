@@ -1200,6 +1200,39 @@ echo y | quint verify --main=ConcurrentClusterSpecEdits --init=lostEditInit --st
 
 Or, from `formal/`: `make verify-concurrent-spec-edits`.
 
+### Operator partial revert drops fields and controllers re-default them (issue #67)
+
+```sh
+# One backup/apply cycle is repaired by a single controller re-default.
+quint run --main=PartialRollbackDrop --init=singleRedefaultRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/PartialRollbackDrop.qnt
+
+quint run --main=PartialRollbackDrop --init=singleRedefaultRun --step=step \
+          --invariant=OperatorActionRecoverable --max-steps=0 \
+          formal/specs/PartialRollbackDrop.qnt
+
+# Explicit backup/apply default loop counterexample.
+quint run --main=PartialRollbackDrop --init=rollbackLoopRun --step=step \
+          --invariant=RedefaultConverges --max-steps=0 \
+          formal/specs/PartialRollbackDrop.qnt
+
+# Random-walk stable rollback/default bookkeeping.
+for inv in StableSafetyInvariants DefaultedByKnown FieldValueKnown; do
+  quint run --main=PartialRollbackDrop --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/PartialRollbackDrop.qnt
+done
+
+# Backend verdict: omitted-field rollback loop reachable within depth 4.
+echo y | quint verify --main=PartialRollbackDrop --init=rollbackLoopInit --step=stepApalache \
+                      --invariant=RedefaultConverges \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/PartialRollbackDrop.qnt
+```
+
+Or, from `formal/`: `make verify-partial-revert`.
+
 ### `kubectl delete` during an ongoing spec edit (issue #68)
 
 ```sh

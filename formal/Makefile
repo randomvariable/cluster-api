@@ -88,6 +88,7 @@ TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
+PARTIALREVERT := $(SPECS_DIR)/PartialRollbackDrop.qnt
 ASKCPSURGE    := $(SPECS_DIR)/AutoscalerKcpSurgeRace.qnt
 ETCDK8SSKEW   := $(SPECS_DIR)/EtcdKubernetesVersionSkew.qnt
 SKIPUPGRADE   := $(SPECS_DIR)/SkipVersionUpgrade.qnt
@@ -2147,6 +2148,43 @@ verify-cluster-delete-race-apalache:  ## Apalache stale-write-after-delete count
 
 .PHONY: verify-cluster-delete-race
 verify-cluster-delete-race: verify-cluster-delete-race-happy verify-cluster-delete-race-counterexample verify-cluster-delete-race-random verify-cluster-delete-race-apalache  ## Full Cluster edit/delete race suite
+
+.PHONY: verify-partial-revert-happy
+verify-partial-revert-happy:  ## Drive backup/apply then one-shot redefault convergence
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=PartialRollbackDrop --init=singleRedefaultRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(PARTIALREVERT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=PartialRollbackDrop --init=singleRedefaultRun --step=step \
+	             --invariant=OperatorActionRecoverable --max-steps=0 \
+	             $(PARTIALREVERT)
+
+.PHONY: verify-partial-revert-counterexample
+verify-partial-revert-counterexample:  ## Drive omitted-field rollback loop counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=PartialRollbackDrop --init=rollbackLoopRun --step=step \
+	              --invariant=RedefaultConverges --max-steps=0 \
+	              $(PARTIALREVERT)
+
+.PHONY: verify-partial-revert-random
+verify-partial-revert-random:  ## Random-walk stable rollback/default bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants DefaultedByKnown FieldValueKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=PartialRollbackDrop \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(PARTIALREVERT) || exit 1; \
+	done
+
+.PHONY: verify-partial-revert-apalache
+verify-partial-revert-apalache:  ## Apalache omitted-field rollback loop counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=PartialRollbackDrop --init=rollbackLoopInit \
+	                  --step=stepApalache --invariant=RedefaultConverges \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(PARTIALREVERT)
+
+.PHONY: verify-partial-revert
+verify-partial-revert: verify-partial-revert-happy verify-partial-revert-counterexample verify-partial-revert-random verify-partial-revert-apalache  ## Full partial rollback / dropped-fields suite
 
 .PHONY: verify-machinepool-scale-happy
 verify-machinepool-scale-happy:  ## Drive arbitrated MachinePool scale ownership path

@@ -1232,6 +1232,39 @@ Apalache reaches the same `NoWriteAfterDeleteObserved` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-111 — Backup/apply partial rollback silently drops fields and controllers re-default them
+
+**Provenance.** **Modelling** — issue #67 standalone backup/apply
+rollback-default loop (`PartialRollbackDrop.qnt`). The model is grounded
+in the managed-fields / apply surfaces and the controller/webhook
+re-defaulting paths already used elsewhere in the topology corpus.
+
+**Trigger.** An operator creates a backup with `kubectl get -o yaml`, the
+backup omits server-defaulted fields, and a later `kubectl apply` of the
+backup nulls those fields. Controllers/webhooks re-default the fields,
+leaving the object drifting away from the operator’s backup expectation.
+
+**Init / scenarios.** `singleRedefaultRun` shows the intended regime:
+backup omits the field, apply drops it, controller re-defaults it once,
+and `OperatorActionRecoverable` holds. `rollbackLoopRun` adds the
+operator-observed loop marker after re-default, violating
+`RedefaultConverges`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Managed-fields / apply cleanup | `internal/util/ssa/managedfields.go` | 49-197 |
+| Topology dry-run managed-fields cleanup | `internal/controllers/topology/cluster/structuredmerge/dryrun.go` | 220-281 |
+| Cluster managed-fields stripping before reconcile/runtime use | `internal/controllers/topology/cluster/cluster_controller.go` | 607-608 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the backup/apply redefine loop via `rollbackLoopRun`, and
+Apalache reaches the same `RedefaultConverges` violation from
+`rollbackLoopInit` within depth 4 (`make verify-partial-revert-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 **Init**: `etcdDefragPauseInit`. Etcd's bbolt defrag is running
 on the leader; every Status RPC times out for 10–60 s. KCP marks
 every member EtcdMemberHealthy=Unknown but nothing is broken.
@@ -3845,6 +3878,7 @@ reason that the operator can read.
 | FM-96 | ClusterResourceSet ApplyOnce runs before kubelets join | MODELLING | Apply happens after kubelets join or Reconcile retries until readiness in the safe regime | Logged as deliberate counterexample candidate on `ApplyOnceEventuallyTakesEffect` in `specs/ClusterResourceSetTiming.qnt`; Apalache reaches the timing race within depth 4 |
 | FM-99 | Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions | MODELLING | Both edits converge to the final spec and surge stays within bound in the safe regime | Logged as deliberate counterexample candidate on `NoLostEdit` / `NoSurgeBoundViolation` in `specs/ConcurrentClusterSpecEdits.qnt`; Apalache reaches the lost-edit state within depth 4 |
 | FM-110 | Cluster delete during an in-flight edit allows a stale write to land | MODELLING | Delete wins cleanly and later writes observe not-found in the safe regime | Logged as deliberate counterexample candidate on `NoWriteAfterDeleteObserved` in `specs/ClusterEditDeleteRace.qnt`; Apalache reaches the stale-write state within depth 4 |
+| FM-111 | Backup/apply partial rollback silently drops fields and controllers re-default them | MODELLING | A single re-default restores the intended stable default in the safe regime | Logged as deliberate counterexample candidate on `RedefaultConverges` in `specs/PartialRollbackDrop.qnt`; Apalache reaches the redefine-loop state within depth 4 |
 | FM-100 | Autoscaler scale-up and KCP rollout surge overproduce replicas | MODELLING | Autoscaler intent is incorporated before rollout surge in the safe regime | Logged as deliberate counterexample candidate on `SurgeBoundUnderConcurrentScale` in `specs/AutoscalerKcpSurgeRace.qnt`; Apalache reaches the over-replica state within depth 4 |
 | FM-105 | Mid-rollout etcd tag bump traps the control-plane upgrade | MODELLING | etcd upgrade waits until the control-plane rollout gate has cleared in the safe regime | Logged as deliberate counterexample candidate on `NoMidRolloutDependencyTrap` in `specs/EtcdKubernetesVersionSkew.qnt`; Apalache reaches the dependency-trap state within depth 4 |
 | FM-104 | Rollback during partial cycling temporarily exceeds surge bound | MODELLING | Rollback waits for the drain point in the safe regime | Logged as deliberate counterexample candidate on `NoTransientSurgeBeyondBound` in `specs/RollbackSurgeRace.qnt`; Apalache reaches the mid-cycle rollback surge state within depth 4 |
