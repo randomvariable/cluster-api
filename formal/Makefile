@@ -96,6 +96,7 @@ BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
 SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
 MSGTRUNC      := $(SPECS_DIR)/ConditionMessageTruncation.qnt
 STATUSLAG     := $(SPECS_DIR)/StatusSubresourceLag.qnt
+CLUSTERDELRACE := $(SPECS_DIR)/ClusterEditDeleteRace.qnt
 CMREPLAY      := $(SPECS_DIR)/ControllerManagerReplay.qnt
 CMSPLITBRAIN  := $(SPECS_DIR)/ControllerLeaderSplitBrain.qnt
 MPSCALECONFLICT := $(SPECS_DIR)/MachinePoolScaleConflict.qnt
@@ -2109,6 +2110,43 @@ verify-status-lag-apalache:  ## Apalache stale-status decision counterexample at
 
 .PHONY: verify-status-lag
 verify-status-lag: verify-status-lag-happy verify-status-lag-counterexample verify-status-lag-random verify-status-lag-apalache  ## Full status-subresource lag suite
+
+.PHONY: verify-cluster-delete-race-happy
+verify-cluster-delete-race-happy:  ## Drive edit completes before delete or exits cleanly on notfound
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterEditDeleteRace --init=editThenDeleteRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CLUSTERDELRACE)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterEditDeleteRace --init=editThenDeleteRun --step=step \
+	             --invariant=DeleteCancelsFurtherWrites --max-steps=0 \
+	             $(CLUSTERDELRACE)
+
+.PHONY: verify-cluster-delete-race-counterexample
+verify-cluster-delete-race-counterexample:  ## Drive stale write after delete counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ClusterEditDeleteRace --init=deleteMidEditRun --step=step \
+	              --invariant=NoWriteAfterDeleteObserved --max-steps=0 \
+	              $(CLUSTERDELRACE)
+
+.PHONY: verify-cluster-delete-race-random
+verify-cluster-delete-race-random:  ## Random-walk stable edit/delete bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants DeleteObservedImpliesAbsent LastWriteGenNeverExceedsIntent; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterEditDeleteRace \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CLUSTERDELRACE) || exit 1; \
+	done
+
+.PHONY: verify-cluster-delete-race-apalache
+verify-cluster-delete-race-apalache:  ## Apalache stale-write-after-delete counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ClusterEditDeleteRace --init=deleteDuringEditInit \
+	                  --step=stepApalache --invariant=NoWriteAfterDeleteObserved \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CLUSTERDELRACE)
+
+.PHONY: verify-cluster-delete-race
+verify-cluster-delete-race: verify-cluster-delete-race-happy verify-cluster-delete-race-counterexample verify-cluster-delete-race-random verify-cluster-delete-race-apalache  ## Full Cluster edit/delete race suite
 
 .PHONY: verify-machinepool-scale-happy
 verify-machinepool-scale-happy:  ## Drive arbitrated MachinePool scale ownership path

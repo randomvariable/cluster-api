@@ -836,6 +836,18 @@ compact split between old-version and new-version replica counts.
 | ConcurrentClusterSpecEdits | `NoLostEdit` / `lostEditRun` | same | Express the issue's first counterexample target: both operators' intents exist, but the final applied spec silently drops one of them. |
 | ConcurrentClusterSpecEdits | `NoSurgeBoundViolation` / `surgeRaceRun` | same | Express the second counterexample target: concurrent rollout and scale-up temporarily exceed `desiredReplicas + maxSurge`. |
 
+### ClusterEditDeleteRace.qnt
+
+Standalone Cluster edit/delete race model for issue #68. This spec keeps
+only object existence, desired spec generation, last persisted write
+generation, and whether a delete was observed before a stale write landed.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| ClusterEditDeleteRace | `BeginSpecEdit` / `PersistSpecWrite` | `util/patch/patch.go:186`; `util/deprecated/v1beta1/patch/patch.go:181` | Ground the normal edit / patch path that can still be in flight when a delete lands. |
+| ClusterEditDeleteRace | `DeleteCluster` / `IgnoreNotFoundAfterDelete` | same patch helpers plus the existing stale-enqueue delete surfaces used in `StaleEnqueueShutdown.qnt` | Ground the clean path where delete wins and later writes observe `IsNotFound` / absent state. |
+| ClusterEditDeleteRace | `NoWriteAfterDeleteObserved` / `deleteMidEditRun` | same | Express the issue's counterexample target: a stale write still lands after delete has already been observed. |
+
 ### BootstrapInfraReadyRace.qnt
 
 Standalone Machine readiness race model for issue #86. This spec keeps

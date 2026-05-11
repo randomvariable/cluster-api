@@ -1200,6 +1200,39 @@ echo y | quint verify --main=ConcurrentClusterSpecEdits --init=lostEditInit --st
 
 Or, from `formal/`: `make verify-concurrent-spec-edits`.
 
+### `kubectl delete` during an ongoing spec edit (issue #68)
+
+```sh
+# Edit completes before delete, or later write notices the object is gone.
+quint run --main=ClusterEditDeleteRace --init=editThenDeleteRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ClusterEditDeleteRace.qnt
+
+quint run --main=ClusterEditDeleteRace --init=editThenDeleteRun --step=step \
+          --invariant=DeleteCancelsFurtherWrites --max-steps=0 \
+          formal/specs/ClusterEditDeleteRace.qnt
+
+# Explicit stale write after delete counterexample.
+quint run --main=ClusterEditDeleteRace --init=deleteMidEditRun --step=step \
+          --invariant=NoWriteAfterDeleteObserved --max-steps=0 \
+          formal/specs/ClusterEditDeleteRace.qnt
+
+# Random-walk stable delete/edit bookkeeping.
+for inv in StableSafetyInvariants DeleteObservedImpliesAbsent LastWriteGenNeverExceedsIntent; do
+  quint run --main=ClusterEditDeleteRace --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ClusterEditDeleteRace.qnt
+done
+
+# Backend verdict: stale write after delete reachable within depth 4.
+echo y | quint verify --main=ClusterEditDeleteRace --init=deleteDuringEditInit --step=stepApalache \
+                      --invariant=NoWriteAfterDeleteObserved \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ClusterEditDeleteRace.qnt
+```
+
+Or, from `formal/`: `make verify-cluster-delete-race`.
+
 ### Cluster autoscaler scale-up + KCP rolling upgrade surge race (issue #87)
 
 ```sh

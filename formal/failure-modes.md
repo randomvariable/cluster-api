@@ -1199,6 +1199,39 @@ captures the FM-23 shape directly.
 during defrag is a known cause of MHC `EtcdMemberHealthy=Unknown`
 flaps. See `issue-corpus.md` IC-12.
 
+## FM-110 — Cluster delete during an in-flight edit allows a stale write to land
+
+**Provenance.** **Modelling** — issue #68 standalone edit/delete race
+slice (`ClusterEditDeleteRace.qnt`). The model is grounded in the normal
+patch/write helpers and the existing delete/missing-object handling
+surfaces that already appear in the stale-enqueue corpus.
+
+**Trigger.** A `Cluster.spec` edit has already incremented desired state
+but its final persisted write has not landed yet. `kubectl delete`
+arrives, the object is deleted, but a stale in-flight write still lands
+after delete was already observed.
+
+**Init / scenarios.** `editThenDeleteRun` shows the intended regime: the
+edit persists first, then delete wins, and any later write observes the
+object is gone (`DeleteCancelsFurtherWrites`). `deleteMidEditRun` drives
+the bad path: desired generation increments, delete is observed, and a
+stale write still lands, violating `NoWriteAfterDeleteObserved`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Patch/write helper | `util/patch/patch.go` | 186 |
+| Deprecated patch helper | `util/deprecated/v1beta1/patch/patch.go` | 181 |
+| Related delete/missing-object behaviour | `formal/specs/StaleEnqueueShutdown.qnt` | 1-162 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-write-after-delete path via `deleteMidEditRun`, and
+Apalache reaches the same `NoWriteAfterDeleteObserved` violation from
+`deleteDuringEditInit` within depth 4 (`make verify-cluster-delete-race-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 **Init**: `etcdDefragPauseInit`. Etcd's bbolt defrag is running
 on the leader; every Status RPC times out for 10–60 s. KCP marks
 every member EtcdMemberHealthy=Unknown but nothing is broken.
@@ -3811,6 +3844,7 @@ reason that the operator can read.
 | FM-95 | ClusterTopology reads a torn ClusterClass view mid-update | MODELLING | Reconcile pins a consistent ClusterClass version in the safe regime | Logged as deliberate counterexample candidate on `ConsistentCCViewPerReconcile` in `specs/ClusterClassTopologyRace.qnt`; Apalache reaches the torn-read state within depth 4 |
 | FM-96 | ClusterResourceSet ApplyOnce runs before kubelets join | MODELLING | Apply happens after kubelets join or Reconcile retries until readiness in the safe regime | Logged as deliberate counterexample candidate on `ApplyOnceEventuallyTakesEffect` in `specs/ClusterResourceSetTiming.qnt`; Apalache reaches the timing race within depth 4 |
 | FM-99 | Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions | MODELLING | Both edits converge to the final spec and surge stays within bound in the safe regime | Logged as deliberate counterexample candidate on `NoLostEdit` / `NoSurgeBoundViolation` in `specs/ConcurrentClusterSpecEdits.qnt`; Apalache reaches the lost-edit state within depth 4 |
+| FM-110 | Cluster delete during an in-flight edit allows a stale write to land | MODELLING | Delete wins cleanly and later writes observe not-found in the safe regime | Logged as deliberate counterexample candidate on `NoWriteAfterDeleteObserved` in `specs/ClusterEditDeleteRace.qnt`; Apalache reaches the stale-write state within depth 4 |
 | FM-100 | Autoscaler scale-up and KCP rollout surge overproduce replicas | MODELLING | Autoscaler intent is incorporated before rollout surge in the safe regime | Logged as deliberate counterexample candidate on `SurgeBoundUnderConcurrentScale` in `specs/AutoscalerKcpSurgeRace.qnt`; Apalache reaches the over-replica state within depth 4 |
 | FM-105 | Mid-rollout etcd tag bump traps the control-plane upgrade | MODELLING | etcd upgrade waits until the control-plane rollout gate has cleared in the safe regime | Logged as deliberate counterexample candidate on `NoMidRolloutDependencyTrap` in `specs/EtcdKubernetesVersionSkew.qnt`; Apalache reaches the dependency-trap state within depth 4 |
 | FM-104 | Rollback during partial cycling temporarily exceeds surge bound | MODELLING | Rollback waits for the drain point in the safe regime | Logged as deliberate counterexample candidate on `NoTransientSurgeBeyondBound` in `specs/RollbackSurgeRace.qnt`; Apalache reaches the mid-cycle rollback surge state within depth 4 |
