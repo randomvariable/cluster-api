@@ -1,0 +1,39 @@
+test/e2e/kcp_orphan_learner.go
+  s_ef1b50d6261751::t_6e109b05e15a2a 34-36
+  s_ef1b50d6261751::t_6bf9a806cdfe95 1-33,37-169,171-277,283-285,287-289,295-432
+  s_ef1b50d6261751::t_6850d617310062 278-282,286,290-294
+  s_ef1b50d6261751::t_35f7db41af885c 170
+test/e2e/data/infrastructure-docker/main/cluster-template-orphan-learner/mhc.yaml
+  s_ef1b50d6261751::t_f5bf359c22d6bb 1-21
+test/e2e/config/docker.yaml
+  s_ef1b50d6261751::t_15f7a28d8f64ea 223-224
+  s_ef1b50d6261751::t_23a844352d0366 188
+  s_ef1b50d6261751::t_e2579e3078599b 280-283
+test/e2e/kcp_orphan_learner_test.go
+  s_ef1b50d6261751::t_e80aac0d50b75a 1-36
+test/e2e/data/infrastructure-docker/main/cluster-template-orphan-learner/kustomization.yaml
+  s_ef1b50d6261751::t_a96b8ca5ec20e8 1-3
+Makefile
+  s_ef1b50d6261751::t_294df682e9797a 608
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "b0f074d1d68cd83b72a0b0e97feed26d44255bf0",
+  "prompts": {},
+  "humans": {
+    "h_89238f8c3edb2d": {
+      "author": "Naadir Jeewa <jeewan@vmware.com>"
+    }
+  },
+  "sessions": {
+    "s_ef1b50d6261751": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5453a9af-30af-4ef9-b3b5-a6def81e4159",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Naadir Jeewa <jeewan@vmware.com>"
+    }
+  }
+}
