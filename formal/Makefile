@@ -120,6 +120,7 @@ WORKER_LIFE   := $(SPECS_DIR)/WorkerLifecycle.qnt
 MD_ROLLOUT    := $(SPECS_DIR)/MachineDeploymentRollout.qnt
 MD_ROLLOUT_REFINED := $(SPECS_DIR)/MachineDeploymentRolloutRefined.qnt
 CC_PATCHES    := $(SPECS_DIR)/ClusterClassPatches.qnt
+JOINNAME      := $(SPECS_DIR)/EtcdJoiningNameDelay.qnt
 FINALIZERS    := $(SPECS_DIR)/Finalizers.qnt
 RUNTIMESDK    := $(SPECS_DIR)/RuntimeSDK.qnt
 PIVOT         := $(SPECS_DIR)/Pivot.qnt
@@ -2958,6 +2959,47 @@ verify-finalizers-proof:  ## Build Lean theorem for finalizer progress measure
 
 .PHONY: verify-finalizers
 verify-finalizers: verify-finalizers-happy verify-finalizers-random verify-finalizers-apalache verify-finalizers-proof  ## Full finalizer suite
+
+.PHONY: verify-joining-name-happy
+verify-joining-name-happy:  ## Drive member joins before machine deletion
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdJoiningNameDelay --init=joinedBeforeDeleteRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(JOINNAME)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EtcdJoiningNameDelay --init=joinedBeforeDeleteRun --step=step \
+	             --invariant=JoiningEventuallyJoinedOrRemoved --max-steps=0 \
+	             $(JOINNAME)
+
+.PHONY: verify-joining-name-counterexample
+verify-joining-name-counterexample:  ## Drive orphan joining-member after delete
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdJoiningNameDelay --init=orphanJoiningRun --step=step \
+	              --invariant=NoOrphanJoiningMemberAfterMachineGone --max-steps=0 \
+	              $(JOINNAME)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EtcdJoiningNameDelay --init=orphanJoiningRun --step=step \
+	              --invariant=JoiningEventuallyJoinedOrRemoved --max-steps=0 \
+	              $(JOINNAME)
+
+.PHONY: verify-joining-name-random
+verify-joining-name-random:  ## Random-walk stable joining-name invariants (300x40)
+	@for inv in StableSafetyInvariants JoinedImpliesNameVisible MachineGoneKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EtcdJoiningNameDelay \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(JOINNAME) || exit 1; \
+	done
+
+.PHONY: verify-joining-name-apalache
+verify-joining-name-apalache:  ## Apalache orphan joining-member counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EtcdJoiningNameDelay --init=orphanJoiningInit \
+	                  --step=stepApalache --invariant=NoOrphanJoiningMemberAfterMachineGone \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(JOINNAME)
+
+.PHONY: verify-joining-name-delay
+verify-joining-name-delay: verify-joining-name-happy verify-joining-name-counterexample verify-joining-name-random verify-joining-name-apalache  ## Full etcd empty-name joining-member suite
 
 .PHONY: verify-volume-detach-finalizer-happy
 verify-volume-detach-finalizer-happy:  ## Drive successful detach and finalizer clearance

@@ -1083,6 +1083,20 @@ counterexample candidates.
 | Finalizers | `RemoveFinalizer(ClusterResourceSet)` | `internal/controllers/clusterresourceset/clusterresourceset_controller.go:220-256` | ClusterResourceSet delete path demonstrates an additional finalizer-bearing controller outside the core Cluster→Machine chain. |
 | Finalizers | `RemoveFinalizer(ExtensionConfig)` | `internal/controllers/extensionconfig/extensionconfig_controller.go:215-217` | ExtensionConfig delete path is another leaf-style controller finalizer used to ground idempotent removal semantics. |
 
+### EtcdJoiningNameDelay.qnt
+
+Standalone empty-name etcd member delay model for issue #104. This spec
+keeps a single Machine, a single corresponding etcd member, the member's
+`Joining -> Joined` visibility transition, and the pre-terminate hook's
+name-based correlation attempt.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| EtcdJoiningNameDelay | `MemberAddReturnsJoining` / `PublishMemberName` | `controlplane/kubeadm/internal/controllers/remediation.go:638-671`; `controlplane/kubeadm/internal/controllers/controller.go:1433-1460` | Ground the real bug surface: KCP correlates etcd members by visible Node/member name, but etcd can return a post-`MemberAdd` member whose `Name` is still empty until the peer joins. |
+| EtcdJoiningNameDelay | `TryRemoveByVisibleName` | same plus `controlplane/kubeadm/internal/etcd/etcd.go` remove-by-name path | Model the pre-`#13680` behaviour: removal only happens if the name is visible and matches the deleting machine. |
+| EtcdJoiningNameDelay | `NoOrphanJoiningMemberAfterMachineGone` / `orphanJoiningRun` | same | Express the issue's core counterexample: the Machine and infra are gone, but the etcd cluster still retains a `Joining` member forever because correlation never found it. |
+| EtcdJoiningNameDelay | `JoiningEventuallyJoinedOrRemoved` / `joinedBeforeDeleteRun` | same | Show the symmetric safe regime where the peer reaches `Joined` before deletion, making the member visible and removable. |
+
 ### VolumeDetachFinalizer.qnt
 
 Standalone CSI detach / finalizer-chain stall model for issue #56. This

@@ -498,6 +498,48 @@ Or, from `formal/`: `make verify-finalizers`,
 `make verify-finalizers-random`, `make verify-finalizers-apalache`,
 and `make verify-finalizers-proof`.
 
+### Empty-name etcd member delay — Joining → Joined (issue #104)
+
+```sh
+# Member publishes its name before the Machine deletion sequence finishes.
+quint run --main=EtcdJoiningNameDelay --init=joinedBeforeDeleteRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/EtcdJoiningNameDelay.qnt
+
+quint run --main=EtcdJoiningNameDelay --init=joinedBeforeDeleteRun --step=step \
+          --invariant=JoiningEventuallyJoinedOrRemoved --max-steps=0 \
+          formal/specs/EtcdJoiningNameDelay.qnt
+
+# Explicit orphan-joining-member counterexample.
+quint run --main=EtcdJoiningNameDelay --init=orphanJoiningRun --step=step \
+          --invariant=NoOrphanJoiningMemberAfterMachineGone --max-steps=0 \
+          formal/specs/EtcdJoiningNameDelay.qnt
+
+quint run --main=EtcdJoiningNameDelay --init=orphanJoiningRun --step=step \
+          --invariant=JoiningEventuallyJoinedOrRemoved --max-steps=0 \
+          formal/specs/EtcdJoiningNameDelay.qnt
+
+# Random-walk stable joining/member bookkeeping.
+for inv in StableSafetyInvariants JoinedImpliesNameVisible MachineGoneKnown; do
+  quint run --main=EtcdJoiningNameDelay --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/EtcdJoiningNameDelay.qnt
+done
+
+# Backend verdict: orphan joining-member reachable within depth 4.
+echo y | quint verify --main=EtcdJoiningNameDelay --init=orphanJoiningInit --step=stepApalache \
+                      --invariant=NoOrphanJoiningMemberAfterMachineGone \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/EtcdJoiningNameDelay.qnt
+```
+
+Interpretation note:
+- `Joining` means etcd `MemberAdd` has returned, but the leader still sees `Name=""`.
+- `Joined` means the peer has joined raft and the leader now sees the real name.
+- `Joining` forever is intentional in the model; it matches the real orphan scenario where the peer never reaches `Joined` and the cluster retains an unnamed member.
+
+Or, from `formal/`: `make verify-joining-name-delay`.
+
 ### CSI volume detach hang blocks the finalizer chain (issue #56)
 
 ```sh
