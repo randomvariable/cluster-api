@@ -3480,6 +3480,40 @@ within depth 4 (`make verify-ipam-exhaustion-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-116 — Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint
+
+**Provenance.** **Modelling** — issue #61 standalone endpoint-swap /
+stale-kubeconfig slice (`EndpointSwapKubeconfig.qnt`). The model is
+grounded in the real control-plane endpoint publication surfaces and the
+kubeconfig generation helper.
+
+**Trigger.** The control-plane endpoint changes (LB target/EIP swap,
+clusterctl move, or provider republish), but kubeconfigs continue to
+reference the old endpoint because regeneration/convergence has not
+happened yet.
+
+**Init / scenarios.** `coordinatedSwapRun` shows the intended regime:
+the endpoint swaps, kubeconfigs are regenerated, and
+`AllKubeconfigsConvergeToCurrent` holds. `staleKubeconfigRun` takes the
+bad path where the endpoint has already moved but kubeconfigs still point
+to the old value, violating that invariant.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Control-plane endpoint population | `internal/controllers/cluster/cluster_controller_phases.go` | 217-356 |
+| Docker provider endpoint republish | `test/infrastructure/docker/internal/controllers/backends/docker/dockercluster_backend.go` | 100-128 |
+| In-memory provider endpoint republish | `test/infrastructure/docker/internal/controllers/backends/inmemory/inmemorycluster_backend.go` | 101-157 |
+| Kubeconfig generation | `util/kubeconfig/kubeconfig.go` | 111 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-endpoint path via `staleKubeconfigRun`, and
+Apalache reaches the same `AllKubeconfigsConvergeToCurrent` violation
+from `staleEndpointInit` within depth 4 (`make verify-endpoint-swap-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-109 — Status subresource lags and another controller acts on stale phase
 
 **Provenance.** **Modelling** — issue #70 standalone spec/status lag
@@ -4010,6 +4044,7 @@ reason that the operator can read.
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
+| FM-116 | Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint | MODELLING | Kubeconfigs are regenerated and converge to the new endpoint in the safe regime | Logged as deliberate counterexample candidate on `AllKubeconfigsConvergeToCurrent` in `specs/EndpointSwapKubeconfig.qnt`; Apalache reaches the stale-endpoint state within depth 4 |
 | FM-115 | Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause | MODELLING | Exhaustion is surfaced as a higher-level condition in the safe regime | Logged as deliberate counterexample candidate on `NoSilentInfiniteRetry` in `specs/IpamExhaustion.qnt`; Apalache reaches the silent-retry state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |

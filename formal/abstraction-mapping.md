@@ -563,6 +563,19 @@ counter, one apiserver liveness bit, and one client-hung flag.
 | LoadBalancerDrain | `KillApiserverPod` | `controlplane/kubeadm/internal/controllers/controller.go:1362-1409` (KCP pre-terminate hook sequencing) | Ground the control-plane deletion/termination side where KCP should avoid killing the apiserver before dependent cleanup/drain has finished. |
 | LoadBalancerDrain | `ClientHangsOnDereg` / `KcpUpgradeAccountsForLbDrain` | same LB-drain and KCP sequencing surfaces plus `APIServerPodHealthy` health surfacing in `controlplane/kubeadm/internal/workload_cluster_conditions.go:668-670` | Express the issue's counterexample target: existing clients hang on a deregistered-but-not-yet-drained target if KCP kills the apiserver too early. |
 
+### EndpointSwapKubeconfig.qnt
+
+Standalone endpoint-swap / stale kubeconfig model for issue #61. This
+spec keeps the current `Cluster.Spec.ControlPlaneEndpoint`, the endpoint
+baked into kubeconfigs, and whether regeneration/convergence has
+occurred.
+
+| Spec | Action / invariant | Go / artifact reference | Purpose |
+| ---- | ------------------ | ----------------------- | ------- |
+| EndpointSwapKubeconfig | `SwapEndpoint` | `internal/controllers/cluster/cluster_controller_phases.go:217-356`; `test/infrastructure/docker/internal/controllers/backends/docker/dockercluster_backend.go:100-128`; `test/infrastructure/docker/internal/controllers/backends/inmemory/inmemorycluster_backend.go:101-157` | Ground the fact that the cluster endpoint can move when infra/control-plane providers republish it. |
+| EndpointSwapKubeconfig | `RegenerateKubeconfig` | `util/kubeconfig/kubeconfig.go:111` | Ground the concrete kubeconfig generation path that must eventually follow the current cluster endpoint. |
+| EndpointSwapKubeconfig | `AllKubeconfigsConvergeToCurrent` / `staleKubeconfigRun` | same | Express the issue's counterexample target: kubeconfigs keep referencing the old endpoint after the cluster endpoint has already moved. |
+
 ### NetworkPolicyMidFlight.qnt
 
 Standalone NetworkPolicy mid-flight connection-cut model for issue #53.

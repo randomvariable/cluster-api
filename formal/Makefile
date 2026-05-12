@@ -78,6 +78,7 @@ REGPULL       := $(SPECS_DIR)/RegistryPullBackoff.qnt
 KCPMHCDEL     := $(SPECS_DIR)/KcpMhcDeleteRace.qnt
 CNIVETH       := $(SPECS_DIR)/CniVethRace.qnt
 LBDRAIN       := $(SPECS_DIR)/LoadBalancerDrain.qnt
+ENDPOINTSWAP  := $(SPECS_DIR)/EndpointSwapKubeconfig.qnt
 NETPOLSTALL   := $(SPECS_DIR)/NetworkPolicyMidFlight.qnt
 WATCHCOALESCE := $(SPECS_DIR)/WatchEventCoalescing.qnt
 CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
@@ -1396,6 +1397,43 @@ verify-lb-drain-apalache:  ## Apalache blackholed-connection counterexample at d
 
 .PHONY: verify-lb-drain
 verify-lb-drain: verify-lb-drain-happy verify-lb-drain-counterexample verify-lb-drain-random verify-lb-drain-apalache  ## Full load-balancer drain / blackholed-connection suite
+
+.PHONY: verify-endpoint-swap-happy
+verify-endpoint-swap-happy:  ## Drive coordinated endpoint swap with kubeconfig regeneration
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EndpointSwapKubeconfig --init=coordinatedSwapRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ENDPOINTSWAP)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=EndpointSwapKubeconfig --init=coordinatedSwapRun --step=step \
+	             --invariant=AllKubeconfigsConvergeToCurrent --max-steps=0 \
+	             $(ENDPOINTSWAP)
+
+.PHONY: verify-endpoint-swap-counterexample
+verify-endpoint-swap-counterexample:  ## Drive stale kubeconfig after endpoint swap
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=EndpointSwapKubeconfig --init=staleKubeconfigRun --step=step \
+	              --invariant=AllKubeconfigsConvergeToCurrent --max-steps=0 \
+	              $(ENDPOINTSWAP)
+
+.PHONY: verify-endpoint-swap-random
+verify-endpoint-swap-random:  ## Random-walk stable endpoint-swap invariants (300x40)
+	@for inv in StableSafetyInvariants ReferencedEndpointIsKnown CurrentEndpointKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=EndpointSwapKubeconfig \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ENDPOINTSWAP) || exit 1; \
+	done
+
+.PHONY: verify-endpoint-swap-apalache
+verify-endpoint-swap-apalache:  ## Apalache stale kubeconfig counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=EndpointSwapKubeconfig --init=staleEndpointInit \
+	                  --step=stepApalache --invariant=AllKubeconfigsConvergeToCurrent \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ENDPOINTSWAP)
+
+.PHONY: verify-endpoint-swap
+verify-endpoint-swap: verify-endpoint-swap-happy verify-endpoint-swap-counterexample verify-endpoint-swap-random verify-endpoint-swap-apalache  ## Full endpoint swap / stale kubeconfig suite
 
 .PHONY: verify-netpol-stall-happy
 verify-netpol-stall-happy:  ## Drive policy application that is detected and recovered

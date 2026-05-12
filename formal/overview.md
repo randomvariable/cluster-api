@@ -134,6 +134,7 @@ For a contributor adding a new failure mode:
 | MtuFragmentation.qnt | 2 | 300×40 | **1/1 stable MTU bookkeeping invariant** under random walk; explicit silent-fragmentation counterexample `EtcdSnapshotEventuallySucceeds` reachable at Apalache depth 4 | — |
 | CniVethRace.qnt | 2 | 300×40 | **2/2 stable CNI/veth bookkeeping invariants** under random walk; explicit pre-veth probe-loop counterexample `NoContainerStartBeforeCni` reachable at Apalache depth 4 | — |
 | LoadBalancerDrain.qnt | 2 | 300×40 | **2/2 stable LB-drain bookkeeping invariants** under random walk; explicit blackholed-connection counterexample `KcpUpgradeAccountsForLbDrain` reachable at Apalache depth 4 | — |
+| EndpointSwapKubeconfig.qnt | 2 | 300×40 | **2/2 stable endpoint bookkeeping invariants** under random walk; explicit stale-kubeconfig counterexample `AllKubeconfigsConvergeToCurrent` reachable at Apalache depth 4 | — |
 | ConntrackExhaustion.qnt | 2 | 300×40 | **2/2 stable conntrack bookkeeping invariants** under random walk; explicit saturation counterexample `EventualConvergence` reachable at Apalache depth 4 | — |
 | NetworkPolicyMidFlight.qnt | 2 | 300×40 | **2/2 stable policy/connection bookkeeping invariants** under random walk; explicit silent-stall counterexample `NoSilentControllerStall` reachable at Apalache depth 4 | — |
 | 3 refined modules | 6 | 300×40 each | — | — |

@@ -2105,6 +2105,39 @@ echo y | quint verify --main=LoadBalancerDrain --init=killBeforeDrainInit --step
 
 Or, from `formal/`: `make verify-lb-drain`.
 
+### LB/EIP swap mid-cluster leaves kubeconfigs pointing at the old endpoint (issue #61)
+
+```sh
+# Endpoint swap is followed by kubeconfig regeneration and convergence.
+quint run --main=EndpointSwapKubeconfig --init=coordinatedSwapRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/EndpointSwapKubeconfig.qnt
+
+quint run --main=EndpointSwapKubeconfig --init=coordinatedSwapRun --step=step \
+          --invariant=AllKubeconfigsConvergeToCurrent --max-steps=0 \
+          formal/specs/EndpointSwapKubeconfig.qnt
+
+# Explicit stale kubeconfig counterexample.
+quint run --main=EndpointSwapKubeconfig --init=staleKubeconfigRun --step=step \
+          --invariant=AllKubeconfigsConvergeToCurrent --max-steps=0 \
+          formal/specs/EndpointSwapKubeconfig.qnt
+
+# Random-walk stable endpoint bookkeeping.
+for inv in StableSafetyInvariants ReferencedEndpointIsKnown CurrentEndpointKnown; do
+  quint run --main=EndpointSwapKubeconfig --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/EndpointSwapKubeconfig.qnt
+done
+
+# Backend verdict: stale kubeconfig reachable within depth 4.
+echo y | quint verify --main=EndpointSwapKubeconfig --init=staleEndpointInit --step=stepApalache \
+                      --invariant=AllKubeconfigsConvergeToCurrent \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/EndpointSwapKubeconfig.qnt
+```
+
+Or, from `formal/`: `make verify-endpoint-swap`.
+
 ### NetworkPolicy applied mid-flight cuts controller traffic silently (issue #53)
 
 ```sh
