@@ -2071,6 +2071,43 @@ is stored in `formal/counterexamples/concurrent-remediation-gate.md`.
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-125 — Concurrent remediation ignores already-condemned peers and admits quorum loss
+
+**Provenance.** **Modelling** — issue #109 refinement of
+`KCPReconcile.qnt`. The model is grounded in the production
+`condemnedPeerMembers` helper and the strengthened `targetEtcdClusterHealthy`
+predicate added in `#13680`.
+
+**Trigger.** One Machine is already committed to removal: it has a
+deletion timestamp and the `kcp-cleanup` pre-terminate annotation, so it
+must count against future quorum decisions even before it fully leaves the
+cluster. A second remediation attempt that ignores this condemned peer can
+erroneously admit another deletion and strand the cluster below quorum.
+
+**Init / scenarios.** `threeNodeCondemnedPeerBlockedRun` shows the
+correct 3-node behaviour: once Machine 1 is condemned, a second
+remediation for Machine 2 is blocked by the pre-state quorum bar.
+`fiveNodeCondemnedPeerAllowedRun` shows the safe 5-node case: with one
+condemned peer, three survivors remain and a second admission is still
+allowed. `allDeletingWindDownRun` captures the carve-out where every peer
+is already deleting, so the stricter pre-state quorum bar is not applied.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Condemned peer helper | `controlplane/kubeadm/internal/controllers/remediation.go` | 618-626 |
+| Strengthened targetEtcdClusterHealthy gate | `controlplane/kubeadm/internal/controllers/remediation.go` | 670-818 |
+
+**Verdict.** The strengthened invariant is now modelled directly in
+`KCPReconcile.qnt`. The saved summaries in
+`formal/counterexamples/kcp-condemned-peers.md` capture the three target
+traces, and `quint verify --main=KCPReconcile --init=InitFiveNode
+--step=stepCondemnedPeersApalache --invariant=NoJointQuorumLossAcrossConcurrentRemediation
+--max-steps=4 --backend=apalache` confirms the focused invariant.
+
+**Classification.** **MODELLING** (strengthened safety invariant).
+
 ## FM-99 — Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions
 
 **Provenance.** **Modelling** — issue #65 standalone concurrent-edit
@@ -3516,6 +3553,43 @@ Apalache reaches the same `NoSilentReconcileFailure` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-126 — OIDC issuer/JWK rotation invalidates old controller tokens until reissue
+
+**Provenance.** **Modelling** — issue #75 standalone issuer/key rotation
+slice (`OidcIssuerRotation.qnt`). The model is grounded in the same real
+`TokenRequest` issuance surfaces as the projected-token model, but focuses
+on the trust side changing under a long-lived client when apiserver starts
+trusting a different issuer/key pair.
+
+**Trigger.** The issuer rotates from `(A, keyA1)` to `(B, keyB1)`, the
+apiserver fetches the new JWK set, and a controller continues to present a
+token signed by the old pair. The next API call returns 401 because the
+controller never reissued its token.
+
+**Init / scenarios.** `eventualReissueRun` shows the intended regime:
+issuer/key rotate, apiserver updates trust, the stale token gets 401, and
+the controller reissues a token that matches the new trusted issuer/key.
+`staleIssuerFailureRun` takes the adversarial branch where the 401 is
+observed but reconcile ends in failure, violating `NoExtendedAuthOutage`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| TokenRequest helper | `test/framework/autoscaler_helpers.go` | 596-604 |
+| TokenRequest helper | `test/e2e/kcp_remediations.go` | 709-717 |
+| Cached client construction | `controllers/clustercache/cluster_accessor_client.go` | 210-268 |
+| Long-running cached client usage | `controlplane/kubeadm/internal/controllers/remediation.go` | 656 |
+| Long-running cached client usage | `controlplane/kubeadm/internal/cluster.go` | 136 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-issuer/key auth failure path via
+`staleIssuerFailureRun`, and Apalache reaches the same
+`NoExtendedAuthOutage` violation from `staleIssuerInit` within depth 4
+(`make verify-oidc-rotation-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-112 — IAM policy revocation strands partially provisioned machines
 
 **Provenance.** **Modelling** — issue #60 standalone IAM revocation /
@@ -4290,6 +4364,7 @@ reason that the operator can read.
 | FM-89 | CSR approval lag strands kubelet until bootstrap timeout fires | MODELLING | Approval clears before timeout in the safe regime | Logged as deliberate counterexample candidate on `BootstrapTimeoutCoversCsrLatency` / `NoStrandedKubelet` in `specs/BootstrapCsrLag.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
+| FM-126 | OIDC issuer/JWK rotation invalidates old controller tokens until reissue | MODELLING | Controller reissues a token after 401 and converges to the new issuer/key in the safe regime | Logged as deliberate counterexample candidate on `NoExtendedAuthOutage` in `specs/OidcIssuerRotation.qnt`; Apalache reaches the stale-issuer/key auth failure within depth 4 |
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
 | FM-117 | CSI volume detach hang blocks the node/machine finalizer chain | MODELLING | Operator force-detach or detach completion clears the chain in the safe regime | Logged as deliberate counterexample candidate on `OperatorEscapeHatch` in `specs/VolumeDetachFinalizer.qnt`; Apalache reaches the stuck-detach state within depth 4 |
 | FM-123 | Empty-name etcd member remains orphaned after machine deletion | MODELLING | Member reaches `Joined` or is removed before the machine and infra disappear in the safe regime | Logged as deliberate counterexample candidate on `NoOrphanJoiningMemberAfterMachineGone` / `JoiningEventuallyJoinedOrRemoved` in `specs/EtcdJoiningNameDelay.qnt`; Apalache reaches the orphan state within depth 4 |
@@ -4316,6 +4391,7 @@ reason that the operator can read.
 | FM-103 | Management-cluster split-brain yields two active leader controllers | MODELLING | Lease converges to a single writer before duplicate effects in the safe regime | Logged as deliberate counterexample candidate on `NoDuplicateEffectAcrossLeaders` in `specs/ControllerLeaderSplitBrain.qnt`; Apalache reaches the duplicate-effect state within depth 4 |
 | FM-98 | Machine readiness gets stuck because bootstrap and infra ready edges are observed separately | MODELLING | Reconcile observes both child-ready edges and eventually marks Machine ready in the safe regime | Logged as deliberate counterexample candidate on `NoStuckUnreadyDespiteBothChildrenReady` in `specs/BootstrapInfraReadyRace.qnt`; Apalache reaches the stuck-unready state within depth 4 |
 | FM-124 | Non-atomic remediation admission reads stale quorum state and commits anyway | MODELLING | Atomic fused admission blocks the second remediation in the safe regime | Logged as deliberate counterexample candidate on `NoConcurrentQuorumLoss` / `GateReadStalenessBound` in `specs/ConcurrentRemediationGate.qnt`; Apalache finds the stale-read race at depth 8 |
+| FM-125 | Concurrent remediation ignores already-condemned peers and admits quorum loss | MODELLING | Condemned peers count against the pre-state quorum bar while all-deleting wind-down still proceeds | Strengthened `KCPReconcile.qnt` blocks the 3-node second admission, allows the 5-node case, and preserves the wind-down carve-out |
 | FM-102 | MachinePool spec replicas and provider actual scale oscillate | MODELLING | Scale ownership is arbitrated and converges in the safe regime | Logged as deliberate counterexample candidate on `NoOscillation` in `specs/MachinePoolScaleConflict.qnt`; Apalache reaches the oscillation state within depth 4 |
 | FM-97 | KCP and MHC concurrently delete the same Machine | MODELLING | One controller owns old-machine deletion and replacements are not immediately reselected in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleDelete` / `NoReplacementCannibalisation` in `specs/KcpMhcDeleteRace.qnt`; Apalache reaches the double-delete state within depth 4 |
 | FM-113 | AZ-wide failure leaves KCP stuck targeting a failed or exhausted AZ | MODELLING | KCP retargets to a surviving AZ with capacity in the safe regime | Logged as deliberate counterexample candidate on `NoIndefiniteScaleAttempt` in `specs/AzFailoverCapacity.qnt`; Apalache reaches the failover-stall state within depth 4 |

@@ -73,6 +73,9 @@ and the seL4 functional-correctness convention
 | KCPReconcile | HealthChange | controlplane/kubeadm/internal/controllers/status.go (`updateStatus` — coarse health rollup) | KCP re-projects per-Machine health. |
 | KCPReconcile | RequestRemediation | controlplane/kubeadm/internal/controllers/remediation.go:54 (`reconcileUnhealthyMachines` entry) | KCP flips a Machine into remediation-requested. |
 | KCPReconcile | ResolveNodeRef | internal/controllers/machine/machine_controller_noderef.go (Machine controller; refinement is upstream of KCP) | Machine controller sets `Machine.status.nodeRef`. |
+| KCPReconcile | `condemnedPeers` / `MarkCondemnedPeer` | `controlplane/kubeadm/internal/controllers/remediation.go:618-626`; `:670-818` (`targetEtcdClusterHealthy`) | Model the production condemned-peer helper: deleting peers with the KCP cleanup annotation count against future quorum decisions even before they are fully removed. |
+| KCPReconcile | `remediationQuorumBar` | `controlplane/kubeadm/internal/controllers/remediation.go:695-818` (`targetEtcdClusterHealthy`) | Encode the pre-state quorum bar when condemned peers exist and at least one non-deleting peer survives, with the wind-down carve-out when all peers are already deleting. |
+| KCPReconcile | `NoJointQuorumLossAcrossConcurrentRemediation` / `threeNodeCondemnedPeerBlockedRun` / `fiveNodeCondemnedPeerAllowedRun` / `allDeletingWindDownRun` | same | Show the strengthened fix semantics: 3-node concurrent remediation is blocked, 5-node concurrent remediation is allowed, and full wind-down still proceeds one-by-one. |
 
 ### ConcurrentRemediationGate.qnt
 

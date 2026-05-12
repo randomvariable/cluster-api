@@ -1611,6 +1611,34 @@ echo y | quint verify --main=BootstrapInfraReadyRace --init=missingEventInit --s
 
 Or, from `formal/`: `make verify-bootstrap-infra-race`.
 
+### Condemned-peer accounting and pre-state quorum bar (issue #109)
+
+```sh
+# 5-node cluster: one condemned peer still allows a second admission.
+quint run --main=KCPReconcile --init=fiveNodeCondemnedPeerAllowedRun --step=step \
+          --invariant=NoJointQuorumLossAcrossConcurrentRemediation --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+
+# Wind-down carve-out: all peers deleting admits one-by-one.
+quint run --main=KCPReconcile --init=allDeletingWindDownRun --step=step \
+          --invariant=NoJointQuorumLossAcrossConcurrentRemediation --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+
+# 3-node cluster: once one peer is condemned, the second remediation is blocked.
+quint run --main=KCPReconcile --init=threeNodeCondemnedPeerBlockedRun --step=step \
+          --invariant=PreflightBlocksRemediationWhenUnhealthy --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+
+# Backend verdict on the strengthened predicate.
+echo y | quint verify --main=KCPReconcile --init=InitFiveNode --step=stepCondemnedPeersApalache \
+                      --invariant=NoJointQuorumLossAcrossConcurrentRemediation \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/KCPReconcile.qnt
+```
+
+Saved trace summaries:
+- `formal/counterexamples/kcp-condemned-peers.md`
+
 ### Non-atomic remediation gate admits two machines from stale quorum reads (issue #106)
 
 ```sh

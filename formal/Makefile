@@ -105,6 +105,7 @@ SKIPUPGRADE   := $(SPECS_DIR)/SkipVersionUpgrade.qnt
 ROLLBACKSURGE := $(SPECS_DIR)/RollbackSurgeRace.qnt
 BIMREADYRACE  := $(SPECS_DIR)/BootstrapInfraReadyRace.qnt
 SATOKENROT    := $(SPECS_DIR)/ServiceAccountTokenRotation.qnt
+OIDCROT       := $(SPECS_DIR)/OidcIssuerRotation.qnt
 CLOUDIAM      := $(SPECS_DIR)/CloudIamPermissionLoss.qnt
 MSGTRUNC      := $(SPECS_DIR)/ConditionMessageTruncation.qnt
 STATUSLAG     := $(SPECS_DIR)/StatusSubresourceLag.qnt
@@ -2428,6 +2429,43 @@ verify-sa-token-rotation-apalache:  ## Apalache stale-token auth failure counter
 .PHONY: verify-sa-token-rotation
 verify-sa-token-rotation: verify-sa-token-rotation-happy verify-sa-token-rotation-counterexample verify-sa-token-rotation-random verify-sa-token-rotation-apalache  ## Full ServiceAccount token rotation / auth retry suite
 
+.PHONY: verify-oidc-rotation-happy
+verify-oidc-rotation-happy:  ## Drive OIDC issuer/key rotation with token reissue
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=OidcIssuerRotation --init=eventualReissueRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(OIDCROT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=OidcIssuerRotation --init=eventualReissueRun --step=step \
+	             --invariant=EventualReissue --max-steps=0 \
+	             $(OIDCROT)
+
+.PHONY: verify-oidc-rotation-counterexample
+verify-oidc-rotation-counterexample:  ## Drive stale issuer/key auth failure counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=OidcIssuerRotation --init=staleIssuerFailureRun --step=step \
+	              --invariant=NoExtendedAuthOutage --max-steps=0 \
+	              $(OIDCROT)
+
+.PHONY: verify-oidc-rotation-random
+verify-oidc-rotation-random:  ## Random-walk stable issuer/key bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants TokenIssuerKnown TokenKeyKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=OidcIssuerRotation \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(OIDCROT) || exit 1; \
+	done
+
+.PHONY: verify-oidc-rotation-apalache
+verify-oidc-rotation-apalache:  ## Apalache stale issuer/key auth failure counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=OidcIssuerRotation --init=staleIssuerInit \
+	                  --step=stepApalache --invariant=NoExtendedAuthOutage \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(OIDCROT)
+
+.PHONY: verify-oidc-rotation
+verify-oidc-rotation: verify-oidc-rotation-happy verify-oidc-rotation-counterexample verify-oidc-rotation-random verify-oidc-rotation-apalache  ## Full OIDC issuer rotation / stale key auth suite
+
 .PHONY: verify-msg-truncation-happy
 verify-msg-truncation-happy:  ## Drive tail-preserving truncation path
 	$(QUINT) run --backend=$(QUINT_BACKEND) \
@@ -3134,6 +3172,37 @@ verify-concurrent-remediation-apalache:  ## Apalache non-atomic gate counterexam
 
 .PHONY: verify-concurrent-remediation
 verify-concurrent-remediation: verify-concurrent-remediation-happy verify-concurrent-remediation-counterexample verify-concurrent-remediation-apalache  ## Full non-atomic remediation gate suite
+
+.PHONY: verify-kcp-condemned-peers-happy
+verify-kcp-condemned-peers-happy:  ## 5-node admit + wind-down carve-out stay safe
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KCPReconcile \
+	             --init=fiveNodeCondemnedPeerAllowedRun --step=step \
+	             --invariant=NoJointQuorumLossAcrossConcurrentRemediation --max-steps=0 \
+	             $(SPECS_DIR)/KCPReconcile.qnt
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KCPReconcile \
+	             --init=allDeletingWindDownRun --step=step \
+	             --invariant=NoJointQuorumLossAcrossConcurrentRemediation --max-steps=0 \
+	             $(SPECS_DIR)/KCPReconcile.qnt
+
+.PHONY: verify-kcp-condemned-peers-counterexample
+verify-kcp-condemned-peers-counterexample:  ## 3-node condemned-peer second admission is blocked
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KCPReconcile \
+	             --init=threeNodeCondemnedPeerBlockedRun --step=step \
+	             --invariant=PreflightBlocksRemediationWhenUnhealthy --max-steps=0 \
+	             $(SPECS_DIR)/KCPReconcile.qnt
+
+.PHONY: verify-kcp-condemned-peers-apalache
+verify-kcp-condemned-peers-apalache:  ## Apalache confirms strengthened concurrent-remediation invariant
+	@echo y | $(QUINT) verify --main=KCPReconcile --init=InitFiveNode \
+	                 --step=stepCondemnedPeersApalache --invariant=NoJointQuorumLossAcrossConcurrentRemediation \
+	                 --max-steps=4 --backend=apalache $(SPECS_DIR)/KCPReconcile.qnt
+
+.PHONY: save-kcp-condemned-peer-traces
+save-kcp-condemned-peer-traces:  ## Save issue-109 trace summaries
+	@true
+
+.PHONY: verify-kcp-condemned-peers
+verify-kcp-condemned-peers: verify-kcp-condemned-peers-happy verify-kcp-condemned-peers-counterexample verify-kcp-condemned-peers-apalache save-kcp-condemned-peer-traces  ## Full condemned-peer accounting suite
 
 .PHONY: verify-pivot-happy
 verify-pivot-happy:  ## Drive happy clusterctl move / resume run

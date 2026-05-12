@@ -84,6 +84,11 @@ module KCPReconcile {
   // changes. The boolean is the projection of the union of
   // per-Machine block reasons that gate scale operations.
   var preflightBlocked: bool
+  // Whether a Machine is already in deletion.
+  var deleting: MachineId -> bool
+  // Whether KCP has already committed to removing a deleting peer by
+  // placing the cleanup pre-terminate annotation on it.
+  var hasKCPCleanupAnnotation: MachineId -> bool
   // Admission-time verdict remembered between the remediation
   // decision reconcile and the later pre-terminate hook.
   var admissionSafe: MachineId -> bool
@@ -101,6 +106,8 @@ module KCPReconcile {
     decision'         = Set(1, 2, 3).mapBy(_ => NoRemediationNeeded),
     blockReason'      = Map(),
     preflightBlocked' = false,
+    deleting'         = Set(1, 2, 3).mapBy(_ => false),
+    hasKCPCleanupAnnotation' = Set(1, 2, 3).mapBy(_ => false),
     admissionSafe'    = Set(1, 2, 3).mapBy(_ => false),
     hookFreshSafe'    = Set(1, 2, 3).mapBy(_ => false),
   }
@@ -111,16 +118,31 @@ module KCPReconcile {
 
   pure def quorumOf(n: int): int = n / 2 + 1
 
-  // Whether deleting `m` from the current voter set preserves
-  // quorum.
-  pure def quorumPreservedAfterDelete(ms: Set[MachineId], m: MachineId): bool =
-    ms.contains(m) and (ms.size() - 1) >= quorumOf(ms.size())
-
   // The NodeRef-projected machine set: only Machines for which
   // nodeRefSet has been resolved to true. This is the surface
   // KCP can match to etcd members.
   pure def matchableMachines(ms: Set[MachineId], nrs: MachineId -> bool): Set[MachineId] =
     ms.filter(m => nrs.keys().contains(m) and nrs.get(m))
+
+  def condemnedPeers(ms: Set[MachineId], deletingNow: MachineId -> bool, cleanupNow: MachineId -> bool, nrs: MachineId -> bool, target: MachineId): Set[MachineId] =
+    ms.filter(m =>
+      m != target
+        and deletingNow.get(m)
+        and cleanupNow.get(m)
+        and nrs.get(m))
+
+  def hasSurvivingPeer(ms: Set[MachineId], deletingNow: MachineId -> bool, target: MachineId): bool =
+    ms.exists(m => m != target and not(deletingNow.get(m)))
+
+  def remediationPostState(ms: Set[MachineId], deletingNow: MachineId -> bool, cleanupNow: MachineId -> bool, nrs: MachineId -> bool, target: MachineId): Set[MachineId] =
+    ms.exclude(Set(target)).exclude(condemnedPeers(ms, deletingNow, cleanupNow, nrs, target))
+
+  def remediationQuorumBar(ms: Set[MachineId], deletingNow: MachineId -> bool, cleanupNow: MachineId -> bool, nrs: MachineId -> bool, target: MachineId): int =
+    if (condemnedPeers(ms, deletingNow, cleanupNow, nrs, target).size() > 0
+        and hasSurvivingPeer(ms, deletingNow, target))
+      quorumOf(ms.size())
+    else
+      quorumOf(remediationPostState(ms, deletingNow, cleanupNow, nrs, target).size())
 
   // -------------------------------------------------------------
   // Actions
@@ -139,6 +161,8 @@ module KCPReconcile {
     decision'      = decision.put(m, NoRemediationNeeded),
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    deleting'         = deleting.put(m, false),
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation.put(m, false),
     admissionSafe'    = admissionSafe.put(m, false),
     hookFreshSafe'    = hookFreshSafe.put(m, false),
   }
@@ -157,6 +181,8 @@ module KCPReconcile {
     decision'         = decision,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    deleting'         = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     admissionSafe'    = admissionSafe,
     hookFreshSafe'    = hookFreshSafe,
   }
@@ -172,6 +198,8 @@ module KCPReconcile {
     decision'         = decision,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    deleting'         = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     admissionSafe'    = admissionSafe,
     hookFreshSafe'    = hookFreshSafe,
   }
@@ -190,6 +218,8 @@ module KCPReconcile {
     machineHealth'    = machineHealth,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    deleting'         = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     admissionSafe'    = admissionSafe,
     hookFreshSafe'    = hookFreshSafe,
   }
@@ -198,14 +228,16 @@ module KCPReconcile {
 
   // Local safety predicate. The action below uses these helpers
   // so the action body stays a flat conjunction.
-  pure def isSafeToRemediate(
+  def isSafeToRemediate(
       ms: Set[MachineId], nrs: MachineId -> bool, m: MachineId): bool =
-    quorumPreservedAfterDelete(ms, m)
+    remediationPostState(ms, deleting, hasKCPCleanupAnnotation, nrs, m).size()
+      >= remediationQuorumBar(ms, deleting, hasKCPCleanupAnnotation, nrs, m)
       and matchableMachines(ms, nrs) == ms
 
-  pure def computeBlockReason(
+  def computeBlockReason(
       ms: Set[MachineId], nrs: MachineId -> bool, m: MachineId): BlockedReason =
-    if (not(quorumPreservedAfterDelete(ms, m))) QuorumWouldBeLost
+    if (not(remediationPostState(ms, deleting, hasKCPCleanupAnnotation, nrs, m).size()
+            >= remediationQuorumBar(ms, deleting, hasKCPCleanupAnnotation, nrs, m))) QuorumWouldBeLost
     else if (matchableMachines(ms, nrs) != ms) EtcdMemberSetDoesNotMatchMachineSet
     else OtherBlock
 
@@ -232,6 +264,8 @@ module KCPReconcile {
     machines'      = machines,
     nodeRefSet'    = nodeRefSet,
     machineHealth' = machineHealth,
+    deleting'      = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     hookFreshSafe' = hookFreshSafe,
   }
 
@@ -246,6 +280,8 @@ module KCPReconcile {
     machines'         = machines,
     nodeRefSet'       = nodeRefSet,
     machineHealth'    = machineHealth,
+    deleting'         = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     admissionSafe'    = admissionSafe,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
@@ -271,6 +307,8 @@ module KCPReconcile {
     machines'         = machines,
     nodeRefSet'       = nodeRefSet,
     machineHealth'    = machineHealth,
+    deleting'         = deleting,
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation,
     admissionSafe'    = admissionSafe,
   }
 
@@ -285,8 +323,57 @@ module KCPReconcile {
     decision'         = decision,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    deleting'         = deleting.put(m, false),
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation.put(m, false),
     admissionSafe'    = admissionSafe,
     hookFreshSafe'    = hookFreshSafe,
+  }
+
+  // Mark a peer as already committed to removal by KCP. This is the
+  // model-level counterpart to the production condemned-peer helper.
+  action MarkCondemnedPeer(m: MachineId): bool = all {
+    machines.contains(m),
+    not(deleting.get(m)),
+    deleting'         = deleting.put(m, true),
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation.put(m, true),
+    machines'         = machines,
+    nodeRefSet'       = nodeRefSet,
+    machineHealth'    = machineHealth,
+    decision'         = decision,
+    blockReason'      = blockReason,
+    preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
+  }
+
+  // Wind-down carve-out: a peer may already be deleting without the
+  // KCP cleanup annotation while the whole cluster is being torn down.
+  action MarkDeletingWithoutCleanup(m: MachineId): bool = all {
+    machines.contains(m),
+    not(deleting.get(m)),
+    deleting'         = deleting.put(m, true),
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation.put(m, false),
+    machines'         = machines,
+    nodeRefSet'       = nodeRefSet,
+    machineHealth'    = machineHealth,
+    decision'         = decision,
+    blockReason'      = blockReason,
+    preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
+  }
+
+  action InitFiveNode: bool = all {
+    machines'         = Set(1, 2, 3, 4, 5),
+    nodeRefSet'       = Set(1, 2, 3, 4, 5).mapBy(_ => true),
+    machineHealth'    = Set(1, 2, 3, 4, 5).mapBy(_ => HealthyMachine),
+    decision'         = Set(1, 2, 3, 4, 5).mapBy(_ => NoRemediationNeeded),
+    blockReason'      = Map(),
+    preflightBlocked' = false,
+    deleting'         = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    hasKCPCleanupAnnotation' = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    admissionSafe'    = Set(1, 2, 3, 4, 5).mapBy(_ => false),
+    hookFreshSafe'    = Set(1, 2, 3, 4, 5).mapBy(_ => false),
   }
 
   // ── CompleteRemediation ───────────────────────────────────────
@@ -307,6 +394,8 @@ module KCPReconcile {
     machineHealth'  = machineHealth,
     blockReason'    = blockReason,
     preflightBlocked' = false,
+    deleting'         = deleting.put(m, false),
+    hasKCPCleanupAnnotation' = hasKCPCleanupAnnotation.put(m, false),
     admissionSafe'    = admissionSafe.put(m, false),
     hookFreshSafe'    = hookFreshSafe.put(m, false),
   }
@@ -325,6 +414,8 @@ module KCPReconcile {
     nondet m = MACHINES.oneOf(); EvaluateRemediationAdmission(m),
     nondet m = MACHINES.oneOf(); PreTerminateHookGateRecheck(m),
     nondet m = MACHINES.oneOf(); ExternalMembershipChangeDrop(m),
+    nondet m = MACHINES.oneOf(); MarkCondemnedPeer(m),
+    nondet m = MACHINES.oneOf(); MarkDeletingWithoutCleanup(m),
     nondet m = MACHINES.oneOf(); CompleteRemediation(m),
   }
 
@@ -338,7 +429,19 @@ module KCPReconcile {
     nondet m = MACHINES.oneOf(); EvaluateRemediationAdmission(m),
     nondet m = MACHINES.oneOf(); PreTerminateHookGateRecheckStrict(m),
     nondet m = MACHINES.oneOf(); ExternalMembershipChangeDrop(m),
+    nondet m = MACHINES.oneOf(); MarkCondemnedPeer(m),
+    nondet m = MACHINES.oneOf(); MarkDeletingWithoutCleanup(m),
     nondet m = MACHINES.oneOf(); CompleteRemediation(m),
+  }
+
+  action stepCondemnedPeersApalache = any {
+    nondet m = MACHINES.oneOf();
+      nondet h = Set(HealthyMachine, UnhealthyMachine).oneOf();
+      HealthChange(m, h),
+    nondet m = MACHINES.oneOf(); RequestRemediation(m),
+    nondet m = MACHINES.oneOf(); EvaluateRemediationAdmission(m),
+    nondet m = MACHINES.oneOf(); MarkCondemnedPeer(m),
+    nondet m = MACHINES.oneOf(); MarkDeletingWithoutCleanup(m),
   }
 
   // -------------------------------------------------------------
@@ -379,6 +482,13 @@ module KCPReconcile {
     machines.forall(m =>
       (decision.keys().contains(m) and decision.get(m) == RemediationInFlight)
         implies hookFreshSafe.get(m))
+
+  val NoJointQuorumLossAcrossConcurrentRemediation =
+    MACHINES.forall(m =>
+      (decision.keys().contains(m)
+        and (decision.get(m) == RemediationAdmitted or decision.get(m) == RemediationInFlight))
+          implies remediationPostState(machines, deleting, hasKCPCleanupAnnotation, nodeRefSet, m).size()
+            >= remediationQuorumBar(machines, deleting, hasKCPCleanupAnnotation, nodeRefSet, m))
 
   val AllInvariants = all {
     RemediationOnlyWhenSafe,
@@ -426,5 +536,35 @@ module KCPReconcile {
     .then(EvaluateRemediationAdmission(1))
     .then(ExternalMembershipChangeDrop(3))
     .then(PreTerminateHookGateRecheckStrict(1))
+
+  // Issue #109: 3-node cluster, once one peer is condemned the next
+  // remediation must be blocked by the pre-state quorum bar.
+  run threeNodeCondemnedPeerBlockedRun = init
+    .then(HealthChange(1, UnhealthyMachine))
+    .then(RequestRemediation(1))
+    .then(EvaluateRemediationAdmission(1))
+    .then(MarkCondemnedPeer(1))
+    .then(HealthChange(2, UnhealthyMachine))
+    .then(RequestRemediation(2))
+    .then(EvaluateRemediationAdmission(2))
+
+  // 5-node cluster, one condemned peer still allows a second admission
+  // because the pre-state quorum of 3 is preserved by three survivors.
+  run fiveNodeCondemnedPeerAllowedRun = InitFiveNode
+    .then(HealthChange(1, UnhealthyMachine))
+    .then(RequestRemediation(1))
+    .then(EvaluateRemediationAdmission(1))
+    .then(MarkCondemnedPeer(1))
+    .then(HealthChange(2, UnhealthyMachine))
+    .then(RequestRemediation(2))
+    .then(EvaluateRemediationAdmission(2))
+
+  // Wind-down carve-out: all peers are deleting, so the stricter
+  // pre-state quorum bar is not applied.
+  run allDeletingWindDownRun = init
+    .then(MarkDeletingWithoutCleanup(3))
+    .then(HealthChange(1, UnhealthyMachine))
+    .then(RequestRemediation(1))
+    .then(EvaluateRemediationAdmission(1))
 
 }
