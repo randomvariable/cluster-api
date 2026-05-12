@@ -1266,6 +1266,41 @@ Apalache reaches the same `NoSilentRevertAfterConflict` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-122 — Third-party ClusterRole drift leaves CAPI controllers failing 403
+
+**Provenance.** **Modelling** — issue #74 standalone ClusterRole drift
+slice (`ClusterRoleDrift.qnt`). The model is grounded in the generated
+manager ClusterRole manifests and the same SSA/managed-fields ownership
+helpers already used for the spec-field conflict models.
+
+**Trigger.** A foreign chart applies a ClusterRole with the same name as
+one of CAPI’s manager roles and overwrites its rule set. Before CAPI
+reasserts ownership, controller operations that previously had
+permission begin failing with 403.
+
+**Init / scenarios.** `reassertAfterDriftRun` shows the intended regime:
+the foreign drift is observed, `capi` re-applies the correct role rules,
+and `CapiRoleStableUnderForeignApplier` holds. `drifted403Run` keeps the
+role drifted and executes a controller operation, violating
+`NoSilentPermissionLossAfterDrift`.
+
+**LSP grounding.**
+
+| Go / artifact entry point | File | Line |
+|---|---|---|
+| Generated manager ClusterRole | `bootstrap/kubeadm/config/rbac/role.yaml` | 1-70 |
+| Kubebuilder RBAC marker surface | `bootstrap/kubeadm/main.go` | 176-182 |
+| Structured-merge / SSA ownership helper | `internal/controllers/topology/cluster/structuredmerge/dryrun.go` | 220-281 |
+| Managed-fields ownership helpers | `internal/util/ssa/managedfields.go` | 49-197 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the foreign-overwrite permission-loss path via
+`drifted403Run`, and Apalache reaches the same
+`NoSilentPermissionLossAfterDrift` violation from `drifted403Init`
+within depth 4 (`make verify-clusterrole-drift-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-111 — Backup/apply partial rollback silently drops fields and controllers re-default them
 
 **Provenance.** **Modelling** — issue #67 standalone backup/apply
@@ -4234,6 +4269,7 @@ reason that the operator can read.
 | FM-110 | Cluster delete during an in-flight edit allows a stale write to land | MODELLING | Delete wins cleanly and later writes observe not-found in the safe regime | Logged as deliberate counterexample candidate on `NoWriteAfterDeleteObserved` in `specs/ClusterEditDeleteRace.qnt`; Apalache reaches the stale-write state within depth 4 |
 | FM-111 | Backup/apply partial rollback silently drops fields and controllers re-default them | MODELLING | A single re-default restores the intended stable default in the safe regime | Logged as deliberate counterexample candidate on `RedefaultConverges` in `specs/PartialRollbackDrop.qnt`; Apalache reaches the redefine-loop state within depth 4 |
 | FM-114 | SSA field-manager ownership transfer is silently reverted by a stale manager | MODELLING | Conflict is surfaced and force cleanly transfers ownership in the safe regime | Logged as deliberate counterexample candidate on `NoSilentRevertAfterConflict` in `specs/SsaFieldManagerConflict.qnt`; Apalache reaches the stale-revert state within depth 4 |
+| FM-122 | Third-party ClusterRole drift leaves CAPI controllers failing 403 | MODELLING | CAPI reasserts or force-takes ownership of the role in the safe regime | Logged as deliberate counterexample candidate on `NoSilentPermissionLossAfterDrift` in `specs/ClusterRoleDrift.qnt`; Apalache reaches the 403-after-drift state within depth 4 |
 | FM-100 | Autoscaler scale-up and KCP rollout surge overproduce replicas | MODELLING | Autoscaler intent is incorporated before rollout surge in the safe regime | Logged as deliberate counterexample candidate on `SurgeBoundUnderConcurrentScale` in `specs/AutoscalerKcpSurgeRace.qnt`; Apalache reaches the over-replica state within depth 4 |
 | FM-105 | Mid-rollout etcd tag bump traps the control-plane upgrade | MODELLING | etcd upgrade waits until the control-plane rollout gate has cleared in the safe regime | Logged as deliberate counterexample candidate on `NoMidRolloutDependencyTrap` in `specs/EtcdKubernetesVersionSkew.qnt`; Apalache reaches the dependency-trap state within depth 4 |
 | FM-104 | Rollback during partial cycling temporarily exceeds surge bound | MODELLING | Rollback waits for the drain point in the safe regime | Logged as deliberate counterexample candidate on `NoTransientSurgeBeyondBound` in `specs/RollbackSurgeRace.qnt`; Apalache reaches the mid-cycle rollback surge state within depth 4 |

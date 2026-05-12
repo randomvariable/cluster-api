@@ -96,6 +96,7 @@ PVCBOOT       := $(SPECS_DIR)/PvcBootstrapPending.qnt
 CRDSCHEMA     := $(SPECS_DIR)/CrdSchemaBump.qnt
 ADVERSARY     := $(SPECS_DIR)/AdversaryHarness.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
+RBACDRIFT     := $(SPECS_DIR)/ClusterRoleDrift.qnt
 SSAFMCONFLICT := $(SPECS_DIR)/SsaFieldManagerConflict.qnt
 PARTIALREVERT := $(SPECS_DIR)/PartialRollbackDrop.qnt
 ASKCPSURGE    := $(SPECS_DIR)/AutoscalerKcpSurgeRace.qnt
@@ -2016,6 +2017,43 @@ verify-concurrent-spec-edits-apalache:  ## Apalache concurrent-edit counterexamp
 
 .PHONY: verify-concurrent-spec-edits
 verify-concurrent-spec-edits: verify-concurrent-spec-edits-happy verify-concurrent-spec-edits-counterexample verify-concurrent-spec-edits-random verify-concurrent-spec-edits-apalache  ## Full concurrent Cluster.spec edit suite
+
+.PHONY: verify-clusterrole-drift-happy
+verify-clusterrole-drift-happy:  ## Drive foreign overwrite followed by CAPI reassertion
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterRoleDrift --init=reassertAfterDriftRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(RBACDRIFT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=ClusterRoleDrift --init=reassertAfterDriftRun --step=step \
+	             --invariant=CapiRoleStableUnderForeignApplier --max-steps=0 \
+	             $(RBACDRIFT)
+
+.PHONY: verify-clusterrole-drift-counterexample
+verify-clusterrole-drift-counterexample:  ## Drive foreign overwrite without reassertion
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=ClusterRoleDrift --init=drifted403Run --step=step \
+	              --invariant=NoSilentPermissionLossAfterDrift --max-steps=0 \
+	              $(RBACDRIFT)
+
+.PHONY: verify-clusterrole-drift-random
+verify-clusterrole-drift-random:  ## Random-walk stable ClusterRole drift invariants (300x40)
+	@for inv in StableSafetyInvariants LastApplierKnown RulesStateKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=ClusterRoleDrift \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(RBACDRIFT) || exit 1; \
+	done
+
+.PHONY: verify-clusterrole-drift-apalache
+verify-clusterrole-drift-apalache:  ## Apalache foreign-overwrite permission-loss counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=ClusterRoleDrift --init=drifted403Init \
+	                  --step=stepApalache --invariant=NoSilentPermissionLossAfterDrift \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(RBACDRIFT)
+
+.PHONY: verify-clusterrole-drift
+verify-clusterrole-drift: verify-clusterrole-drift-happy verify-clusterrole-drift-counterexample verify-clusterrole-drift-random verify-clusterrole-drift-apalache  ## Full ClusterRole drift / foreign applier suite
 
 .PHONY: verify-ssa-conflict-happy
 verify-ssa-conflict-happy:  ## Drive explicit conflict then forced handoff path

@@ -1267,6 +1267,39 @@ echo y | quint verify --main=ConcurrentClusterSpecEdits --init=lostEditInit --st
 
 Or, from `formal/`: `make verify-concurrent-spec-edits`.
 
+### ClusterRole drift — third-party chart mutates a CAPI role (issue #74)
+
+```sh
+# Foreign drift is detected and CAPI reasserts the correct role.
+quint run --main=ClusterRoleDrift --init=reassertAfterDriftRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/ClusterRoleDrift.qnt
+
+quint run --main=ClusterRoleDrift --init=reassertAfterDriftRun --step=step \
+          --invariant=CapiRoleStableUnderForeignApplier --max-steps=0 \
+          formal/specs/ClusterRoleDrift.qnt
+
+# Explicit foreign-overwrite permission-loss counterexample.
+quint run --main=ClusterRoleDrift --init=drifted403Run --step=step \
+          --invariant=NoSilentPermissionLossAfterDrift --max-steps=0 \
+          formal/specs/ClusterRoleDrift.qnt
+
+# Random-walk stable RBAC/ownership bookkeeping.
+for inv in StableSafetyInvariants LastApplierKnown RulesStateKnown; do
+  quint run --main=ClusterRoleDrift --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/ClusterRoleDrift.qnt
+done
+
+# Backend verdict: foreign overwrite permission loss reachable within depth 4.
+echo y | quint verify --main=ClusterRoleDrift --init=drifted403Init --step=stepApalache \
+                      --invariant=NoSilentPermissionLossAfterDrift \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/ClusterRoleDrift.qnt
+```
+
+Or, from `formal/`: `make verify-clusterrole-drift`.
+
 ### SSA field-manager conflict — two managers claim the same field (issue #66)
 
 ```sh

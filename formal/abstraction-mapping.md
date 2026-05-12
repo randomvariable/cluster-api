@@ -926,6 +926,18 @@ last believed value, and whether a forced apply occurred.
 | SsaFieldManagerConflict | `CapiApply5Force` | same | Ground the safe handoff path where a forced apply intentionally transfers ownership of the field. |
 | SsaFieldManagerConflict | `NoSilentRevertAfterConflict` / `staleManagerRevertRun` | same plus `internal/util/ssa/managedfields.go:49-197` | Express the issue's counterexample target: after a forced ownership transfer, a stale manager re-applies its old value and silently reverts the field. |
 
+### ClusterRoleDrift.qnt
+
+Standalone ClusterRole drift model for issue #74. This spec keeps a
+single role ruleset state, its last applier, and whether controller
+operations are currently returning 403.
+
+| Spec | Action / invariant | Go / artifact reference | Purpose |
+| ---- | ------------------ | ----------------------- | ------- |
+| ClusterRoleDrift | `ChartApplyRoleDrift` | `bootstrap/kubeadm/config/rbac/role.yaml`; `bootstrap/kubeadm/main.go:176-182` | Ground the existence of generated CAPI ClusterRole manifests and the risk that a foreign chart mutates a same-named role with incompatible rules. |
+| ClusterRoleDrift | `CapiApply5NoForceConflict` / `CapiApply5Force` | `internal/controllers/topology/cluster/structuredmerge/dryrun.go:220-281`; `internal/util/ssa/managedfields.go:49-197` | Reuse the SSA/managed-fields ownership surface to model explicit conflict surfacing vs forced ownership transfer back to CAPI. |
+| ClusterRoleDrift | `NoSilentPermissionLossAfterDrift` / `drifted403Run` | same RBAC + SSA surfaces | Express the issue's counterexample target: foreign drift lands and CAPI controller requests begin failing 403 before any reassertion happens. |
+
 ### PartialRollbackDrop.qnt
 
 Standalone backup/apply rollback-default loop model for issue #67. This

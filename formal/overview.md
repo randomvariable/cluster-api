@@ -149,6 +149,7 @@ For a contributor adding a new failure mode:
 | ClusterResourceSetTiming.qnt | 2 | 300×40 | **2/2 stable CRS timing invariants** under random walk; explicit ApplyOnce timing counterexample `ApplyOnceEventuallyTakesEffect` reachable at Apalache depth 4 | — |
 | PvcBootstrapPending.qnt | 2 | 300×40 | **2/2 stable PVC/bootstrap bookkeeping invariants** under random walk; explicit pending-bootstrap counterexample `BootstrapDependencyOrdering` reachable at Apalache depth 4 | — |
 | ConcurrentClusterSpecEdits.qnt | 2 | 300×40 | **3/3 stable concurrent-edit invariants** under random walk; explicit lost-edit counterexample `NoLostEdit` reachable at Apalache depth 4 | — |
+| ClusterRoleDrift.qnt | 2 | 300×40 | **2/2 stable RBAC drift bookkeeping invariants** under random walk; explicit foreign-overwrite counterexample `NoSilentPermissionLossAfterDrift` reachable at Apalache depth 4 | — |
 | SsaFieldManagerConflict.qnt | 2 | 300×40 | **2/2 stable SSA ownership invariants** under random walk; explicit stale-manager revert counterexample `NoSilentRevertAfterConflict` reachable at Apalache depth 4 | — |
 | PartialRollbackDrop.qnt | 2 | 300×40 | **2/2 stable rollback/default bookkeeping invariants** under random walk; explicit redefine-loop counterexample `RedefaultConverges` reachable at Apalache depth 4 | — |
 | ClusterEditDeleteRace.qnt | 2 | 300×40 | **2/2 stable edit/delete bookkeeping invariants** under random walk; explicit stale-write-after-delete counterexample `NoWriteAfterDeleteObserved` reachable at Apalache depth 4 | — |
