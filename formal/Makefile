@@ -121,6 +121,7 @@ MD_ROLLOUT    := $(SPECS_DIR)/MachineDeploymentRollout.qnt
 MD_ROLLOUT_REFINED := $(SPECS_DIR)/MachineDeploymentRolloutRefined.qnt
 CC_PATCHES    := $(SPECS_DIR)/ClusterClassPatches.qnt
 JOINNAME      := $(SPECS_DIR)/EtcdJoiningNameDelay.qnt
+ORPHANCORR    := $(SPECS_DIR)/OrphanLearnerCorrelation.qnt
 FINALIZERS    := $(SPECS_DIR)/Finalizers.qnt
 RUNTIMESDK    := $(SPECS_DIR)/RuntimeSDK.qnt
 PIVOT         := $(SPECS_DIR)/Pivot.qnt
@@ -3000,6 +3001,42 @@ verify-joining-name-apalache:  ## Apalache orphan joining-member counterexample 
 
 .PHONY: verify-joining-name-delay
 verify-joining-name-delay: verify-joining-name-happy verify-joining-name-counterexample verify-joining-name-random verify-joining-name-apalache  ## Full etcd empty-name joining-member suite
+
+.PHONY: verify-orphan-correlation-happy
+verify-orphan-correlation-happy:  ## Drive joined-name publication and annotation unblock paths
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=OrphanLearnerCorrelation --init=joinedBeforeDeleteRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ORPHANCORR)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=OrphanLearnerCorrelation --init=annotationUnblockRun --step=step \
+	             --invariant=AnnotationUnblockClearsOrphanCondition --max-steps=0 \
+	             $(ORPHANCORR)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=OrphanLearnerCorrelation --init=externalRemovalRun --step=step \
+	             --invariant=ExternalRemovalClearsOrphanCondition --max-steps=0 \
+	             $(ORPHANCORR)
+
+.PHONY: verify-orphan-correlation-random
+verify-orphan-correlation-random:  ## Random-walk post-fix orphan-correlation invariants (300x40)
+	@for inv in StableSafetyInvariants NoOrphanMemberAfterDelete Step5RequiresStartupTimeout AddressCollisionBlocksStep4; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=OrphanLearnerCorrelation \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ORPHANCORR) || exit 1; \
+	done
+
+.PHONY: verify-orphan-correlation-apalache
+verify-orphan-correlation-apalache:  ## Apalache battery across post-fix orphan-correlation invariants at depth 8
+	@for inv in NoOrphanMemberAfterDelete Step5RequiresStartupTimeout AddressCollisionBlocksStep4 CorrelationFailureHasExitPath; do \
+	  echo "==> $$inv"; \
+	  echo y | $(QUINT) verify --main=OrphanLearnerCorrelation \
+	                         --invariant=$$inv --max-steps=8 \
+	                         --backend=apalache $(ORPHANCORR) || exit 1; \
+	done
+
+.PHONY: verify-orphan-correlation
+verify-orphan-correlation: verify-orphan-correlation-happy verify-orphan-correlation-random verify-orphan-correlation-apalache  ## Full post-fix orphan-learner correlation suite
 
 .PHONY: verify-volume-detach-finalizer-happy
 verify-volume-detach-finalizer-happy:  ## Drive successful detach and finalizer clearance

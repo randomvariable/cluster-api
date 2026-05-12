@@ -540,6 +540,44 @@ Interpretation note:
 
 Or, from `formal/`: `make verify-joining-name-delay`.
 
+### Post-#13680 orphan-learner correlation chain (issue #105)
+
+```sh
+# Safe paths: name appears in time, annotation unblocks, or external removal clears the orphan.
+quint run --main=OrphanLearnerCorrelation --init=joinedBeforeDeleteRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/OrphanLearnerCorrelation.qnt
+
+quint run --main=OrphanLearnerCorrelation --init=annotationUnblockRun --step=step \
+          --invariant=AnnotationUnblockClearsOrphanCondition --max-steps=0 \
+          formal/specs/OrphanLearnerCorrelation.qnt
+
+quint run --main=OrphanLearnerCorrelation --init=externalRemovalRun --step=step \
+          --invariant=ExternalRemovalClearsOrphanCondition --max-steps=0 \
+          formal/specs/OrphanLearnerCorrelation.qnt
+
+# Random-walk post-fix invariants.
+for inv in StableSafetyInvariants NoOrphanMemberAfterDelete Step5RequiresStartupTimeout AddressCollisionBlocksStep4; do
+  quint run --main=OrphanLearnerCorrelation --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/OrphanLearnerCorrelation.qnt
+done
+
+# Bounded Apalache battery (depth 8) across the post-fix invariants.
+for inv in NoOrphanMemberAfterDelete Step5RequiresStartupTimeout AddressCollisionBlocksStep4 CorrelationFailureHasExitPath; do
+  echo y | quint verify --main=OrphanLearnerCorrelation --invariant=$inv \
+                        --max-steps=8 --backend=apalache \
+                        formal/specs/OrphanLearnerCorrelation.qnt
+done
+```
+
+Interpretation note:
+- `EtcdJoiningNameDelay.qnt` is the pre-fix bug-exposure model (`#104`).
+- `OrphanLearnerCorrelation.qnt` is the post-fix model (`#105`).
+- The pair is meant to be read together: the first admits orphan unnamed members; the second blocks deletion until correlation or explicit operator action resolves them.
+
+Or, from `formal/`: `make verify-orphan-correlation`.
+
 ### CSI volume detach hang blocks the finalizer chain (issue #56)
 
 ```sh

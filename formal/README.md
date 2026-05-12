@@ -129,6 +129,17 @@ make -C formal verify-fm33          # MachineSet preflight (FM-33)
 make -C formal verify-e2e           # end-to-end cluster lifecycle
 ```
 
+## Before / after proof pairs
+
+Some issues are intentionally modelled as paired "bug before / fix after"
+specs so the corpus can show both sides of the argument:
+
+- `EtcdJoiningNameDelay.qnt` (`#104`) exposes the pre-#13680 orphan-learner bug surface where `MemberAdd` has returned but the member name is still empty, so deletion-by-name leaves an orphan.
+- `OrphanLearnerCorrelation.qnt` (`#105`) models the post-#13680 correlation chain with annotation overrides, ID-based removal, and blocking pre-terminate semantics.
+
+The expectation is that the first spec admits the orphan counterexample,
+while the second spec validates the fix logic on the same world.
+
 ## Conventions
 
 - Every spec module's first comment block names its purpose, the

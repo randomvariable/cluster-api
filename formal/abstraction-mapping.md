@@ -1097,6 +1097,20 @@ name-based correlation attempt.
 | EtcdJoiningNameDelay | `NoOrphanJoiningMemberAfterMachineGone` / `orphanJoiningRun` | same | Express the issue's core counterexample: the Machine and infra are gone, but the etcd cluster still retains a `Joining` member forever because correlation never found it. |
 | EtcdJoiningNameDelay | `JoiningEventuallyJoinedOrRemoved` / `joinedBeforeDeleteRun` | same | Show the symmetric safe regime where the peer reaches `Joined` before deletion, making the member visible and removable. |
 
+### OrphanLearnerCorrelation.qnt
+
+Post-#13680 correlation-chain model for issue #105. This is the
+"after-fix" sibling to `EtcdJoiningNameDelay.qnt`: same world, but with
+the full six-step monotonic correlation chain, ID-based removal, and a
+blocking pre-terminate hook.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| OrphanLearnerCorrelation | `RunCorrelationChain` | `controlplane/kubeadm/internal/controllers/remediation.go:638-671`; `controlplane/kubeadm/internal/controllers/controller.go:1433-1460` | Ground the post-#13680 monotonic lookup chain: ID annotation, name annotation, NodeRef, peer-URL/address match, strict 1↔1 timeout-gated pairing, and orphan-candidate surfacing. |
+| OrphanLearnerCorrelation | `RemoveEtcdMemberByID` / `RemoveEtcdMemberByName` | same plus `controlplane/kubeadm/internal/etcd/etcd.go` remove-by-id/remove-by-name paths | Model the post-fix ability to remove a member by `(uint64) ID` even while its visible name is still empty. |
+| OrphanLearnerCorrelation | `MachineFinalizeDelete` / `orphanCorrelationFailed` | same | Model the blocking semantics: when the chain surfaces orphan candidates and still cannot resolve them, final deletion is gated until the condition clears. |
+| OrphanLearnerCorrelation | `SetEtcdMemberIDAnnotation` / `ExternalRemoveOrphanMember` | same | Show the two explicit unblocks requested by the issue: operator annotation override and external orphan removal. |
+
 ### VolumeDetachFinalizer.qnt
 
 Standalone CSI detach / finalizer-chain stall model for issue #56. This
