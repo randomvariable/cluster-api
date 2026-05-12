@@ -498,6 +498,40 @@ Or, from `formal/`: `make verify-finalizers`,
 `make verify-finalizers-random`, `make verify-finalizers-apalache`,
 and `make verify-finalizers-proof`.
 
+### CSI volume detach hang blocks the finalizer chain (issue #56)
+
+```sh
+# Successful detach and finalizer clearance.
+quint run --main=VolumeDetachFinalizer --init=successfulDetachRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/VolumeDetachFinalizer.qnt
+
+quint run --main=VolumeDetachFinalizer --init=successfulDetachRun --step=step \
+          --invariant=OperatorEscapeHatch --max-steps=0 \
+          formal/specs/VolumeDetachFinalizer.qnt
+
+# Explicit stuck-detach counterexample.
+quint run --main=VolumeDetachFinalizer --init=stuckDetachRun --step=step \
+          --invariant=OperatorEscapeHatch --max-steps=0 \
+          formal/specs/VolumeDetachFinalizer.qnt
+
+# Random-walk stable detach bookkeeping.
+for inv in StableSafetyInvariants DetachRequiresInProgress; do
+  quint run --main=VolumeDetachFinalizer --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/VolumeDetachFinalizer.qnt
+done
+
+# Backend verdict: stuck detach reachable within depth 4.
+echo y | quint verify --main=VolumeDetachFinalizer \
+                      --init=stuckDetachInit --step=stepApalache \
+                      --invariant=OperatorEscapeHatch \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/VolumeDetachFinalizer.qnt
+```
+
+Or, from `formal/`: `make verify-volume-detach-finalizer`.
+
 ### clusterctl move / pivot safety (issue #17)
 
 ```sh

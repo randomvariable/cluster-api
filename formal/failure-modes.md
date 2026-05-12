@@ -3446,6 +3446,40 @@ within depth 4 (`make verify-cloud-iam-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-117 — CSI volume detach hang blocks the node/machine finalizer chain
+
+**Provenance.** **Modelling** — issue #56 standalone CSI detach /
+finalizer-chain slice (`VolumeDetachFinalizer.qnt`). The model is
+grounded in the real machine deletion path that waits for volume detach
+and the operator/test escape hatch used to unblock stalled detaches.
+
+**Trigger.** A Machine is deleting, node drain has already completed, but
+one or more `VolumeAttachment` objects remain attached. Detach begins and
+then becomes permanently stuck due to an external CSI/provider problem.
+Node finalizer removal is blocked, which in turn blocks Machine finalizer
+removal and the whole chain remains stuck.
+
+**Init / scenarios.** `successfulDetachRun` shows the intended regime:
+detach begins, both attachments complete, node finalizer clears, and then
+machine finalizer clears, satisfying `OperatorEscapeHatch`. `stuckDetachRun`
+drives the bad path: one detach enters the stuck set and no operator
+force-detach occurs, so `OperatorEscapeHatch` is violated.
+
+**LSP grounding.**
+
+| Go / test entry point | File | Line |
+|---|---|---|
+| Wait-for-volume-detach delete phase | `internal/controllers/machine/machine_controller.go` | 934-1009 |
+| Volume-detach status timestamps / timeouts | `api/core/v1beta2/machine_types.go` | 614, 735, 739 |
+| E2E unblock / force-detach flow | `test/e2e/node_drain.go` | 97-99, 549-593 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stuck-detach path via `stuckDetachRun`, and Apalache
+reaches the same `OperatorEscapeHatch` violation from `stuckDetachInit`
+within depth 4 (`make verify-volume-detach-finalizer-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-115 — Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause
 
 **Provenance.** **Modelling** — issue #58 standalone subnet/IPAM
@@ -4044,6 +4078,7 @@ reason that the operator can read.
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
+| FM-117 | CSI volume detach hang blocks the node/machine finalizer chain | MODELLING | Operator force-detach or detach completion clears the chain in the safe regime | Logged as deliberate counterexample candidate on `OperatorEscapeHatch` in `specs/VolumeDetachFinalizer.qnt`; Apalache reaches the stuck-detach state within depth 4 |
 | FM-116 | Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint | MODELLING | Kubeconfigs are regenerated and converge to the new endpoint in the safe regime | Logged as deliberate counterexample candidate on `AllKubeconfigsConvergeToCurrent` in `specs/EndpointSwapKubeconfig.qnt`; Apalache reaches the stale-endpoint state within depth 4 |
 | FM-115 | Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause | MODELLING | Exhaustion is surfaced as a higher-level condition in the safe regime | Logged as deliberate counterexample candidate on `NoSilentInfiniteRetry` in `specs/IpamExhaustion.qnt`; Apalache reaches the silent-retry state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |

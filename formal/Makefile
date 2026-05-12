@@ -83,6 +83,7 @@ NETPOLSTALL   := $(SPECS_DIR)/NetworkPolicyMidFlight.qnt
 WATCHCOALESCE := $(SPECS_DIR)/WatchEventCoalescing.qnt
 CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
 IPAMEXH       := $(SPECS_DIR)/IpamExhaustion.qnt
+VOLDETACH     := $(SPECS_DIR)/VolumeDetachFinalizer.qnt
 STACPODMEM    := $(SPECS_DIR)/StaticPodMemPressure.qnt
 HASHRELOAD    := $(SPECS_DIR)/StaticPodHashReloadRace.qnt
 BOOTCSR       := $(SPECS_DIR)/BootstrapCsrLag.qnt
@@ -2761,6 +2762,39 @@ verify-finalizers-proof:  ## Build Lean theorem for finalizer progress measure
 
 .PHONY: verify-finalizers
 verify-finalizers: verify-finalizers-happy verify-finalizers-random verify-finalizers-apalache verify-finalizers-proof  ## Full finalizer suite
+
+.PHONY: verify-volume-detach-finalizer-happy
+verify-volume-detach-finalizer-happy:  ## Drive successful detach and finalizer clearance
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=VolumeDetachFinalizer \
+	             --init=successfulDetachRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 $(VOLDETACH)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=VolumeDetachFinalizer \
+	             --init=successfulDetachRun --step=step \
+	             --invariant=OperatorEscapeHatch --max-steps=0 $(VOLDETACH)
+
+.PHONY: verify-volume-detach-finalizer-counterexample
+verify-volume-detach-finalizer-counterexample:  ## Drive stuck detach / finalizer-chain stall counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=VolumeDetachFinalizer \
+	              --init=stuckDetachRun --step=step \
+	              --invariant=OperatorEscapeHatch --max-steps=0 $(VOLDETACH)
+
+.PHONY: verify-volume-detach-finalizer-random
+verify-volume-detach-finalizer-random:  ## Random-walk stable detach/finalizer invariants (300x40)
+	@for inv in StableSafetyInvariants DetachRequiresInProgress; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=VolumeDetachFinalizer \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 $(VOLDETACH) || exit 1; \
+	done
+
+.PHONY: verify-volume-detach-finalizer-apalache
+verify-volume-detach-finalizer-apalache:  ## Apalache stuck-detach counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=VolumeDetachFinalizer \
+	                  --init=stuckDetachInit --step=stepApalache \
+	                  --invariant=OperatorEscapeHatch \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache $(VOLDETACH)
+
+.PHONY: verify-volume-detach-finalizer
+verify-volume-detach-finalizer: verify-volume-detach-finalizer-happy verify-volume-detach-finalizer-counterexample verify-volume-detach-finalizer-random verify-volume-detach-finalizer-apalache  ## Full CSI detach hang / finalizer-chain stall suite
 
 .PHONY: verify-runtimesdk-happy
 verify-runtimesdk-happy:  ## Drive happy Runtime SDK lifecycle run

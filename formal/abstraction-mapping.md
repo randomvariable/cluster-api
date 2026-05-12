@@ -1045,6 +1045,19 @@ counterexample candidates.
 | Finalizers | `RemoveFinalizer(ClusterResourceSet)` | `internal/controllers/clusterresourceset/clusterresourceset_controller.go:220-256` | ClusterResourceSet delete path demonstrates an additional finalizer-bearing controller outside the core Cluster→Machine chain. |
 | Finalizers | `RemoveFinalizer(ExtensionConfig)` | `internal/controllers/extensionconfig/extensionconfig_controller.go:215-217` | ExtensionConfig delete path is another leaf-style controller finalizer used to ground idempotent removal semantics. |
 
+### VolumeDetachFinalizer.qnt
+
+Standalone CSI detach / finalizer-chain stall model for issue #56. This
+spec keeps a small set of `VolumeAttachment` objects, per-attachment
+detach progress/stuck bits, and the node/machine finalizers that gate
+deletion.
+
+| Spec | Action / invariant surface | Go reference | Purpose |
+| ---- | -------------------------- | ------------ | ------- |
+| VolumeDetachFinalizer | `BeginDetach` / `DetachCompletes` | `internal/controllers/machine/machine_controller.go:934-1009`; `api/core/v1beta2/machine_types.go:614,735,739` | Ground the real machine deletion phase that waits for volume detachment, including the long-running detach timeout/status surface. |
+| VolumeDetachFinalizer | `DetachBecomesStuck` | same plus `test/e2e/node_drain.go:97-99,549-593` | Ground the concrete scenario where detach stalls and deletion remains blocked until an operator intervention unblocks it. |
+| VolumeDetachFinalizer | `OperatorForceDetach` / `OperatorEscapeHatch` | `test/e2e/node_drain.go:97-99,574-593` | Capture the operational escape hatch: an operator forces or unblocks detachment so the finalizer chain can complete. |
+
 ### Pivot.qnt
 
 Clusterctl move / pivot abstraction for issue #17. Focuses on the
