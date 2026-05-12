@@ -121,6 +121,7 @@ For a contributor adding a new failure mode:
 | EtcdWalFaults.qnt | 2 | 300×40 | **2/2 stable remediation bookkeeping invariants** under random walk; explicit silent-member-loss counterexample `NoSilentMemberLoss` reachable at Apalache depth 4 | — |
 | EtcdMembershipBatch.qnt | 2 | 300×40 | **3/3 stable batch-membership invariants** under random walk; explicit same-batch churn counterexample `NoSameBatchAddRemove` reachable at Apalache depth 4 | — |
 | EtcdFiveNodeFailure.qnt | 2 | 300×40 | **3/3 stable 5-node recovery invariants** under random walk; explicit triple-failure remediation-ordering counterexample `NoDoublePromotionDuringRecovery` reachable at Apalache depth 4 | — |
+| AzFailoverCapacity.qnt | 2 | 300×40 | **2/2 stable AZ/capacity bookkeeping invariants** under random walk; explicit failover-stall counterexample `NoIndefiniteScaleAttempt` reachable at Apalache depth 4 | — |
 | KubeletPlegHang.qnt | 2 | 300×40 | **2/2 stable CRI/PLEG bookkeeping invariants** under random walk; explicit over-eager-remediation counterexample `RemediationAfterStableNotReady` reachable at Apalache depth 4 | — |
 | RegistryPullBackoff.qnt | 2 | 300×40 | **1/1 stable pull/backoff invariants** under random walk; explicit bootstrap-timeout counterexample `NoFalseBootstrapFailure` reachable at Apalache depth 4 | — |
 | StaticPodMemPressure.qnt | 2 | 300×40 | **1/1 stable mem-pressure bookkeeping invariant** under random walk; explicit mis-priority static-pod eviction counterexample `CriticalStaticPodsImmuneFromEviction` reachable at Apalache depth 4 | — |

@@ -691,6 +691,19 @@ voters plus two learners and focuses on concrete three-failure shapes.
 | EtcdFiveNodeFailure | `RemediationBoundedPerScenario` / `symmetricTripleLossRun` | same | Bound the amount of remediation churn per 3-failure scenario and surface any “keep requesting forever” pattern as a counterexample. |
 | EtcdFiveNodeFailure | `sequentialRecoveryRun` | same | Show the intended safe regime: one promotion, one recovery, then end the recovery window. |
 
+### AzFailoverCapacity.qnt
+
+Standalone AZ-wide failure / no-capacity failover model for issue #59.
+This spec keeps one failed AZ, per-AZ remaining capacity, the current
+target AZ for replacement, and whether KCP has attempted a surviving AZ.
+
+| Spec | Action / invariant | Go / spec reference | Purpose |
+| ---- | ------------------ | ------------------- | ------- |
+| AzFailoverCapacity | `AzAFails` / `KcpTargetsFailedAz` | `controlplane/kubeadm/internal/control_plane.go:238-247`; `controlplane/kubeadm/internal/controllers/scale.go:46,85`; `controlplane/kubeadm/internal/controllers/helpers.go:160-163` | Ground KCP scale-up targeting through `NextFailureDomainForScaleUp` and desired-machine creation in a specific failure domain. |
+| AzFailoverCapacity | `KcpTargetsAlternativeAz` / `CreateReplacement` | same | Model the intended regime where KCP abandons the failed/exhausted AZ and successfully retargets to a surviving AZ with capacity. |
+| AzFailoverCapacity | `NoIndefiniteScaleAttempt` / `stuckOnFailedAzRun` | same | Express the issue's likely counterexample: KCP keeps attempting replacement against a failed or exhausted AZ instead of progressing to an alternative surviving AZ. |
+| AzFailoverCapacity | `KcpAttemptsAlternativeAzs` / `alternativeAzSuccessRun` | same | Show the intended safe regime where KCP eventually tries the surviving AZ with spare capacity. |
+
 ### EtcdWalFaults.qnt
 
 Standalone WAL-corruption / disk-full member-state model for issue #42.

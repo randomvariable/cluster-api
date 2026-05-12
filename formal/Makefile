@@ -72,6 +72,7 @@ DEFRAGQUORUM  := $(SPECS_DIR)/DefragQuorumLoss.qnt
 ETCDBATCH     := $(SPECS_DIR)/EtcdMembershipBatch.qnt
 WALFAULTS     := $(SPECS_DIR)/EtcdWalFaults.qnt
 ETCD5FAIL     := $(SPECS_DIR)/EtcdFiveNodeFailure.qnt
+AZFAILCAP     := $(SPECS_DIR)/AzFailoverCapacity.qnt
 PLEGHANG      := $(SPECS_DIR)/KubeletPlegHang.qnt
 REGPULL       := $(SPECS_DIR)/RegistryPullBackoff.qnt
 KCPMHCDEL     := $(SPECS_DIR)/KcpMhcDeleteRace.qnt
@@ -1167,6 +1168,43 @@ verify-etcd-5node-apalache:  ## Apalache 5-node triple-failure counterexample at
 
 .PHONY: verify-etcd-5node
 verify-etcd-5node: verify-etcd-5node-happy verify-etcd-5node-counterexample verify-etcd-5node-random verify-etcd-5node-apalache  ## Full 5-node / 3-failure etcd recovery suite
+
+.PHONY: verify-az-failure-happy
+verify-az-failure-happy:  ## Drive failover into surviving AZ with remaining capacity
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AzFailoverCapacity --init=alternativeAzSuccessRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(AZFAILCAP)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AzFailoverCapacity --init=alternativeAzSuccessRun --step=step \
+	             --invariant=KcpAttemptsAlternativeAzs --max-steps=0 \
+	             $(AZFAILCAP)
+
+.PHONY: verify-az-failure-counterexample
+verify-az-failure-counterexample:  ## Drive failed-AZ/exhausted-AZ stuck replacement counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=AzFailoverCapacity --init=stuckOnFailedAzRun --step=step \
+	              --invariant=NoIndefiniteScaleAttempt --max-steps=0 \
+	              $(AZFAILCAP)
+
+.PHONY: verify-az-failure-random
+verify-az-failure-random:  ## Random-walk stable AZ/capacity invariants (300x40)
+	@for inv in StableSafetyInvariants CapacityNonNegative AlternativeAttemptNeedsTarget; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=AzFailoverCapacity \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(AZFAILCAP) || exit 1; \
+	done
+
+.PHONY: verify-az-failure-apalache
+verify-az-failure-apalache:  ## Apalache stuck failover counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=AzFailoverCapacity --init=stuckFailoverInit \
+	                  --step=stepApalache --invariant=NoIndefiniteScaleAttempt \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(AZFAILCAP)
+
+.PHONY: verify-az-failure
+verify-az-failure: verify-az-failure-happy verify-az-failure-counterexample verify-az-failure-random verify-az-failure-apalache  ## Full AZ-wide failure / no-capacity failover suite
 
 .PHONY: verify-pleg-hang-happy
 verify-pleg-hang-happy:  ## Drive transient PLEG hang that recovers before remediation

@@ -2037,6 +2037,41 @@ and Apalache reaches the same `NoMidRolloutDependencyTrap` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-113 — AZ-wide failure leaves KCP stuck targeting a failed or exhausted AZ
+
+**Provenance.** **Modelling** — issue #59 standalone AZ failover / capacity
+slice (`AzFailoverCapacity.qnt`). The model is grounded in the real
+failure-domain scale-up picker and desired-machine creation path used by
+KCP.
+
+**Trigger.** One AZ fails, KCP needs to relaunch the lost control-plane
+replica, but the first surviving AZ it targets is either still the failed
+AZ or an exhausted surviving AZ. If KCP never retargets to another
+surviving AZ that still has capacity, replacement remains pending
+indefinitely.
+
+**Init / scenarios.** `alternativeAzSuccessRun` shows the intended safe
+regime: AZ `a` fails, `b` is exhausted, KCP first hits the failed/exhausted
+path, then retargets to `c` and successfully creates the replacement,
+satisfying `KcpAttemptsAlternativeAzs`. `stuckOnFailedAzRun` keeps the
+replacement pending against the failed AZ, violating
+`NoIndefiniteScaleAttempt`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Scale-up failure-domain picker | `controlplane/kubeadm/internal/control_plane.go` | 238-247 |
+| KCP scale-up calls into picker | `controlplane/kubeadm/internal/controllers/scale.go` | 46, 85 |
+| Desired-machine creation in failure domain | `controlplane/kubeadm/internal/controllers/helpers.go` | 160-163 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the failover-stall path via `stuckOnFailedAzRun`, and
+Apalache reaches the same `NoIndefiniteScaleAttempt` violation from
+`stuckFailoverInit` within depth 4 (`make verify-az-failure-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-104 — Rollback during partial cycling temporarily exceeds surge bound
 
 **Provenance.** **Modelling** — issue #82 standalone rollback-during-
@@ -3925,6 +3960,7 @@ reason that the operator can read.
 | FM-98 | Machine readiness gets stuck because bootstrap and infra ready edges are observed separately | MODELLING | Reconcile observes both child-ready edges and eventually marks Machine ready in the safe regime | Logged as deliberate counterexample candidate on `NoStuckUnreadyDespiteBothChildrenReady` in `specs/BootstrapInfraReadyRace.qnt`; Apalache reaches the stuck-unready state within depth 4 |
 | FM-102 | MachinePool spec replicas and provider actual scale oscillate | MODELLING | Scale ownership is arbitrated and converges in the safe regime | Logged as deliberate counterexample candidate on `NoOscillation` in `specs/MachinePoolScaleConflict.qnt`; Apalache reaches the oscillation state within depth 4 |
 | FM-97 | KCP and MHC concurrently delete the same Machine | MODELLING | One controller owns old-machine deletion and replacements are not immediately reselected in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleDelete` / `NoReplacementCannibalisation` in `specs/KcpMhcDeleteRace.qnt`; Apalache reaches the double-delete state within depth 4 |
+| FM-113 | AZ-wide failure leaves KCP stuck targeting a failed or exhausted AZ | MODELLING | KCP retargets to a surviving AZ with capacity in the safe regime | Logged as deliberate counterexample candidate on `NoIndefiniteScaleAttempt` in `specs/AzFailoverCapacity.qnt`; Apalache reaches the failover-stall state within depth 4 |
 | FM-48 | KCP creates CP Machines before InfraCluster ready | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM48_NoCpBeforeInfraReady`) + Lean 4 deductive (`Ordering.lean::fm48_no_cp_before_infra_ready`) |
 | FM-49 | MD creates workers before ControlPlaneInitialized | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM49_NoWorkersBeforeCpInit`) + Lean 4 deductive (`Ordering.lean::fm49_no_workers_before_cp_init`) |
 | FM-50 | ControlPlaneEndpoint regresses mid-flight | MODELLING | n/a — invariant of upstream contract | Verified in `specs/ClusterE2E.qnt` and re-recorded in `specs/ClusterE2ERefined.qnt` (`FM50_EndpointMonotonic`) + Lean 4 deductive (`Ordering.lean::fm50_endpoint_monotonic`) |

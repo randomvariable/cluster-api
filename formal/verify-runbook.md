@@ -1631,6 +1631,39 @@ echo y | quint verify --main=EtcdFiveNodeFailure --init=leaderFollowersInit --st
 
 Or, from `formal/`: `make verify-etcd-5node`.
 
+### AZ-wide failure — replicas can't relaunch in surviving AZs (issue #59)
+
+```sh
+# Failed AZ is abandoned and KCP successfully targets a surviving AZ with capacity.
+quint run --main=AzFailoverCapacity --init=alternativeAzSuccessRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/AzFailoverCapacity.qnt
+
+quint run --main=AzFailoverCapacity --init=alternativeAzSuccessRun --step=step \
+          --invariant=KcpAttemptsAlternativeAzs --max-steps=0 \
+          formal/specs/AzFailoverCapacity.qnt
+
+# Explicit failover-stall counterexample.
+quint run --main=AzFailoverCapacity --init=stuckOnFailedAzRun --step=step \
+          --invariant=NoIndefiniteScaleAttempt --max-steps=0 \
+          formal/specs/AzFailoverCapacity.qnt
+
+# Random-walk stable AZ/capacity bookkeeping.
+for inv in StableSafetyInvariants CapacityNonNegative AlternativeAttemptNeedsTarget; do
+  quint run --main=AzFailoverCapacity --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/AzFailoverCapacity.qnt
+done
+
+# Backend verdict: failover-stall reachable within depth 4.
+echo y | quint verify --main=AzFailoverCapacity --init=stuckFailoverInit --step=stepApalache \
+                      --invariant=NoIndefiniteScaleAttempt \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/AzFailoverCapacity.qnt
+```
+
+Or, from `formal/`: `make verify-az-failure`.
+
 ### Kubelet PLEG hang under slow CRI (issue #45)
 
 ```sh
