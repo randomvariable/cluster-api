@@ -44,6 +44,7 @@ module KCPReconcile {
   type RemediationDecision =
     | NoRemediationNeeded
     | RemediationRequested
+    | RemediationAdmitted
     | RemediationBlocked
     | RemediationInFlight
 
@@ -54,6 +55,7 @@ module KCPReconcile {
     | QuorumWouldBeLost
     | EtcdMemberSetDoesNotMatchMachineSet
     | InsufficientReplicas
+    | PreTerminateHookGateFailed
     | OtherBlock
 
   // -------------------------------------------------------------
@@ -82,6 +84,11 @@ module KCPReconcile {
   // changes. The boolean is the projection of the union of
   // per-Machine block reasons that gate scale operations.
   var preflightBlocked: bool
+  // Admission-time verdict remembered between the remediation
+  // decision reconcile and the later pre-terminate hook.
+  var admissionSafe: MachineId -> bool
+  // Fresh safety predicate re-evaluated at pre-terminate-hook time.
+  var hookFreshSafe: MachineId -> bool
 
   // -------------------------------------------------------------
   // Initial state
@@ -94,6 +101,8 @@ module KCPReconcile {
     decision'         = Set(1, 2, 3).mapBy(_ => NoRemediationNeeded),
     blockReason'      = Map(),
     preflightBlocked' = false,
+    admissionSafe'    = Set(1, 2, 3).mapBy(_ => false),
+    hookFreshSafe'    = Set(1, 2, 3).mapBy(_ => false),
   }
 
   // -------------------------------------------------------------
@@ -130,6 +139,8 @@ module KCPReconcile {
     decision'      = decision.put(m, NoRemediationNeeded),
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe.put(m, false),
+    hookFreshSafe'    = hookFreshSafe.put(m, false),
   }
 
   // ── ResolveNodeRef ────────────────────────────────────────────
@@ -146,6 +157,8 @@ module KCPReconcile {
     decision'         = decision,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
   }
 
   // ── HealthChange ──────────────────────────────────────────────
@@ -159,6 +172,8 @@ module KCPReconcile {
     decision'         = decision,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
   }
 
   // ── RequestRemediation ────────────────────────────────────────
@@ -175,6 +190,8 @@ module KCPReconcile {
     machineHealth'    = machineHealth,
     blockReason'      = blockReason,
     preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
   }
 
   // ── helpers used by EvaluateCanSafelyRemediate ────────────────
@@ -192,20 +209,19 @@ module KCPReconcile {
     else if (matchableMachines(ms, nrs) != ms) EtcdMemberSetDoesNotMatchMachineSet
     else OtherBlock
 
-  // ── EvaluateCanSafelyRemediate ────────────────────────────────
-  // The reconcile loop computes whether remediation is safe and
-  // either advances the decision to RemediationInFlight or pins
-  // it at RemediationBlocked with a reason. The action's guard
-  // encodes the same predicate as KCP's `canSafelyRemediate` Go
-  // helper; the row in formal/abstraction-mapping.md fixes the
-  // refinement obligation.
-  action EvaluateCanSafelyRemediate(m: MachineId): bool = all {
+  // ── EvaluateRemediationAdmission ───────────────────────────────
+  // First call site: remediation reconcile snapshots the current
+  // state and decides whether the Machine may proceed toward the
+  // pre-terminate hook. This is intentionally separate from the
+  // later hook-time transition so other actions may interleave.
+  action EvaluateRemediationAdmission(m: MachineId): bool = all {
     machines.contains(m),
     decision.get(m) == RemediationRequested,
     decision' = decision.put(m,
       if (isSafeToRemediate(machines, nodeRefSet, m))
-        RemediationInFlight
+        RemediationAdmitted
       else RemediationBlocked),
+    admissionSafe' = admissionSafe.put(m, isSafeToRemediate(machines, nodeRefSet, m)),
     blockReason' = if (isSafeToRemediate(machines, nodeRefSet, m))
       blockReason
     else
@@ -216,6 +232,61 @@ module KCPReconcile {
     machines'      = machines,
     nodeRefSet'    = nodeRefSet,
     machineHealth' = machineHealth,
+    hookFreshSafe' = hookFreshSafe,
+  }
+
+  // Buggy variant: hook reconcile re-reads the fresh predicate but
+  // still proceeds on the earlier admission snapshot.
+  action PreTerminateHookGateRecheck(m: MachineId): bool = all {
+    machines.contains(m),
+    decision.get(m) == RemediationAdmitted,
+    admissionSafe.get(m),
+    decision' = decision.put(m, RemediationInFlight),
+    hookFreshSafe' = hookFreshSafe.put(m, isSafeToRemediate(machines, nodeRefSet, m)),
+    machines'         = machines,
+    nodeRefSet'       = nodeRefSet,
+    machineHealth'    = machineHealth,
+    admissionSafe'    = admissionSafe,
+    blockReason'      = blockReason,
+    preflightBlocked' = preflightBlocked,
+  }
+
+  // Fixed variant: hook reconcile must use the fresh state and
+  // revert/block if the predicate no longer holds.
+  action PreTerminateHookGateRecheckStrict(m: MachineId): bool = all {
+    machines.contains(m),
+    decision.get(m) == RemediationAdmitted,
+    decision' = decision.put(m,
+      if (isSafeToRemediate(machines, nodeRefSet, m))
+        RemediationInFlight
+      else RemediationBlocked),
+    hookFreshSafe' = hookFreshSafe.put(m, isSafeToRemediate(machines, nodeRefSet, m)),
+    blockReason' = if (isSafeToRemediate(machines, nodeRefSet, m))
+      blockReason
+    else
+      blockReason.put(m, PreTerminateHookGateFailed),
+    preflightBlocked' = if (isSafeToRemediate(machines, nodeRefSet, m))
+      preflightBlocked
+    else true,
+    machines'         = machines,
+    nodeRefSet'       = nodeRefSet,
+    machineHealth'    = machineHealth,
+    admissionSafe'    = admissionSafe,
+  }
+
+  // External etcd-membership churn or a sibling remediation can
+  // invalidate the earlier admission snapshot before the hook runs.
+  action ExternalMembershipChangeDrop(m: MachineId): bool = all {
+    machines.contains(m),
+    decision.get(m) == NoRemediationNeeded,
+    machines'         = machines.exclude(Set(m)),
+    nodeRefSet'       = nodeRefSet,
+    machineHealth'    = machineHealth,
+    decision'         = decision,
+    blockReason'      = blockReason,
+    preflightBlocked' = preflightBlocked,
+    admissionSafe'    = admissionSafe,
+    hookFreshSafe'    = hookFreshSafe,
   }
 
   // ── CompleteRemediation ───────────────────────────────────────
@@ -236,6 +307,8 @@ module KCPReconcile {
     machineHealth'  = machineHealth,
     blockReason'    = blockReason,
     preflightBlocked' = false,
+    admissionSafe'    = admissionSafe.put(m, false),
+    hookFreshSafe'    = hookFreshSafe.put(m, false),
   }
 
   // -------------------------------------------------------------
@@ -249,7 +322,22 @@ module KCPReconcile {
       nondet h = Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine).oneOf();
       HealthChange(m, h),
     nondet m = MACHINES.oneOf(); RequestRemediation(m),
-    nondet m = MACHINES.oneOf(); EvaluateCanSafelyRemediate(m),
+    nondet m = MACHINES.oneOf(); EvaluateRemediationAdmission(m),
+    nondet m = MACHINES.oneOf(); PreTerminateHookGateRecheck(m),
+    nondet m = MACHINES.oneOf(); ExternalMembershipChangeDrop(m),
+    nondet m = MACHINES.oneOf(); CompleteRemediation(m),
+  }
+
+  action stepFixed = any {
+    nondet m = MACHINES.oneOf(); AddMachine(m),
+    nondet m = MACHINES.oneOf(); ResolveNodeRef(m),
+    nondet m = MACHINES.oneOf();
+      nondet h = Set(HealthyMachine, UnhealthyMachine, UnknownHealthMachine).oneOf();
+      HealthChange(m, h),
+    nondet m = MACHINES.oneOf(); RequestRemediation(m),
+    nondet m = MACHINES.oneOf(); EvaluateRemediationAdmission(m),
+    nondet m = MACHINES.oneOf(); PreTerminateHookGateRecheckStrict(m),
+    nondet m = MACHINES.oneOf(); ExternalMembershipChangeDrop(m),
     nondet m = MACHINES.oneOf(); CompleteRemediation(m),
   }
 
@@ -274,6 +362,24 @@ module KCPReconcile {
        decision.keys().contains(m) and decision.get(m) == RemediationBlocked))
     implies preflightBlocked
 
+  val GateRecheckAgreesWithAdmission =
+    machines.forall(m =>
+      (decision.keys().contains(m) and decision.get(m) == RemediationInFlight)
+        implies (hookFreshSafe.keys().contains(m) and hookFreshSafe.get(m)))
+
+  def condemnedMachines: Set[MachineId] =
+    machines.filter(m =>
+      decision.keys().contains(m)
+        and (decision.get(m) == RemediationAdmitted or decision.get(m) == RemediationInFlight))
+
+  val NoConcurrentQuorumLoss =
+    (machines.size() - condemnedMachines.size()) >= quorumOf(machines.size())
+
+  val FixedVariantPreservesQuorum =
+    machines.forall(m =>
+      (decision.keys().contains(m) and decision.get(m) == RemediationInFlight)
+        implies hookFreshSafe.get(m))
+
   val AllInvariants = all {
     RemediationOnlyWhenSafe,
     PreflightBlocksRemediationWhenUnhealthy,
@@ -289,7 +395,8 @@ module KCPReconcile {
   run successfulRemediation = init
     .then(HealthChange(2, UnhealthyMachine))
     .then(RequestRemediation(2))
-    .then(EvaluateCanSafelyRemediate(2))
+    .then(EvaluateRemediationAdmission(2))
+    .then(PreTerminateHookGateRecheck(2))
     .then(CompleteRemediation(2))
 
   // FM-1's shape: a fourth Machine joins the KCP, has no
@@ -299,6 +406,25 @@ module KCPReconcile {
     .then(AddMachine(4))                          // joins without NodeRef
     .then(HealthChange(4, UnhealthyMachine))      // MHC flags it
     .then(RequestRemediation(4))
-    .then(EvaluateCanSafelyRemediate(4))          // blocked: matchOk false
+    .then(EvaluateRemediationAdmission(4))        // blocked: matchOk false
+
+  // Issue #108: admission passes, another membership change lands,
+  // and the later hook reconcile still proceeds based on the stale
+  // admission result.
+  run admissionRaceRun = init
+    .then(HealthChange(1, UnhealthyMachine))
+    .then(RequestRemediation(1))
+    .then(EvaluateRemediationAdmission(1))
+    .then(ExternalMembershipChangeDrop(3))
+    .then(PreTerminateHookGateRecheck(1))
+
+  // Fixed counterpart: the hook-time recheck blocks instead of
+  // proceeding once the fresh state no longer satisfies the gate.
+  run fixedAdmissionRaceRun = init
+    .then(HealthChange(1, UnhealthyMachine))
+    .then(RequestRemediation(1))
+    .then(EvaluateRemediationAdmission(1))
+    .then(ExternalMembershipChangeDrop(3))
+    .then(PreTerminateHookGateRecheckStrict(1))
 
 }

@@ -1646,6 +1646,33 @@ Counterexample summary saved in:
 
 Or, from `formal/`: `make verify-concurrent-remediation`.
 
+### KCP remediation admission split from pre-terminate-hook recheck (issue #108)
+
+```sh
+# Existing two-call-site shape, but with the fresh hook-time predicate still true.
+quint run --main=KCPReconcile --init=init --step=stepFixed \
+          --invariant=FixedVariantPreservesQuorum \
+          --max-samples=200 --max-steps=12 \
+          formal/specs/KCPReconcile.qnt
+
+# Explicit stale admission / hook-time mismatch counterexample.
+quint run --main=KCPReconcile --init=admissionRaceRun --step=step \
+          --invariant=GateRecheckAgreesWithAdmission --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+
+quint run --main=KCPReconcile --init=admissionRaceRun --step=step \
+          --invariant=NoConcurrentQuorumLoss --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+
+# Fixed variant rechecks and blocks instead of proceeding.
+quint run --main=KCPReconcile --init=fixedAdmissionRaceRun --step=stepFixed \
+          --invariant=FixedVariantPreservesQuorum --max-steps=0 \
+          formal/specs/KCPReconcile.qnt
+```
+
+Counterexample summary saved in:
+- `formal/counterexamples/kcpreconcile-admission-recheck.md`
+
 ### Status subresource lags after `spec.template` changes (issue #70)
 
 ```sh
