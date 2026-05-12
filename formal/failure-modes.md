@@ -3515,6 +3515,42 @@ within depth 4 (`make verify-pvc-bootstrap-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-121 — Filesystem-full on a node causes static-pod crashloop and spurious remediation
+
+**Provenance.** **Modelling** — issue #57 standalone disk-pressure /
+static-pod crashloop slice (`StaticPodDiskFull.qnt`). The model is
+grounded in the real `NodeDiskPressure` surfacing and the control-plane
+static-pod health conditions that CAPI observes on Machines.
+
+**Trigger.** Static pod logs fill the node filesystem, log rotation is
+unhealthy, kubelet raises `DiskPressure`, and the control-plane static
+pod crashloops or is evicted. If KCP/MHC interpret that as a node or
+machine failure instead of a transient local disk issue, remediation is
+requested unnecessarily.
+
+**Init / scenarios.** `recoveredDiskRun` shows the intended regime:
+logs consume disk, pressure appears, the static pod is disrupted, but the
+disk is later recovered and remediation is never requested, satisfying
+`KcpRecognisesDiskPressureAsTransient`. `crashloopRemediationRun` drives
+the bad path: after `DiskPressure` and static-pod crashloop, remediation
+is requested anyway, violating the same property.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| NodeDiskPressure surfacing | `controllers/noderefutil/util.go` | 50-82 |
+| Node condition summarisation on Machine | `internal/controllers/machine/machine_controller_status.go` | 440-474 |
+| Static-pod health surfacing | `controlplane/kubeadm/internal/workload_cluster_conditions.go` | 668-670, 758-966 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the disk-full crashloop/remediation path via
+`crashloopRemediationRun`, and Apalache reaches the same
+`KcpRecognisesDiskPressureAsTransient` violation from `crashloopInit`
+within depth 4 (`make verify-static-pod-disk-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-117 — CSI volume detach hang blocks the node/machine finalizer chain
 
 **Provenance.** **Modelling** — issue #56 standalone CSI detach /
@@ -4184,6 +4220,7 @@ reason that the operator can read.
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
 | FM-117 | CSI volume detach hang blocks the node/machine finalizer chain | MODELLING | Operator force-detach or detach completion clears the chain in the safe regime | Logged as deliberate counterexample candidate on `OperatorEscapeHatch` in `specs/VolumeDetachFinalizer.qnt`; Apalache reaches the stuck-detach state within depth 4 |
 | FM-120 | PVC-using bootstrap work starts before StorageClass / CSI installation | MODELLING | Storage primitives are installed before the PVC-using pod starts in the safe regime | Logged as deliberate counterexample candidate on `BootstrapDependencyOrdering` in `specs/PvcBootstrapPending.qnt`; Apalache reaches the pending-bootstrap state within depth 4 |
+| FM-121 | Filesystem-full on a node causes static-pod crashloop and spurious remediation | MODELLING | Disk pressure clears and the static pod recovers without remediation in the safe regime | Logged as deliberate counterexample candidate on `KcpRecognisesDiskPressureAsTransient` in `specs/StaticPodDiskFull.qnt`; Apalache reaches the crashloop/remediation state within depth 4 |
 | FM-116 | Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint | MODELLING | Kubeconfigs are regenerated and converge to the new endpoint in the safe regime | Logged as deliberate counterexample candidate on `AllKubeconfigsConvergeToCurrent` in `specs/EndpointSwapKubeconfig.qnt`; Apalache reaches the stale-endpoint state within depth 4 |
 | FM-115 | Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause | MODELLING | Exhaustion is surfaced as a higher-level condition in the safe regime | Logged as deliberate counterexample candidate on `NoSilentInfiniteRetry` in `specs/IpamExhaustion.qnt`; Apalache reaches the silent-retry state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |

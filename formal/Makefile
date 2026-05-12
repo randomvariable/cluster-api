@@ -85,6 +85,7 @@ CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
 IPAMEXH       := $(SPECS_DIR)/IpamExhaustion.qnt
 VOLDETACH     := $(SPECS_DIR)/VolumeDetachFinalizer.qnt
 STACPODMEM    := $(SPECS_DIR)/StaticPodMemPressure.qnt
+STAPODDISK    := $(SPECS_DIR)/StaticPodDiskFull.qnt
 HASHRELOAD    := $(SPECS_DIR)/StaticPodHashReloadRace.qnt
 BOOTCSR       := $(SPECS_DIR)/BootstrapCsrLag.qnt
 MTUFRAG       := $(SPECS_DIR)/MtuFragmentation.qnt
@@ -1627,6 +1628,43 @@ verify-static-pod-eviction-apalache:  ## Apalache static-pod eviction counterexa
 
 .PHONY: verify-static-pod-eviction
 verify-static-pod-eviction: verify-static-pod-eviction-happy verify-static-pod-eviction-counterexample verify-static-pod-eviction-random verify-static-pod-eviction-apalache  ## Full mem-pressure static-pod eviction suite
+
+.PHONY: verify-static-pod-disk-happy
+verify-static-pod-disk-happy:  ## Drive disk-pressure recovery without remediation
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodDiskFull --init=recoveredDiskRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(STAPODDISK)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=StaticPodDiskFull --init=recoveredDiskRun --step=step \
+	             --invariant=KcpRecognisesDiskPressureAsTransient --max-steps=0 \
+	             $(STAPODDISK)
+
+.PHONY: verify-static-pod-disk-counterexample
+verify-static-pod-disk-counterexample:  ## Drive disk-full static-pod crashloop + remediation counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=StaticPodDiskFull --init=crashloopRemediationRun --step=step \
+	              --invariant=KcpRecognisesDiskPressureAsTransient --max-steps=0 \
+	              $(STAPODDISK)
+
+.PHONY: verify-static-pod-disk-random
+verify-static-pod-disk-random:  ## Random-walk stable disk-pressure bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants EvictionImpliesStaticPodCrashloop; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=StaticPodDiskFull \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(STAPODDISK) || exit 1; \
+	done
+
+.PHONY: verify-static-pod-disk-apalache
+verify-static-pod-disk-apalache:  ## Apalache disk-pressure crashloop counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=StaticPodDiskFull --init=crashloopInit \
+	                  --step=stepApalache --invariant=KcpRecognisesDiskPressureAsTransient \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(STAPODDISK)
+
+.PHONY: verify-static-pod-disk
+verify-static-pod-disk: verify-static-pod-disk-happy verify-static-pod-disk-counterexample verify-static-pod-disk-random verify-static-pod-disk-apalache  ## Full static-pod disk-pressure crashloop suite
 
 .PHONY: verify-static-pod-hash-happy
 verify-static-pod-hash-happy:  ## Drive distinct-intent manifests + eventual kubelet reload convergence
