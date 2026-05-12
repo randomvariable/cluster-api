@@ -1890,6 +1890,40 @@ from `applyBeforeJoinInit` within depth 4
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-118 — CRD schema bump adds required fields and invalidates stored objects
+
+**Provenance.** **Modelling** — issue #77 standalone CRD schema-upgrade
+slice (`CrdSchemaBump.qnt`). The model is grounded in the real CRD
+migration/storage-version machinery and the conversion utility surface
+used when reading or rewriting stored objects.
+
+**Trigger.** A CRD upgrade bumps the served/storage schema and adds a new
+required field. Existing stored objects still reflect the older schema,
+no migration has rewritten them, and the next controller read fails
+validation instead of succeeding through conversion or migration.
+
+**Init / scenarios.** `migratedObjectRun` shows the intended regime:
+schema bumps, a migration rewrites the stored object to include the new
+required field, and reads succeed, satisfying
+`MigrationPathExistsForBumpedSchema`. `validationFailureRun` drives the
+bad path: schema bumps, no migration occurs, and the next read fails,
+violating `NoOrphanedStoredObjects`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| clusterctl CRD migration checks | `cmd/clusterctl/client/cluster/crd_migration.go` | 66-228 |
+| controller CRD migrator rewrite path | `controllers/crdmigrator/crd_migrator.go` | 262-435 |
+| conversion utility annotation/migration surface | `util/conversion/conversion.go` | 43-123 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the validation-failure path via `validationFailureRun`, and
+Apalache reaches the same `NoOrphanedStoredObjects` violation from
+`validationFailureInit` within depth 4 (`make verify-crd-schema-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-97 — KCP and MHC concurrently delete the same Machine
 
 **Provenance.** **Modelling** — issue #83 standalone delete-race slice

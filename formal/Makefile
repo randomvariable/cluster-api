@@ -91,6 +91,7 @@ MTUFRAG       := $(SPECS_DIR)/MtuFragmentation.qnt
 TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
+CRDSCHEMA     := $(SPECS_DIR)/CrdSchemaBump.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
 SSAFMCONFLICT := $(SPECS_DIR)/SsaFieldManagerConflict.qnt
 PARTIALREVERT := $(SPECS_DIR)/PartialRollbackDrop.qnt
@@ -1817,6 +1818,43 @@ verify-crs-timing-apalache:  ## Apalache ApplyOnce timing counterexample at dept
 
 .PHONY: verify-crs-timing
 verify-crs-timing: verify-crs-timing-happy verify-crs-timing-counterexample verify-crs-timing-random verify-crs-timing-apalache  ## Full ClusterResourceSet ApplyOnce timing suite
+
+.PHONY: verify-crd-schema-happy
+verify-crd-schema-happy:  ## Drive migrated-object path after schema bump
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CrdSchemaBump --init=migratedObjectRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(CRDSCHEMA)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=CrdSchemaBump --init=migratedObjectRun --step=step \
+	             --invariant=MigrationPathExistsForBumpedSchema --max-steps=0 \
+	             $(CRDSCHEMA)
+
+.PHONY: verify-crd-schema-counterexample
+verify-crd-schema-counterexample:  ## Drive incompatible schema bump without migration counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=CrdSchemaBump --init=validationFailureRun --step=step \
+	              --invariant=NoOrphanedStoredObjects --max-steps=0 \
+	              $(CRDSCHEMA)
+
+.PHONY: verify-crd-schema-random
+verify-crd-schema-random:  ## Random-walk stable CRD/schema bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants StoredObjectVersionKnown MigrationMaintainsValidity; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=CrdSchemaBump \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(CRDSCHEMA) || exit 1; \
+	done
+
+.PHONY: verify-crd-schema-apalache
+verify-crd-schema-apalache:  ## Apalache incompatible schema bump counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=CrdSchemaBump --init=validationFailureInit \
+	                  --step=stepApalache --invariant=NoOrphanedStoredObjects \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(CRDSCHEMA)
+
+.PHONY: verify-crd-schema
+verify-crd-schema: verify-crd-schema-happy verify-crd-schema-counterexample verify-crd-schema-random verify-crd-schema-apalache  ## Full schema-incompatible CRD upgrade suite
 
 .PHONY: verify-concurrent-spec-edits-happy
 verify-concurrent-spec-edits-happy:  ## Drive serial application of version+replica edits
