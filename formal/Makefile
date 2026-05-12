@@ -92,6 +92,7 @@ TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
 CRDSCHEMA     := $(SPECS_DIR)/CrdSchemaBump.qnt
+ADVERSARY     := $(SPECS_DIR)/AdversaryHarness.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
 SSAFMCONFLICT := $(SPECS_DIR)/SsaFieldManagerConflict.qnt
 PARTIALREVERT := $(SPECS_DIR)/PartialRollbackDrop.qnt
@@ -1855,6 +1856,49 @@ verify-crd-schema-apalache:  ## Apalache incompatible schema bump counterexample
 
 .PHONY: verify-crd-schema
 verify-crd-schema: verify-crd-schema-happy verify-crd-schema-counterexample verify-crd-schema-random verify-crd-schema-apalache  ## Full schema-incompatible CRD upgrade suite
+
+.PHONY: verify-adversary-happy
+verify-adversary-happy:  ## Drive recovered fault path through generic adversary library
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AdversaryHarness --init=recoveredFaultRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(ADVERSARY)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=AdversaryHarness --init=recoveredFaultRun --step=step \
+	             --invariant=RecoveredAfterFaultBudget --max-steps=0 \
+	             $(ADVERSARY)
+
+.PHONY: verify-adversary-counterexample
+verify-adversary-counterexample:  ## Drive unbounded-crash outage counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=AdversaryHarness --init=permanentOutageRun --step=step \
+	              --invariant=NoPermanentUnavailability --max-steps=0 \
+	              $(ADVERSARY)
+
+.PHONY: verify-adversary-random
+verify-adversary-random:  ## Random-walk stable adversary bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants ActiveKindKnown ActiveVictimKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=AdversaryHarness \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(ADVERSARY) || exit 1; \
+	done
+
+.PHONY: verify-adversary-apalache
+verify-adversary-apalache:  ## Apalache crash-outage counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=AdversaryHarness --init=permanentOutageInit \
+	                  --step=stepApalache --invariant=NoPermanentUnavailability \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(ADVERSARY)
+
+.PHONY: fuzz-adversary
+fuzz-adversary:  ## Seeded fuzzing over generic adversary harness
+	$(PYTHON) ../hack/tools/quint-adversary-fuzzer.py $(ADVERSARY) \
+	  --main=AdversaryHarness --invariant=NoPermanentUnavailability \
+	  --seeds=25 --max-samples=120 --max-steps=20 --timeout=45 || true
+
+.PHONY: verify-adversary
+verify-adversary: verify-adversary-happy verify-adversary-counterexample verify-adversary-random verify-adversary-apalache  ## Full adversary harness suite
 
 .PHONY: verify-concurrent-spec-edits-happy
 verify-concurrent-spec-edits-happy:  ## Drive serial application of version+replica edits

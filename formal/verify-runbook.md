@@ -1601,6 +1601,46 @@ echo y | quint verify --main=ControllerManagerReplay --init=doubleEffectInit --s
 
 Or, from `formal/`: `make verify-controller-replay`.
 
+### Generic adversarial fault-injection harness (issue #100)
+
+```sh
+# Bounded fault is cleared and the service recovers.
+quint run --main=AdversaryHarness --init=recoveredFaultRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/AdversaryHarness.qnt
+
+quint run --main=AdversaryHarness --init=recoveredFaultRun --step=step \
+          --invariant=RecoveredAfterFaultBudget --max-steps=0 \
+          formal/specs/AdversaryHarness.qnt
+
+# Explicit uncleared-fault outage counterexample.
+quint run --main=AdversaryHarness --init=permanentOutageRun --step=step \
+          --invariant=NoPermanentUnavailability --max-steps=0 \
+          formal/specs/AdversaryHarness.qnt
+
+# Random-walk stable adversary bookkeeping.
+for inv in StableSafetyInvariants ActiveKindKnown ActiveVictimKnown; do
+  quint run --main=AdversaryHarness --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/AdversaryHarness.qnt
+done
+
+# Backend verdict: permanent outage reachable within depth 4.
+echo y | quint verify --main=AdversaryHarness --init=permanentOutageInit --step=stepApalache \
+                      --invariant=NoPermanentUnavailability \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/AdversaryHarness.qnt
+
+# Seeded fuzzing over the generic adversary harness.
+python3 hack/tools/quint-adversary-fuzzer.py \
+  formal/specs/AdversaryHarness.qnt \
+  --main=AdversaryHarness \
+  --invariant=NoPermanentUnavailability \
+  --seeds=25 --max-samples=120 --max-steps=20 --timeout=45
+```
+
+Or, from `formal/`: `make verify-adversary` and `make fuzz-adversary`.
+
 ### Management cluster apiserver split-brain — two leader controllers (issue #94)
 
 ```sh

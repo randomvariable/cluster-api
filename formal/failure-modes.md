@@ -3548,6 +3548,41 @@ within depth 4 (`make verify-ipam-exhaustion-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-119 — Generic adversarial fault injection can keep a service permanently unavailable
+
+**Provenance.** **Modelling** — issue #100 reusable adversary harness
+slice (`Adversary.qnt` + `AdversaryHarness.qnt`). The reusable module is
+grounded in the existing fault catalogue in `dst-methodology.md`, which
+already standardises fault classes used across the corpus.
+
+**Trigger.** A fault is injected and never cleared. The composed service
+harness transitions to `unavailable` and remains there indefinitely,
+providing a generic proof obligation that bounded-fault assumptions must
+be explicit if a spec wants eventual recovery.
+
+**Init / scenarios.** `recoveredFaultRun` shows the intended regime:
+inject a crash fault, observe the impact, clear the fault, heal, and
+recover, satisfying `RecoveredAfterFaultBudget`. `permanentOutageRun`
+keeps the crash fault active and violates `NoPermanentUnavailability`.
+The seeded fuzz harness repeatedly finds violating seeds for the same
+counterexample.
+
+**LSP grounding.**
+
+| Go / doc entry point | File | Line |
+|---|---|---|
+| Fault catalogue | `formal/dst-methodology.md` | 52-178 |
+| Recurrent-fault discussion | `formal/docs/explanation.md` | 212-278 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the uncleared-fault outage via `permanentOutageRun`,
+Apalache reaches the same `NoPermanentUnavailability` violation from
+`permanentOutageInit` within depth 4 (`make verify-adversary-apalache`),
+and `hack/tools/quint-adversary-fuzzer.py` finds reproducible violating
+seeds over the same invariant.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-116 — Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint
 
 **Provenance.** **Modelling** — issue #61 standalone endpoint-swap /
@@ -4156,6 +4191,7 @@ reason that the operator can read.
 | FM-66 | User-provided kubeconfig secret rotates without KCP ownership | MODELLING | Rotation path ignores the ownership guard and regenerates a user-managed Secret | Logged as deliberate counterexample candidate on `ownedSecretOnlyRotates` via `userSecretRotationRun` |
 | FM-67 | Cluster CA regenerates after KCP initialization | MODELLING | Missing post-init CA is silently re-minted instead of surfaced as unsupported | Logged as deliberate counterexample candidate on `caNotRecreatedAfterInit` via `postInitCARegenRun` |
 | FM-68 | Kubeconfig rotation rewrites the control-plane endpoint | MODELLING | Regeneration path changes the server address instead of preserving it from the existing Secret | Logged as deliberate counterexample candidate on `rotationPreservesEndpoint` via `endpointRewriteRun` |
+| FM-119 | Generic adversarial fault injection can keep a service permanently unavailable | MODELLING | Bounded fault budgets plus explicit clear/heal recover in the safe regime | Logged as deliberate counterexample candidate on `NoPermanentUnavailability` in `specs/AdversaryHarness.qnt`; seeded fuzzing and Apalache both reach the outage state |
 | FM-37 | Lifecycle hook skipped under CP unavailability | KCP-BUG (latent) | Hook deferral | Concept landed; cluster-api#8942 |
 
 Six KCP-BUG rows (FM-1, FM-5, FM-8, FM-11, FM-12, FM-14, plus

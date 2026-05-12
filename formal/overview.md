@@ -108,6 +108,7 @@ For a contributor adding a new failure mode:
 | MachineSetPreflight.qnt | 3 | (deterministic) | — | — |
 | InPlaceUpdate.qnt | 5 | 2000×80 | **9/9 invariants** at depth 4 (FM-42 also at depth 8) | — |
 | ControllerRuntime.qnt | 6 | 500×60 | **7/7 invariants** at depth 4 (FM-45 also at depth 8) | — |
+| AdversaryHarness.qnt | 2 | 300×40 | **3/3 stable adversary bookkeeping invariants** under random walk; explicit uncleared-fault outage counterexample `NoPermanentUnavailability` reachable at Apalache depth 4 | — |
 | CrossControllerCycle.qnt | 2 | 300×40 | **2/2 stable invariants** under random walk; explicit livelock counterexample `NoCyclicLivelock` reachable at Apalache depth 4 | — |
 | ReflectorRelistStorm.qnt | 2 | 300×40 | **2/2 stable watch invariants** under random walk; explicit duplicate-create counterexample `NoDuplicateMachineLeak` reachable at Apalache depth 4 | — |
 | StaleEnqueueShutdown.qnt | 2 | 300×40 | **2/2 stable queue/object invariants** under random walk; explicit nil-read counterexample `NoNilReadAfterDelete` reachable at Apalache depth 4 | — |

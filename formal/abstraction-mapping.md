@@ -331,6 +331,20 @@ Anchors recovered via gopls + grep on
 | ControllerRuntime | anyWorkerOnKey (helper) | pkg/controller/priorityqueue/priorityqueue.go:391 (`w.locked.Has(item.Key)` guard); pkg/internal/controller/controller.go:311 (per-key serialisation comment). | Pure predicate. |
 | ControllerRuntime | hookFires (helper) | (model-only) — abstracts the predicate result. | Pure predicate. |
 
+### Adversary.qnt / AdversaryHarness.qnt
+
+Reusable adversarial fault-injection library and a concrete composed
+harness for issue #100. `Adversary.qnt` exports the generic fault-state
+shape (`InjectFault(kind, victim)` plus `ClearFault`), while
+`AdversaryHarness.qnt` demonstrates composition on a tiny 3-node service.
+
+| Spec | Action / invariant | Go / doc reference | Purpose |
+| ---- | ------------------ | ------------------ | ------- |
+| Adversary | `InjectFault(kind, victim)` | `formal/dst-methodology.md` §2 fault catalogue | Standardise fault kinds (`partition`, `latency`, `crash`, `reorder`, `drop`) and victim selection so new specs can reuse one vocabulary instead of hand-rolling fault booleans. |
+| Adversary | `ClearFault` | same | Standard recovery/clear action so specs can express both bounded-fault and recurrent-fault regimes uniformly. |
+| AdversaryHarness | `ObserveFaultImpact` / `HealAfterClear` | same | Concrete composed harness proving the reusable module shape: faults degrade/unavailable the service, and clear+heal returns to healthy. |
+| AdversaryHarness | `NoPermanentUnavailability` / `permanentOutageRun` | same | Explicit counterexample target showing that recurrent or uncleared faults can keep the service unavailable, which the seed fuzzing harness should discover repeatedly. |
+
 ### CrossControllerCycle.qnt
 
 Two-controller enqueue cycle abstraction for issue #31. Captures the
