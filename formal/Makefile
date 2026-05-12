@@ -81,6 +81,7 @@ LBDRAIN       := $(SPECS_DIR)/LoadBalancerDrain.qnt
 NETPOLSTALL   := $(SPECS_DIR)/NetworkPolicyMidFlight.qnt
 WATCHCOALESCE := $(SPECS_DIR)/WatchEventCoalescing.qnt
 CONNTRACK     := $(SPECS_DIR)/ConntrackExhaustion.qnt
+IPAMEXH       := $(SPECS_DIR)/IpamExhaustion.qnt
 STACPODMEM    := $(SPECS_DIR)/StaticPodMemPressure.qnt
 HASHRELOAD    := $(SPECS_DIR)/StaticPodHashReloadRace.qnt
 BOOTCSR       := $(SPECS_DIR)/BootstrapCsrLag.qnt
@@ -1506,6 +1507,43 @@ verify-conntrack-apalache:  ## Apalache conntrack-exhaustion counterexample at d
 
 .PHONY: verify-conntrack
 verify-conntrack: verify-conntrack-happy verify-conntrack-counterexample verify-conntrack-random verify-conntrack-apalache  ## Full conntrack-exhaustion / dropped-connection suite
+
+.PHONY: verify-ipam-exhaustion-happy
+verify-ipam-exhaustion-happy:  ## Surface subnet exhaustion as a Cluster condition
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=IpamExhaustion --init=exhaustionSurfacedRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(IPAMEXH)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=IpamExhaustion --init=exhaustionSurfacedRun --step=step \
+	             --invariant=IpExhaustionEventuallySurfaced --max-steps=0 \
+	             $(IPAMEXH)
+
+.PHONY: verify-ipam-exhaustion-counterexample
+verify-ipam-exhaustion-counterexample:  ## Drive silent infinite retry on exhausted subnet
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=IpamExhaustion --init=silentRetryRun --step=step \
+	              --invariant=NoSilentInfiniteRetry --max-steps=0 \
+	              $(IPAMEXH)
+
+.PHONY: verify-ipam-exhaustion-random
+verify-ipam-exhaustion-random:  ## Random-walk stable IPAM/subnet bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants UsedNeverExceedsCapacity ExhaustionConditionNeedsFullSubnet; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=IpamExhaustion \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(IPAMEXH) || exit 1; \
+	done
+
+.PHONY: verify-ipam-exhaustion-apalache
+verify-ipam-exhaustion-apalache:  ## Apalache silent retry counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=IpamExhaustion --init=silentRetryInit \
+	                  --step=stepApalache --invariant=NoSilentInfiniteRetry \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(IPAMEXH)
+
+.PHONY: verify-ipam-exhaustion
+verify-ipam-exhaustion: verify-ipam-exhaustion-happy verify-ipam-exhaustion-counterexample verify-ipam-exhaustion-random verify-ipam-exhaustion-apalache  ## Full subnet/IPAM exhaustion suite
 
 .PHONY: verify-static-pod-eviction-happy
 verify-static-pod-eviction-happy:  ## Drive mem-pressure eviction that preserves critical static pods

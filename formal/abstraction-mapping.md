@@ -632,6 +632,18 @@ been left in a zombie partially-provisioned state.
 | CloudIamPermissionLoss | `InFlightProvisioningEventuallyAborts` / `abortAfterPersistent403Run` | same | Show the intended regime where repeated 403s force provisioning to abort cleanly rather than limping onward. |
 | CloudIamPermissionLoss | `NoZombieMachine` / `zombieMachineRun` | same | Express the issue's counterexample target: IAM revocation lands mid-provisioning, calls start returning 403, and a non-ready zombie machine remains behind. |
 
+### IpamExhaustion.qnt
+
+Standalone subnet/IPAM exhaustion model for issue #58. This spec keeps a
+single subnet capacity, current usage, one pending infrastructure/IP
+request, and whether exhaustion has surfaced to the operator.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| IpamExhaustion | `IpExhaustedRetry` / `SurfaceExhaustion` | `api/ipam/v1beta2/ipaddressclaim_types.go:25-40` | Ground the concrete IPAM surface where an exhausted pool produces `IPAddressClaimReadyPoolExhaustedReason`. |
+| IpamExhaustion | `RequestIp` / `infraReady` | `internal/controllers/machine/machine_controller_status.go:167-255`; `internal/controllers/cluster/cluster_controller_status.go` | Ground the downstream symptom surface where infrastructure readiness and higher-level Cluster conditions are what the operator actually sees. |
+| IpamExhaustion | `NoSilentInfiniteRetry` / `silentRetryRun` | same | Express the issue's core counterexample: retries continue on a full subnet without surfacing a higher-level exhaustion condition. |
+
 ### ConditionMessageTruncation.qnt
 
 Standalone condition-message truncation model for issue #72. This spec

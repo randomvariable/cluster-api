@@ -1940,6 +1940,39 @@ echo y | quint verify --main=CloudIamPermissionLoss --init=zombieMachineInit --s
 
 Or, from `formal/`: `make verify-cloud-iam`.
 
+### Subnet IP / IPAM exhaustion keeps scale-up pending forever (issue #58)
+
+```sh
+# Exhaustion is surfaced as a higher-level condition.
+quint run --main=IpamExhaustion --init=exhaustionSurfacedRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/IpamExhaustion.qnt
+
+quint run --main=IpamExhaustion --init=exhaustionSurfacedRun --step=step \
+          --invariant=IpExhaustionEventuallySurfaced --max-steps=0 \
+          formal/specs/IpamExhaustion.qnt
+
+# Explicit silent-infinite-retry counterexample.
+quint run --main=IpamExhaustion --init=silentRetryRun --step=step \
+          --invariant=NoSilentInfiniteRetry --max-steps=0 \
+          formal/specs/IpamExhaustion.qnt
+
+# Random-walk stable IPAM/subnet bookkeeping.
+for inv in StableSafetyInvariants UsedNeverExceedsCapacity ExhaustionConditionNeedsFullSubnet; do
+  quint run --main=IpamExhaustion --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/IpamExhaustion.qnt
+done
+
+# Backend verdict: silent retry reachable within depth 4.
+echo y | quint verify --main=IpamExhaustion --init=silentRetryInit --step=stepApalache \
+                      --invariant=NoSilentInfiniteRetry \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/IpamExhaustion.qnt
+```
+
+Or, from `formal/`: `make verify-ipam-exhaustion`.
+
 ### Condition message truncation silently drops root-cause diagnostics (issue #72)
 
 ```sh

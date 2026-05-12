@@ -3446,6 +3446,40 @@ within depth 4 (`make verify-cloud-iam-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-115 — Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause
+
+**Provenance.** **Modelling** — issue #58 standalone subnet/IPAM
+exhaustion slice (`IpamExhaustion.qnt`). The model is grounded in the
+real `IPAddressClaim` ready reasons and the fact that operators usually
+observe the downstream condition through higher-level readiness/status,
+not the raw IPAM object.
+
+**Trigger.** A new machine needs an IP but the subnet/pool is already
+full. Requests keep retrying, infrastructure never becomes ready, and no
+higher-level exhaustion condition is surfaced, leaving the operator with
+an apparently “just pending” scale-up.
+
+**Init / scenarios.** `exhaustionSurfacedRun` shows the intended regime:
+the first retry on a full subnet is followed by an explicit surfaced
+condition, satisfying `IpExhaustionEventuallySurfaced`. `silentRetryRun`
+keeps retrying on the full subnet without surfacing the exhaustion,
+violating `NoSilentInfiniteRetry`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| IPAM exhausted ready reason | `api/ipam/v1beta2/ipaddressclaim_types.go` | 25-40 |
+| Machine infra readiness mirror | `internal/controllers/machine/machine_controller_status.go` | 167-255 |
+| Higher-level cluster status surface | `internal/controllers/cluster/cluster_controller_status.go` | 1-156 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the silent-retry path via `silentRetryRun`, and Apalache
+reaches the same `NoSilentInfiniteRetry` violation from `silentRetryInit`
+within depth 4 (`make verify-ipam-exhaustion-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-109 — Status subresource lags and another controller acts on stale phase
 
 **Provenance.** **Modelling** — issue #70 standalone spec/status lag
@@ -3976,6 +4010,7 @@ reason that the operator can read.
 | FM-108 | Condition message truncation silently drops the root-cause-bearing tail | MODELLING | Tail-preserving truncation or a companion event keeps diagnostics in the safe regime | Logged as deliberate counterexample candidate on `RootCauseSurvivesTruncation` in `specs/ConditionMessageTruncation.qnt`; Apalache reaches the tail-loss state within depth 4 |
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
+| FM-115 | Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause | MODELLING | Exhaustion is surfaced as a higher-level condition in the safe regime | Logged as deliberate counterexample candidate on `NoSilentInfiniteRetry` in `specs/IpamExhaustion.qnt`; Apalache reaches the silent-retry state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |
 | FM-90 | MTU drift silently fragments packets and stalls snapshot transfer | MODELLING | PMTU discovery converges and transfer succeeds in the safe regime | Logged as deliberate counterexample candidate on `EtcdSnapshotEventuallySucceeds` in `specs/MtuFragmentation.qnt`; Apalache reaches the timeout state within depth 4 |
 | FM-91 | Pod starts before CNI creates its veth, causing probe-loop restarts | MODELLING | CNI catches up before probes fail in the safe regime | Logged as deliberate counterexample candidate on `NoContainerStartBeforeCni` in `specs/CniVethRace.qnt`; Apalache reaches the probe-loop state within depth 4 |
