@@ -71,6 +71,20 @@ and the seL4 functional-correctness convention
 | KCPReconcile | RequestRemediation | controlplane/kubeadm/internal/controllers/remediation.go:54 (`reconcileUnhealthyMachines` entry) | KCP flips a Machine into remediation-requested. |
 | KCPReconcile | ResolveNodeRef | internal/controllers/machine/machine_controller_noderef.go (Machine controller; refinement is upstream of KCP) | Machine controller sets `Machine.status.nodeRef`. |
 
+### ConcurrentRemediationGate.qnt
+
+Standalone non-atomic remediation gate model for issue #106. This spec
+keeps the same scheduler-style queue as `Remediation.tla`, but splits one
+admission into `ReadGate` and `CommitAdmission` so other reconciles can
+interleave between them.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| ConcurrentRemediationGate | `ReadGate` | `controlplane/kubeadm/internal/controllers/remediation.go:595` (`canSafelyRemediateMachine`) | Ground the first non-atomic gate read: snapshot the current etcd/voter/in-flight state and compute whether remediation appears safe. |
+| ConcurrentRemediationGate | `CommitAdmission` | `controlplane/kubeadm/internal/controllers/remediation.go:54` (same reconcile path, later side effect) | Ground the later transition where a reconcile proceeds based on the earlier gate result rather than a fresh global CAS. |
+| ConcurrentRemediationGate | `BlockAfterRead` | same | Model the race-safe branch where a stale positive read is reinterpreted as blocked instead of admitted. |
+| ConcurrentRemediationGate | `AdmitOrBlockAtomic` | `formal/specs/Remediation.tla:91-123` | Fixed variant: fuse read+commit into one atomic admission step and evaluate quorum against the full `inFlight ∪ {m}` post-state. |
+
 ### Drain & PDB
 
 | Spec | Action | Go reference | Purpose |

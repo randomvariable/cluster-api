@@ -1611,6 +1611,41 @@ echo y | quint verify --main=BootstrapInfraReadyRace --init=missingEventInit --s
 
 Or, from `formal/`: `make verify-bootstrap-infra-race`.
 
+### Non-atomic remediation gate admits two machines from stale quorum reads (issue #106)
+
+```sh
+# Fixed atomic gate variant preserves quorum.
+quint run --main=ConcurrentRemediationGate --init=init --step=stepFixed \
+          --invariant=FixedVariantPreservesQuorum \
+          --max-samples=200 --max-steps=12 \
+          formal/specs/ConcurrentRemediationGate.qnt
+
+# Explicit stale-read / dual-commit counterexamples.
+quint run --main=ConcurrentRemediationGate --init=admissionRaceRun --step=step \
+          --invariant=NoConcurrentQuorumLoss --max-steps=0 \
+          formal/specs/ConcurrentRemediationGate.qnt
+
+quint run --main=ConcurrentRemediationGate --init=admissionRaceRun --step=step \
+          --invariant=GateReadStalenessBound --max-steps=0 \
+          formal/specs/ConcurrentRemediationGate.qnt
+
+# Backend verdicts.
+echo y | quint verify --main=ConcurrentRemediationGate --init=init --step=step \
+                      --invariant=NoConcurrentQuorumLoss \
+                      --max-steps=8 --backend=apalache \
+                      formal/specs/ConcurrentRemediationGate.qnt
+
+echo y | quint verify --main=ConcurrentRemediationGate --init=init --step=stepFixed \
+                      --invariant=FixedVariantPreservesQuorum \
+                      --max-steps=8 --backend=apalache \
+                      formal/specs/ConcurrentRemediationGate.qnt
+```
+
+Counterexample summary saved in:
+- `formal/counterexamples/concurrent-remediation-gate.md`
+
+Or, from `formal/`: `make verify-concurrent-remediation`.
+
 ### Status subresource lags after `spec.template` changes (issue #70)
 
 ```sh

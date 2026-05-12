@@ -124,6 +124,7 @@ JOINNAME      := $(SPECS_DIR)/EtcdJoiningNameDelay.qnt
 ORPHANCORR    := $(SPECS_DIR)/OrphanLearnerCorrelation.qnt
 FINALIZERS    := $(SPECS_DIR)/Finalizers.qnt
 RUNTIMESDK    := $(SPECS_DIR)/RuntimeSDK.qnt
+CONCREM       := $(SPECS_DIR)/ConcurrentRemediationGate.qnt
 PIVOT         := $(SPECS_DIR)/Pivot.qnt
 CONVERSIONWEBHOOK := $(SPECS_DIR)/ConversionWebhook.qnt
 KUBELETPKI    := $(SPECS_DIR)/KubeletPKI.qnt
@@ -3106,6 +3107,33 @@ verify-runtimesdk-apalache:  ## Apalache battery across Runtime SDK invariants
 
 .PHONY: verify-runtimesdk
 verify-runtimesdk: verify-runtimesdk-happy verify-runtimesdk-partial verify-runtimesdk-random verify-runtimesdk-apalache  ## Full Runtime SDK suite
+
+.PHONY: verify-concurrent-remediation-happy
+verify-concurrent-remediation-happy:  ## Deterministic non-atomic safe trace + fixed variant
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ConcurrentRemediationGate \
+	             --init=init --step=stepFixed --invariant=FixedVariantPreservesQuorum \
+	             --max-samples=200 --max-steps=12 $(CONCREM)
+
+.PHONY: verify-concurrent-remediation-counterexample
+verify-concurrent-remediation-counterexample:  ## Non-atomic gate quorum-loss counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=ConcurrentRemediationGate \
+	              --init=admissionRaceRun --step=step --invariant=NoConcurrentQuorumLoss \
+	              --max-steps=0 $(CONCREM)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=ConcurrentRemediationGate \
+	              --init=admissionRaceRun --step=step --invariant=GateReadStalenessBound \
+	              --max-steps=0 $(CONCREM)
+
+.PHONY: verify-concurrent-remediation-apalache
+verify-concurrent-remediation-apalache:  ## Apalache non-atomic gate counterexample vs fixed variant at depth 8
+	-@echo y | $(QUINT) verify --main=ConcurrentRemediationGate --init=init \
+	                  --step=step --invariant=NoConcurrentQuorumLoss \
+	                  --max-steps=8 --backend=apalache $(CONCREM)
+	@echo y | $(QUINT) verify --main=ConcurrentRemediationGate --init=init \
+	                 --step=stepFixed --invariant=FixedVariantPreservesQuorum \
+	                 --max-steps=8 --backend=apalache $(CONCREM)
+
+.PHONY: verify-concurrent-remediation
+verify-concurrent-remediation: verify-concurrent-remediation-happy verify-concurrent-remediation-counterexample verify-concurrent-remediation-apalache  ## Full non-atomic remediation gate suite
 
 .PHONY: verify-pivot-happy
 verify-pivot-happy:  ## Drive happy clusterctl move / resume run

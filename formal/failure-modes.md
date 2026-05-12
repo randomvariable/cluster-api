@@ -2033,6 +2033,44 @@ reproduces the missing-event stuck-unready path via
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-124 — Non-atomic remediation admission reads stale quorum state and commits anyway
+
+**Provenance.** **Modelling** — issue #106 standalone remediation-gate
+race slice (`ConcurrentRemediationGate.qnt`). It is grounded in the real
+KCP remediation predicate `canSafelyRemediateMachine` and an explicit
+before/after comparison with the atomic scheduler in `Remediation.tla`.
+
+**Trigger.** Two Machines are pending remediation. Reconcile A runs
+`ReadGate(1)` while `inFlight = {}` and records `pass`. Reconcile B does
+the same for Machine 2 before either commit happens. A then commits
+Machine 1 into `inFlight`; B later commits Machine 2 based on its stale
+read, leaving too few voters to preserve quorum.
+
+**Init / scenarios.** `admissionRaceRun` is the minimal failing trace:
+`ReadGate(1) -> ReadGate(2) -> CommitAdmission(1) -> CommitAdmission(2)`.
+It violates both `NoConcurrentQuorumLoss` and `GateReadStalenessBound`.
+The fixed variant is exposed through `stepFixed`, where
+`AdmitOrBlockAtomic` fuses read+commit and evaluates safety against the
+full `inFlight ∪ {m}` post-state, preserving
+`FixedVariantPreservesQuorum`.
+
+**LSP grounding.**
+
+| Go / formal entry point | File | Line |
+|---|---|---|
+| Real non-atomic safety predicate | `controlplane/kubeadm/internal/controllers/remediation.go` | 595 |
+| Later remediation side effect path | `controlplane/kubeadm/internal/controllers/remediation.go` | 54 |
+| Atomic scheduler baseline | `formal/specs/Remediation.tla` | 91-123 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-read race via `admissionRaceRun`, and Apalache
+reaches the same `NoConcurrentQuorumLoss` violation from `init` within
+depth 8 (`make verify-concurrent-remediation-apalache`). The fixed atomic
+variant in the same module preserves quorum, and the durable explanation
+is stored in `formal/counterexamples/concurrent-remediation-gate.md`.
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-99 — Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions
 
 **Provenance.** **Modelling** — issue #65 standalone concurrent-edit
@@ -4277,6 +4315,7 @@ reason that the operator can read.
 | FM-101 | Controller-manager replay re-applies an effect after leader failover | MODELLING | New leader reconstructs completion from durable state in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleEffect` in `specs/ControllerManagerReplay.qnt`; Apalache reaches the replay state within depth 4 |
 | FM-103 | Management-cluster split-brain yields two active leader controllers | MODELLING | Lease converges to a single writer before duplicate effects in the safe regime | Logged as deliberate counterexample candidate on `NoDuplicateEffectAcrossLeaders` in `specs/ControllerLeaderSplitBrain.qnt`; Apalache reaches the duplicate-effect state within depth 4 |
 | FM-98 | Machine readiness gets stuck because bootstrap and infra ready edges are observed separately | MODELLING | Reconcile observes both child-ready edges and eventually marks Machine ready in the safe regime | Logged as deliberate counterexample candidate on `NoStuckUnreadyDespiteBothChildrenReady` in `specs/BootstrapInfraReadyRace.qnt`; Apalache reaches the stuck-unready state within depth 4 |
+| FM-124 | Non-atomic remediation admission reads stale quorum state and commits anyway | MODELLING | Atomic fused admission blocks the second remediation in the safe regime | Logged as deliberate counterexample candidate on `NoConcurrentQuorumLoss` / `GateReadStalenessBound` in `specs/ConcurrentRemediationGate.qnt`; Apalache finds the stale-read race at depth 8 |
 | FM-102 | MachinePool spec replicas and provider actual scale oscillate | MODELLING | Scale ownership is arbitrated and converges in the safe regime | Logged as deliberate counterexample candidate on `NoOscillation` in `specs/MachinePoolScaleConflict.qnt`; Apalache reaches the oscillation state within depth 4 |
 | FM-97 | KCP and MHC concurrently delete the same Machine | MODELLING | One controller owns old-machine deletion and replacements are not immediately reselected in the safe regime | Logged as deliberate counterexample candidate on `NoDoubleDelete` / `NoReplacementCannibalisation` in `specs/KcpMhcDeleteRace.qnt`; Apalache reaches the double-delete state within depth 4 |
 | FM-113 | AZ-wide failure leaves KCP stuck targeting a failed or exhausted AZ | MODELLING | KCP retargets to a surviving AZ with capacity in the safe regime | Logged as deliberate counterexample candidate on `NoIndefiniteScaleAttempt` in `specs/AzFailoverCapacity.qnt`; Apalache reaches the failover-stall state within depth 4 |
