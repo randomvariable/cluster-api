@@ -1232,6 +1232,40 @@ Apalache reaches the same `NoWriteAfterDeleteObserved` violation from
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-114 — SSA field-manager ownership transfer is silently reverted by a stale manager
+
+**Provenance.** **Modelling** — issue #66 standalone SSA field-manager
+conflict slice (`SsaFieldManagerConflict.qnt`). The model is grounded in
+the topology structured-merge dry-run / server-side patch helper and the
+repo's managed-fields ownership manipulation helpers.
+
+**Trigger.** Manager `kubectl` currently owns a field with value `3`.
+Manager `capi-cli` attempts `5` without force and correctly hits a
+conflict. `capi-cli` then retries with force and takes ownership, but
+`kubectl` still believes `3` is current and re-applies its stale value,
+silently reverting the forced handoff.
+
+**Init / scenarios.** `forceHandoffRun` shows the intended regime:
+conflict is surfaced, `capi-cli` force-applies `5`, ownership transfers,
+and `ForcedApplyTransfersOwnership` holds. `staleManagerRevertRun`
+continues with `kubectl` reapplying `3`, violating
+`NoSilentRevertAfterConflict`.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Structured-merge dry-run cleanup / ownership shaping | `internal/controllers/topology/cluster/structuredmerge/dryrun.go` | 220-281 |
+| Structured-merge server-side patch helper call sites | `internal/controllers/topology/cluster/reconcile_state.go` | 450-505 |
+| Managed-fields ownership helpers | `internal/util/ssa/managedfields.go` | 49-197 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the stale-manager revert path via `staleManagerRevertRun`, and
+Apalache reaches the same `NoSilentRevertAfterConflict` violation from
+`staleRevertInit` within depth 4 (`make verify-ssa-conflict-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-111 — Backup/apply partial rollback silently drops fields and controllers re-default them
 
 **Provenance.** **Modelling** — issue #67 standalone backup/apply
@@ -3952,6 +3986,7 @@ reason that the operator can read.
 | FM-99 | Two operators' concurrent `Cluster.spec` edits lose intent or violate surge assumptions | MODELLING | Both edits converge to the final spec and surge stays within bound in the safe regime | Logged as deliberate counterexample candidate on `NoLostEdit` / `NoSurgeBoundViolation` in `specs/ConcurrentClusterSpecEdits.qnt`; Apalache reaches the lost-edit state within depth 4 |
 | FM-110 | Cluster delete during an in-flight edit allows a stale write to land | MODELLING | Delete wins cleanly and later writes observe not-found in the safe regime | Logged as deliberate counterexample candidate on `NoWriteAfterDeleteObserved` in `specs/ClusterEditDeleteRace.qnt`; Apalache reaches the stale-write state within depth 4 |
 | FM-111 | Backup/apply partial rollback silently drops fields and controllers re-default them | MODELLING | A single re-default restores the intended stable default in the safe regime | Logged as deliberate counterexample candidate on `RedefaultConverges` in `specs/PartialRollbackDrop.qnt`; Apalache reaches the redefine-loop state within depth 4 |
+| FM-114 | SSA field-manager ownership transfer is silently reverted by a stale manager | MODELLING | Conflict is surfaced and force cleanly transfers ownership in the safe regime | Logged as deliberate counterexample candidate on `NoSilentRevertAfterConflict` in `specs/SsaFieldManagerConflict.qnt`; Apalache reaches the stale-revert state within depth 4 |
 | FM-100 | Autoscaler scale-up and KCP rollout surge overproduce replicas | MODELLING | Autoscaler intent is incorporated before rollout surge in the safe regime | Logged as deliberate counterexample candidate on `SurgeBoundUnderConcurrentScale` in `specs/AutoscalerKcpSurgeRace.qnt`; Apalache reaches the over-replica state within depth 4 |
 | FM-105 | Mid-rollout etcd tag bump traps the control-plane upgrade | MODELLING | etcd upgrade waits until the control-plane rollout gate has cleared in the safe regime | Logged as deliberate counterexample candidate on `NoMidRolloutDependencyTrap` in `specs/EtcdKubernetesVersionSkew.qnt`; Apalache reaches the dependency-trap state within depth 4 |
 | FM-104 | Rollback during partial cycling temporarily exceeds surge bound | MODELLING | Rollback waits for the drain point in the safe regime | Logged as deliberate counterexample candidate on `NoTransientSurgeBeyondBound` in `specs/RollbackSurgeRace.qnt`; Apalache reaches the mid-cycle rollback surge state within depth 4 |

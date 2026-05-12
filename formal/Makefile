@@ -89,6 +89,7 @@ TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
+SSAFMCONFLICT := $(SPECS_DIR)/SsaFieldManagerConflict.qnt
 PARTIALREVERT := $(SPECS_DIR)/PartialRollbackDrop.qnt
 ASKCPSURGE    := $(SPECS_DIR)/AutoscalerKcpSurgeRace.qnt
 ETCDK8SSKEW   := $(SPECS_DIR)/EtcdKubernetesVersionSkew.qnt
@@ -1780,6 +1781,43 @@ verify-concurrent-spec-edits-apalache:  ## Apalache concurrent-edit counterexamp
 
 .PHONY: verify-concurrent-spec-edits
 verify-concurrent-spec-edits: verify-concurrent-spec-edits-happy verify-concurrent-spec-edits-counterexample verify-concurrent-spec-edits-random verify-concurrent-spec-edits-apalache  ## Full concurrent Cluster.spec edit suite
+
+.PHONY: verify-ssa-conflict-happy
+verify-ssa-conflict-happy:  ## Drive explicit conflict then forced handoff path
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SsaFieldManagerConflict --init=forceHandoffRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(SSAFMCONFLICT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=SsaFieldManagerConflict --init=forceHandoffRun --step=step \
+	             --invariant=ForcedApplyTransfersOwnership --max-steps=0 \
+	             $(SSAFMCONFLICT)
+
+.PHONY: verify-ssa-conflict-counterexample
+verify-ssa-conflict-counterexample:  ## Drive stale manager revert counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=SsaFieldManagerConflict --init=staleManagerRevertRun --step=step \
+	              --invariant=NoSilentRevertAfterConflict --max-steps=0 \
+	              $(SSAFMCONFLICT)
+
+.PHONY: verify-ssa-conflict-random
+verify-ssa-conflict-random:  ## Random-walk stable SSA manager invariants (300x40)
+	@for inv in StableSafetyInvariants OwnerAlwaysKnown LastWriterMatchesValue; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=SsaFieldManagerConflict \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(SSAFMCONFLICT) || exit 1; \
+	done
+
+.PHONY: verify-ssa-conflict-apalache
+verify-ssa-conflict-apalache:  ## Apalache stale-manager revert counterexample at depth 4
+	-@echo y | $(QUINT) verify --main=SsaFieldManagerConflict --init=staleRevertInit \
+	                  --step=stepApalache --invariant=NoSilentRevertAfterConflict \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(SSAFMCONFLICT)
+
+.PHONY: verify-ssa-conflict
+verify-ssa-conflict: verify-ssa-conflict-happy verify-ssa-conflict-counterexample verify-ssa-conflict-random verify-ssa-conflict-apalache  ## Full SSA field-manager conflict suite
 
 .PHONY: verify-autoscaler-kcp-happy
 verify-autoscaler-kcp-happy:  ## Drive serialized autoscaler scale-up then rollout path

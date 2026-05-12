@@ -863,6 +863,18 @@ compact split between old-version and new-version replica counts.
 | ConcurrentClusterSpecEdits | `NoLostEdit` / `lostEditRun` | same | Express the issue's first counterexample target: both operators' intents exist, but the final applied spec silently drops one of them. |
 | ConcurrentClusterSpecEdits | `NoSurgeBoundViolation` / `surgeRaceRun` | same | Express the second counterexample target: concurrent rollout and scale-up temporarily exceed `desiredReplicas + maxSurge`. |
 
+### SsaFieldManagerConflict.qnt
+
+Standalone SSA field-manager conflict model for issue #66. This spec
+keeps a single contested field value, its current owner, each manager's
+last believed value, and whether a forced apply occurred.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| SsaFieldManagerConflict | `CapiApply5NoForceConflict` | `internal/controllers/topology/cluster/structuredmerge/dryrun.go:220-281`; `internal/controllers/topology/cluster/reconcile_state.go:450-505` | Ground the SSA / managed-fields path where another manager's ownership causes a server-side-apply conflict instead of silently overwriting the field. |
+| SsaFieldManagerConflict | `CapiApply5Force` | same | Ground the safe handoff path where a forced apply intentionally transfers ownership of the field. |
+| SsaFieldManagerConflict | `NoSilentRevertAfterConflict` / `staleManagerRevertRun` | same plus `internal/util/ssa/managedfields.go:49-197` | Express the issue's counterexample target: after a forced ownership transfer, a stale manager re-applies its old value and silently reverts the field. |
+
 ### PartialRollbackDrop.qnt
 
 Standalone backup/apply rollback-default loop model for issue #67. This

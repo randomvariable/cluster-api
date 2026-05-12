@@ -1200,6 +1200,39 @@ echo y | quint verify --main=ConcurrentClusterSpecEdits --init=lostEditInit --st
 
 Or, from `formal/`: `make verify-concurrent-spec-edits`.
 
+### SSA field-manager conflict — two managers claim the same field (issue #66)
+
+```sh
+# Conflict is surfaced, then ownership is explicitly transferred with force.
+quint run --main=SsaFieldManagerConflict --init=forceHandoffRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/SsaFieldManagerConflict.qnt
+
+quint run --main=SsaFieldManagerConflict --init=forceHandoffRun --step=step \
+          --invariant=ForcedApplyTransfersOwnership --max-steps=0 \
+          formal/specs/SsaFieldManagerConflict.qnt
+
+# Explicit stale-manager revert counterexample.
+quint run --main=SsaFieldManagerConflict --init=staleManagerRevertRun --step=step \
+          --invariant=NoSilentRevertAfterConflict --max-steps=0 \
+          formal/specs/SsaFieldManagerConflict.qnt
+
+# Random-walk stable SSA bookkeeping.
+for inv in StableSafetyInvariants OwnerAlwaysKnown LastWriterMatchesValue; do
+  quint run --main=SsaFieldManagerConflict --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/SsaFieldManagerConflict.qnt
+done
+
+# Backend verdict: stale-manager revert reachable within depth 4.
+echo y | quint verify --main=SsaFieldManagerConflict --init=staleRevertInit --step=stepApalache \
+                      --invariant=NoSilentRevertAfterConflict \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/SsaFieldManagerConflict.qnt
+```
+
+Or, from `formal/`: `make verify-ssa-conflict`.
+
 ### Operator partial revert drops fields and controllers re-default them (issue #67)
 
 ```sh

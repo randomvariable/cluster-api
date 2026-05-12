@@ -144,6 +144,7 @@ For a contributor adding a new failure mode:
 | ClusterClassTopologyRace.qnt | 2 | 300×40 | **2/2 stable ClusterClass topology invariants** under random walk; explicit torn-read counterexample `ConsistentCCViewPerReconcile` reachable at Apalache depth 4 | — |
 | ClusterResourceSetTiming.qnt | 2 | 300×40 | **2/2 stable CRS timing invariants** under random walk; explicit ApplyOnce timing counterexample `ApplyOnceEventuallyTakesEffect` reachable at Apalache depth 4 | — |
 | ConcurrentClusterSpecEdits.qnt | 2 | 300×40 | **3/3 stable concurrent-edit invariants** under random walk; explicit lost-edit counterexample `NoLostEdit` reachable at Apalache depth 4 | — |
+| SsaFieldManagerConflict.qnt | 2 | 300×40 | **2/2 stable SSA ownership invariants** under random walk; explicit stale-manager revert counterexample `NoSilentRevertAfterConflict` reachable at Apalache depth 4 | — |
 | PartialRollbackDrop.qnt | 2 | 300×40 | **2/2 stable rollback/default bookkeeping invariants** under random walk; explicit redefine-loop counterexample `RedefaultConverges` reachable at Apalache depth 4 | — |
 | ClusterEditDeleteRace.qnt | 2 | 300×40 | **2/2 stable edit/delete bookkeeping invariants** under random walk; explicit stale-write-after-delete counterexample `NoWriteAfterDeleteObserved` reachable at Apalache depth 4 | — |
 | AutoscalerKcpSurgeRace.qnt | 2 | 300×40 | **3/3 stable autoscaler/rollout bookkeeping invariants** under random walk; explicit concurrent-scale counterexample `SurgeBoundUnderConcurrentScale` reachable at Apalache depth 4 | — |
