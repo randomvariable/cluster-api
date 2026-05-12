@@ -146,6 +146,7 @@ For a contributor adding a new failure mode:
 | ClusterClassPatches.qnt | 2 | 1000×60 | **5/5 stable invariants** at depth 4; `mergeDeterministicAllOrders` and `immutableMergedCandidate` retained as counterexample candidates | — |
 | ClusterClassTopologyRace.qnt | 2 | 300×40 | **2/2 stable ClusterClass topology invariants** under random walk; explicit torn-read counterexample `ConsistentCCViewPerReconcile` reachable at Apalache depth 4 | — |
 | ClusterResourceSetTiming.qnt | 2 | 300×40 | **2/2 stable CRS timing invariants** under random walk; explicit ApplyOnce timing counterexample `ApplyOnceEventuallyTakesEffect` reachable at Apalache depth 4 | — |
+| PvcBootstrapPending.qnt | 2 | 300×40 | **2/2 stable PVC/bootstrap bookkeeping invariants** under random walk; explicit pending-bootstrap counterexample `BootstrapDependencyOrdering` reachable at Apalache depth 4 | — |
 | ConcurrentClusterSpecEdits.qnt | 2 | 300×40 | **3/3 stable concurrent-edit invariants** under random walk; explicit lost-edit counterexample `NoLostEdit` reachable at Apalache depth 4 | — |
 | SsaFieldManagerConflict.qnt | 2 | 300×40 | **2/2 stable SSA ownership invariants** under random walk; explicit stale-manager revert counterexample `NoSilentRevertAfterConflict` reachable at Apalache depth 4 | — |
 | PartialRollbackDrop.qnt | 2 | 300×40 | **2/2 stable rollback/default bookkeeping invariants** under random walk; explicit redefine-loop counterexample `RedefaultConverges` reachable at Apalache depth 4 | — |

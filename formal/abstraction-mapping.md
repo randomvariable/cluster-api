@@ -847,6 +847,18 @@ ever becomes effective.
 | ClusterResourceSetTiming | `MarkControlPlaneInitialised` / `KubeletsJoin` | `internal/controllers/topology/cluster/cluster_controller.go:354` | Ground the race between control-plane init and later kubelet/node join readiness. |
 | ClusterResourceSetTiming | `ApplyOnceEventuallyTakesEffect` / `applyBeforeJoinRun` | same | Express the issue's counterexample: `ApplyOnce` consumes the one-shot apply window before kubelets have joined, so the payload never takes effect. |
 
+### PvcBootstrapPending.qnt
+
+Standalone PVC/StorageClass bootstrap dependency model for issue #55.
+This spec keeps a StorageClass-known bit, CSI installation bit, a single
+PVC phase, and whether the bootstrap pod has started.
+
+| Spec | Action / invariant surface | Go reference | Purpose |
+| ---- | -------------------------- | ------------ | ------- |
+| PvcBootstrapPending | `InstallStorageClass` / `InstallCsiDriver` | `util/resource/resource.go:35-39`, `internal/controllers/clusterresourceset/clusterresourceset_controller.go:292-447`, `internal/controllers/clusterresourceset/clusterresourceset_scope.go:81-87` | Ground the resource-ordering surface where ClusterResourceSets may install a CSI driver / StorageClass before workload pods that need PVCs. |
+| PvcBootstrapPending | `CreatePvc` / `BindPvc` / `StartBootstrapPod` | `internal/controllers/machine/machine_controller_status.go:167-255`, `internal/controllers/cluster/cluster_controller_status.go` | Ground the downstream symptom surface where bootstrap remains pending because infra/workload readiness never clears while storage is absent. |
+| PvcBootstrapPending | `BootstrapDependencyOrdering` / `missingStorageClassRun` | same | Express the issue's counterexample target: a PVC-using bootstrap dependency schedules before the needed StorageClass/CSI installation and remains pending forever. |
+
 ### AutoscalerKcpSurgeRace.qnt
 
 Standalone autoscaler + KCP surge-race model for issue #87. This spec

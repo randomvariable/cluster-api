@@ -91,6 +91,7 @@ MTUFRAG       := $(SPECS_DIR)/MtuFragmentation.qnt
 TOPO_REFINED  := $(SPECS_DIR)/TopologyRefined.qnt
 CCTOPORACE    := $(SPECS_DIR)/ClusterClassTopologyRace.qnt
 CRSTIMING     := $(SPECS_DIR)/ClusterResourceSetTiming.qnt
+PVCBOOT       := $(SPECS_DIR)/PvcBootstrapPending.qnt
 CRDSCHEMA     := $(SPECS_DIR)/CrdSchemaBump.qnt
 ADVERSARY     := $(SPECS_DIR)/AdversaryHarness.qnt
 CONCSPEC      := $(SPECS_DIR)/ConcurrentClusterSpecEdits.qnt
@@ -1819,6 +1820,43 @@ verify-crs-timing-apalache:  ## Apalache ApplyOnce timing counterexample at dept
 
 .PHONY: verify-crs-timing
 verify-crs-timing: verify-crs-timing-happy verify-crs-timing-counterexample verify-crs-timing-random verify-crs-timing-apalache  ## Full ClusterResourceSet ApplyOnce timing suite
+
+.PHONY: verify-pvc-bootstrap-happy
+verify-pvc-bootstrap-happy:  ## Drive CSI/storageclass installed before PVC-consuming pod schedules
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=PvcBootstrapPending --init=storageReadyFirstRun --step=step \
+	             --invariant=StableSafetyInvariants --max-steps=0 \
+	             $(PVCBOOT)
+	$(QUINT) run --backend=$(QUINT_BACKEND) \
+	             --main=PvcBootstrapPending --init=storageReadyFirstRun --step=step \
+	             --invariant=BootstrapDependencyOrdering --max-steps=0 \
+	             $(PVCBOOT)
+
+.PHONY: verify-pvc-bootstrap-counterexample
+verify-pvc-bootstrap-counterexample:  ## Drive missing StorageClass bootstrap hang counterexample
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) \
+	              --main=PvcBootstrapPending --init=missingStorageClassRun --step=step \
+	              --invariant=BootstrapDependencyOrdering --max-steps=0 \
+	              $(PVCBOOT)
+
+.PHONY: verify-pvc-bootstrap-random
+verify-pvc-bootstrap-random:  ## Random-walk stable PVC/bootstrap bookkeeping invariants (300x40)
+	@for inv in StableSafetyInvariants BoundImpliesStorageClassKnown PvcPhaseKnown; do \
+	  echo "==> $$inv"; \
+	  $(QUINT) run --backend=$(QUINT_BACKEND) --main=PvcBootstrapPending \
+	               --invariant=$$inv --max-samples=300 --max-steps=40 \
+	               $(PVCBOOT) || exit 1; \
+	done
+
+.PHONY: verify-pvc-bootstrap-apalache
+verify-pvc-bootstrap-apalache:  ## Apalache missing StorageClass bootstrap hang at depth 4
+	-@echo y | $(QUINT) verify --main=PvcBootstrapPending --init=missingStorageClassInit \
+	                  --step=stepApalache --invariant=BootstrapDependencyOrdering \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache \
+	                  $(PVCBOOT)
+
+.PHONY: verify-pvc-bootstrap
+verify-pvc-bootstrap: verify-pvc-bootstrap-happy verify-pvc-bootstrap-counterexample verify-pvc-bootstrap-random verify-pvc-bootstrap-apalache  ## Full PVC/StorageClass bootstrap dependency suite
 
 .PHONY: verify-crd-schema-happy
 verify-crd-schema-happy:  ## Drive migrated-object path after schema bump

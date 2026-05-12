@@ -1197,6 +1197,39 @@ echo y | quint verify --main=ClusterResourceSetTiming --init=applyBeforeJoinInit
 
 Or, from `formal/`: `make verify-crs-timing`.
 
+### PVC pending blocks bootstrap — missing StorageClass on workload cluster (issue #55)
+
+```sh
+# CSI/StorageClass are installed before the PVC-using bootstrap pod starts.
+quint run --main=PvcBootstrapPending --init=storageReadyFirstRun --step=step \
+          --invariant=StableSafetyInvariants --max-steps=0 \
+          formal/specs/PvcBootstrapPending.qnt
+
+quint run --main=PvcBootstrapPending --init=storageReadyFirstRun --step=step \
+          --invariant=BootstrapDependencyOrdering --max-steps=0 \
+          formal/specs/PvcBootstrapPending.qnt
+
+# Explicit missing-StorageClass bootstrap hang counterexample.
+quint run --main=PvcBootstrapPending --init=missingStorageClassRun --step=step \
+          --invariant=BootstrapDependencyOrdering --max-steps=0 \
+          formal/specs/PvcBootstrapPending.qnt
+
+# Random-walk stable PVC/bootstrap bookkeeping.
+for inv in StableSafetyInvariants BoundImpliesStorageClassKnown PvcPhaseKnown; do
+  quint run --main=PvcBootstrapPending --invariant=$inv \
+            --max-samples=300 --max-steps=40 \
+            formal/specs/PvcBootstrapPending.qnt
+done
+
+# Backend verdict: missing StorageClass bootstrap hang reachable within depth 4.
+echo y | quint verify --main=PvcBootstrapPending --init=missingStorageClassInit --step=stepApalache \
+                      --invariant=BootstrapDependencyOrdering \
+                      --max-steps=4 --backend=apalache \
+                      formal/specs/PvcBootstrapPending.qnt
+```
+
+Or, from `formal/`: `make verify-pvc-bootstrap`.
+
 ### Concurrent `Cluster.spec` edits from two operators (issue #65)
 
 ```sh

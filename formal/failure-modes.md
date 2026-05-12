@@ -3480,6 +3480,41 @@ within depth 4 (`make verify-cloud-iam-apalache`).
 
 **Classification.** **MODELLING** (counterexample candidate).
 
+## FM-120 — PVC-using bootstrap work starts before StorageClass / CSI installation
+
+**Provenance.** **Modelling** — issue #55 standalone PVC/bootstrap
+dependency slice (`PvcBootstrapPending.qnt`). The model is grounded in
+the real ClusterResourceSet ordering surface and the fact that
+`StorageClass` is a concrete resource kind already handled by the repo.
+
+**Trigger.** A bootstrap-critical Pod (or equivalent dependency) creates
+its PVC before the CSI driver and/or StorageClass are available on the
+fresh workload cluster. The PVC remains pending, the bootstrap Pod never
+starts, and higher-level readiness stays blocked.
+
+**Init / scenarios.** `storageReadyFirstRun` shows the intended regime:
+install StorageClass and CSI first, create the PVC, bind it, then start
+the bootstrap Pod, satisfying `BootstrapDependencyOrdering`.
+`missingStorageClassRun` creates the PVC first and only retries pending,
+violating the same property because bootstrap remains blocked forever.
+
+**LSP grounding.**
+
+| Go entry point | File | Line |
+|---|---|---|
+| Resource ordering / apply surface | `internal/controllers/clusterresourceset/clusterresourceset_controller.go` | 292-447 |
+| CRS strategy split | `internal/controllers/clusterresourceset/clusterresourceset_scope.go` | 81-87 |
+| Concrete `StorageClass` resource kind | `util/resource/resource.go` | 35-39 |
+| Downstream infra readiness mirror | `internal/controllers/machine/machine_controller_status.go` | 167-255 |
+
+**Verdict.** Deliberate counterexample candidate. `quint run`
+reproduces the missing-StorageClass bootstrap hang via
+`missingStorageClassRun`, and Apalache reaches the same
+`BootstrapDependencyOrdering` violation from `missingStorageClassInit`
+within depth 4 (`make verify-pvc-bootstrap-apalache`).
+
+**Classification.** **MODELLING** (counterexample candidate).
+
 ## FM-117 — CSI volume detach hang blocks the node/machine finalizer chain
 
 **Provenance.** **Modelling** — issue #56 standalone CSI detach /
@@ -4148,6 +4183,7 @@ reason that the operator can read.
 | FM-107 | Projected ServiceAccount token rotates mid-reconcile and the controller fails on 401 | MODELLING | Controller refreshes token and retries after 401 in the safe regime | Logged as deliberate counterexample candidate on `NoSilentReconcileFailure` in `specs/ServiceAccountTokenRotation.qnt`; Apalache reaches the stale-token auth failure within depth 4 |
 | FM-112 | IAM policy revocation strands partially provisioned machines | MODELLING | Persistent 403s force abort before a zombie machine remains in the safe regime | Logged as deliberate counterexample candidate on `NoZombieMachine` in `specs/CloudIamPermissionLoss.qnt`; Apalache reaches the zombie-machine state within depth 4 |
 | FM-117 | CSI volume detach hang blocks the node/machine finalizer chain | MODELLING | Operator force-detach or detach completion clears the chain in the safe regime | Logged as deliberate counterexample candidate on `OperatorEscapeHatch` in `specs/VolumeDetachFinalizer.qnt`; Apalache reaches the stuck-detach state within depth 4 |
+| FM-120 | PVC-using bootstrap work starts before StorageClass / CSI installation | MODELLING | Storage primitives are installed before the PVC-using pod starts in the safe regime | Logged as deliberate counterexample candidate on `BootstrapDependencyOrdering` in `specs/PvcBootstrapPending.qnt`; Apalache reaches the pending-bootstrap state within depth 4 |
 | FM-116 | Endpoint swap leaves kubeconfigs pointing at an old control-plane endpoint | MODELLING | Kubeconfigs are regenerated and converge to the new endpoint in the safe regime | Logged as deliberate counterexample candidate on `AllKubeconfigsConvergeToCurrent` in `specs/EndpointSwapKubeconfig.qnt`; Apalache reaches the stale-endpoint state within depth 4 |
 | FM-115 | Subnet/IPAM exhaustion leaves scale-up pending without surfacing the cause | MODELLING | Exhaustion is surfaced as a higher-level condition in the safe regime | Logged as deliberate counterexample candidate on `NoSilentInfiniteRetry` in `specs/IpamExhaustion.qnt`; Apalache reaches the silent-retry state within depth 4 |
 | FM-109 | Status subresource lags and another controller acts on stale phase | MODELLING | Status catches up and level-triggered readers tolerate lag in the safe regime | Logged as deliberate counterexample candidate on `LevelTriggeredControllersTolerateLag` in `specs/StatusSubresourceLag.qnt`; Apalache reaches the stale-status decision within depth 4 |
