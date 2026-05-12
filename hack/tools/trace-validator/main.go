@@ -39,6 +39,7 @@ import (
 
 	"sigs.k8s.io/cluster-api/internal/trace"
 	"sigs.k8s.io/cluster-api/internal/trace/checkers"
+	etcdscheduler "sigs.k8s.io/cluster-api/internal/trace/checkers/etcdscheduler"
 )
 
 func main() {
@@ -109,6 +110,7 @@ func evaluate(records []trace.TraceRecord) ([]trace.Verdict, int) {
 		checkers.KubeadmJoin{},
 		checkers.KCPReconcile{},
 		checkers.MHC{},
+		etcdscheduler.Checker{},
 	}
 
 	verdicts := make([]trace.Verdict, 0, len(all))

@@ -1019,6 +1019,17 @@ verify-refinement: ## Run abstraction-mapping refinement tests (issue #13 Phase 
 	    echo "==> Refinement coverage: $$covered actions covered (mapping count unknown)"; \
 	  fi
 
+.PHONY: formal-refinement
+formal-refinement: ## Run remediation trace-refinement corpus (issue #107)
+	go test -count=1 ./internal/trace/checkers/etcdscheduler/...
+	(cd hack/tools && go test -tags tools -count=1 ./trace-validator)
+	@for fixture in \
+	  internal/trace/testdata/remediation_orphan_etcd_learner.jsonl \
+	  internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl; do \
+	  echo "==> $$fixture"; \
+	  (cd hack/tools && go run -tags tools ./trace-validator -format jsonl "../../$$fixture") || exit 1; \
+	done
+
 .PHONY: test-race
 test-race: ## Run the trace + chaos packages under -race (issue #12)
 	go test -race -count=1 ./internal/trace/... ./internal/chaos/... ./internal/refinement/...

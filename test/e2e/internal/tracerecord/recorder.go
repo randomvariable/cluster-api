@@ -195,3 +195,59 @@ func (r *E2ERecorder) ObserveLearnerProgress(nodeName, progress string) error {
 		},
 	)
 }
+
+// ReadGate records the remediation gate's admission-time snapshot.
+func (r *E2ERecorder) ReadGate(machine string, voters []string, inFlightCount int, result bool, targetIsLearner bool, admissionVoterCount int) error {
+	return r.inner.Record(
+		trace.SpecRemediation,
+		"ReadGate",
+		machine,
+		map[string]any{
+			"member":               machine,
+			"voterSet":             voters,
+			"inFlightCount":        inFlightCount,
+			"result":               result,
+			"targetIsLearner":      targetIsLearner,
+			"admissionVoterCount":  admissionVoterCount,
+		},
+	)
+}
+
+// CommitAdmission records the CAS-checked commit-time state before an RPC.
+func (r *E2ERecorder) CommitAdmission(machine string, freshVoters []string, freshTargetIsLearner bool) error {
+	return r.inner.Record(
+		trace.SpecRemediation,
+		"CommitAdmission",
+		machine,
+		map[string]any{
+			"member":               machine,
+			"freshVoterSet":        freshVoters,
+			"freshTargetIsLearner": freshTargetIsLearner,
+		},
+	)
+}
+
+// CommitAdmissionAborted records an expected CAS abort.
+func (r *E2ERecorder) CommitAdmissionAborted(machine, reason string) error {
+	return r.inner.Record(
+		trace.SpecRemediation,
+		"CommitAdmissionAborted",
+		machine,
+		map[string]any{
+			"member": machine,
+			"reason": reason,
+		},
+	)
+}
+
+// RemoveMemberRPC records that the actual etcd removal RPC was issued.
+func (r *E2ERecorder) RemoveMemberRPC(machine string) error {
+	return r.inner.Record(
+		trace.SpecRemediation,
+		"RemoveMemberRPC",
+		machine,
+		map[string]any{
+			"member": machine,
+		},
+	)
+}

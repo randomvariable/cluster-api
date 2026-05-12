@@ -29,6 +29,7 @@ const (
 	SpecEtcdMembership     SpecModule = "EtcdMembership"
 	SpecKubeadmJoin        SpecModule = "KubeadmJoin"
 	SpecKCPReconcile       SpecModule = "KCPReconcile"
+	SpecRemediation        SpecModule = "Remediation"
 	SpecMachineHealthCheck SpecModule = "MachineHealthCheck"
 	SpecComposition        SpecModule = "Composition"
 )

@@ -161,6 +161,47 @@ internal/refinement/
 ├── refinement.go                       # Case / Suite / Verdict
 ├── recorder_refinement_test.go         # 8 EtcdMembership cases
 └── multi_spec_refinement_test.go       # 5 KubeadmJoin cases + loader identities
+internal/trace/checkers/etcdscheduler/
+├── checker.go                          # Remediation admission↔commit checker
+└── checker_test.go                     # synthetic stale-voter / learner-promotion cases
+internal/trace/testdata/
+├── remediation_orphan_etcd_learner.jsonl
+└── remediation_concurrent_cp_remediation.jsonl
 formal/
 └── refinement-verification.md          # (this file)
 ```
+
+## Remediation trace-refinement corpus (issue #107)
+
+`formal-refinement` is the CI-style entrypoint for the remediation trace
+checker added under `internal/trace/checkers/etcdscheduler/`. The checker
+validates two paired admission↔commit refinement properties over
+`trace.SpecRemediation` records:
+
+- `GateAndCommitObserveConsistentState`
+- `EveryRemoveMemberHasMatchingValidCommitAdmission`
+
+Current corpus members:
+
+- `internal/trace/testdata/remediation_orphan_etcd_learner.jsonl`
+  - orphan-learner path where the commit is correctly aborted while the
+    etcd member is still joining / unnamed
+- `internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl`
+  - two-machine remediation trace where the second commit is correctly
+    aborted after the first removal is already in flight
+
+How to add a new remediation trace:
+
+1. Record JSONL `trace.SpecRemediation` events using the recorder helpers in
+   `test/e2e/internal/tracerecord/recorder.go`:
+   - `ReadGate`
+   - `CommitAdmission`
+   - `CommitAdmissionAborted`
+   - `RemoveMemberRPC`
+2. Save the fixture under `internal/trace/testdata/`.
+3. Add the fixture path to `TestLoadRecordsRemediationFixtures`.
+4. Add the fixture path to the `formal-refinement` Make target if it is a
+   PASS corpus member.
+5. For a FAIL-only synthetic trace (e.g. stale voter count or learner
+   promotion at commit-time), keep it in the checker unit tests instead of
+   the passing corpus.

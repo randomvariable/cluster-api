@@ -61,3 +61,32 @@ func TestLoadRecordsCAPDLogTranslatorGapFixture(t *testing.T) {
 		t.Fatal("expected translator gap fixture to fail loading")
 	}
 }
+
+func TestLoadRecordsRemediationFixtures(t *testing.T) {
+	t.Parallel()
+
+	fixtures := []string{
+		"../../../internal/trace/testdata/remediation_orphan_etcd_learner.jsonl",
+		"../../../internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl",
+	}
+
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture, func(t *testing.T) {
+			f, err := os.Open(fixture)
+			if err != nil {
+				t.Fatalf("open fixture: %v", err)
+			}
+			defer f.Close()
+
+			records, err := loadRecords("jsonl", f)
+			if err != nil {
+				t.Fatalf("loadRecords(jsonl): %v", err)
+			}
+			verdicts, failed := evaluate(records)
+			if failed != 0 {
+				t.Fatalf("expected no checker failures, got %d: %+v", failed, verdicts)
+			}
+		})
+	}
+}

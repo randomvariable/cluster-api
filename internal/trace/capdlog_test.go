@@ -23,6 +23,7 @@ import (
 
 	"sigs.k8s.io/cluster-api/internal/trace"
 	"sigs.k8s.io/cluster-api/internal/trace/checkers"
+	etcdscheduler "sigs.k8s.io/cluster-api/internal/trace/checkers/etcdscheduler"
 )
 
 func TestLoadCAPDLogs_Fixtures(t *testing.T) {
@@ -39,6 +40,7 @@ func TestLoadCAPDLogs_Fixtures(t *testing.T) {
 		checkers.KubeadmJoin{},
 		checkers.KCPReconcile{},
 		checkers.MHC{},
+		etcdscheduler.Checker{},
 	}
 
 	for _, fixture := range fixtures {
