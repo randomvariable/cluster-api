@@ -1,0 +1,19 @@
+formal/failure-modes-categorised.md
+  s_cd19fd3b1ee532::t_2fe9aa48fd9912 1-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "6bf69049e2e599c41ce563b5c09a0d8cc75c66c4",
+  "prompts": {},
+  "sessions": {
+    "s_cd19fd3b1ee532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c35eafec-c0b6-4e53-8c22-ba2dc2d03d4c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Naadir Jeewa <naadir.jeewa@broadcom.com>"
+    }
+  }
+}
