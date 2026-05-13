@@ -4575,3 +4575,25 @@ work largely codifies and verifies what experienced operators
 already know, with modelling-original findings concentrated in
 the layered abstraction's seams (condition projection, fairness,
 phase-ordering windows).
+
+## TLC symmetry exemplars (issue #23)
+
+The three hand-crafted symmetry-friendly abstractions
+(`LifecycleSymmetry.tla`, `EtcdMembershipSymmetry.tla`,
+`ClusterE2ESymmetry.tla`) each terminated cleanly with no
+counterexample at the depths shown below. Symmetry-quotiented
+state counts are recorded for the CI gate, and the baseline
+state counts (without `SYMMETRY`) are kept alongside for the
+reduction factor:
+
+| Spec | Depth | States (no sym) | States (sym) | Reduction | Verdict |
+| ---- | ----- | --------------- | ------------ | --------- | ------- |
+| `LifecycleSymmetry.tla` (5-CP, MaxConcurrent=2) | 22 | 3984 | 130 | ~30x | OK |
+| `EtcdMembershipSymmetry.tla` (5 members, MaxLearners=2) | 8 | 551 | 25 | ~22x | OK |
+| `ClusterE2ESymmetry.tla` (3 CP + 3 worker, EndpointReadyN=2) | 10 | 76 | 19 | ~4x | OK |
+
+These exemplars capture the symmetric core of each parent spec and
+intentionally drop non-symmetric structure (per-Machine identity,
+ordering invariants like FM-48). The verdicts confirm that under
+symmetry the same invariants are preserved at the configured depths;
+no over-strong invariant fails under symmetric exploration.

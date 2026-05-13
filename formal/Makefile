@@ -191,36 +191,50 @@ tlc:  ## Run TLC on every TLA+ module that has a .cfg
 	done
 
 .PHONY: tlc-symmetry-prepare
-tlc-symmetry-prepare:  ## Compile Quint specs into TLC symmetry scratch dir
-	@if ! command -v $(QUINT) >/dev/null 2>&1; then \
-	  echo "SKIP: quint not in PATH"; \
-	  exit 0; \
-	fi
-	@$(MKDIR_P) $(TLC_SYMMETRY_DIR)/Lifecycle $(TLC_SYMMETRY_DIR)/EtcdMembership $(TLC_SYMMETRY_DIR)/ClusterE2E
-	@$(QUINT) compile $(LIFECYCLE) --target tlaplus > $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla
-	@$(QUINT) compile $(SPECS_DIR)/EtcdMembership.qnt --target tlaplus > $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla
-	@$(QUINT) compile $(E2E) --target tlaplus > $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla
-	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/Lifecycle/
-	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/EtcdMembership/
-	@$(CP) $(SPECS_DIR)/Apalache.tla $(SPECS_DIR)/Variants.tla $(TLC_SYMMETRY_DIR)/ClusterE2E/
+tlc-symmetry-prepare:  ## (deprecated) Was a quint -> TLA+ compile step; the
+                       ## generated spec was not a sound symmetry domain
+                       ## (Int IDs with arithmetic). Kept as a documented
+                       ## no-op so historical pipelines do not break.
+	@true
 
 .PHONY: verify-tlc-symmetry-lifecycle
-verify-tlc-symmetry-lifecycle: tlc-symmetry-prepare  ## TLC symmetry run for Lifecycle
-	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla"); t = p.read_text(); marker = "\n============================================================================="; p.write_text(t.replace(marker, "\nSymmetry == Permutations(MACHINES)" + marker, 1))'
-	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY Symmetry\nINVARIANTS\n    AllSafetyInvariants\n' > $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.cfg
-	@$(TLC) -config $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.cfg $(TLC_SYMMETRY_DIR)/Lifecycle/Lifecycle.tla
+verify-tlc-symmetry-lifecycle:  ## TLC symmetry run for LifecycleSymmetry.tla (issue #23)
+	@if ! command -v $(TLC) >/dev/null 2>&1; then \
+	  echo "SKIP: tlc not in PATH"; \
+	  exit 0; \
+	fi
+	@echo "==> WITH symmetry"
+	@$(TLC) -config $(SPECS_DIR)/LifecycleSymmetry.cfg $(SPECS_DIR)/LifecycleSymmetry.tla
+	@sleep 1
+	@echo "==> WITHOUT symmetry (for reduction-factor comparison)"
+	@$(TLC) -config $(SPECS_DIR)/LifecycleSymmetry.nosymmetry.cfg $(SPECS_DIR)/LifecycleSymmetry.tla
 
 .PHONY: verify-tlc-symmetry-etcd
-verify-tlc-symmetry-etcd: tlc-symmetry-prepare  ## TLC symmetry run for EtcdMembership
-	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla"); t = p.read_text(); marker = "\n============================================================================="; p.write_text(t.replace(marker, "\nSymmetry == Permutations(MEMBERS)" + marker, 1))'
-	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY Symmetry\nINVARIANTS\n    AllInvariants\n' > $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.cfg
-	@$(TLC) -config $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.cfg $(TLC_SYMMETRY_DIR)/EtcdMembership/EtcdMembership.tla
+verify-tlc-symmetry-etcd:  ## TLC symmetry run for EtcdMembershipSymmetry.tla (issue #23)
+	@if ! command -v $(TLC) >/dev/null 2>&1; then \
+	  echo "SKIP: tlc not in PATH"; \
+	  exit 0; \
+	fi
+	@echo "==> WITH symmetry"
+	@$(TLC) -config $(SPECS_DIR)/EtcdMembershipSymmetry.cfg $(SPECS_DIR)/EtcdMembershipSymmetry.tla
+	@sleep 1
+	@echo "==> WITHOUT symmetry"
+	@$(TLC) -config $(SPECS_DIR)/EtcdMembershipSymmetry.nosymmetry.cfg $(SPECS_DIR)/EtcdMembershipSymmetry.tla
 
 .PHONY: verify-tlc-symmetry-clustere2e
-verify-tlc-symmetry-clustere2e: tlc-symmetry-prepare  ## TLC symmetry run for ClusterE2E
-	@python3 -c 'from pathlib import Path; p = Path("$(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla"); t = p.read_text(); marker = "\n============================================================================="; sym = "\nCpWorkerSymmetry == { [id \\in ALL_MACHINES |-> IF id \\in CP_MACHINES THEN cp[id] ELSE wk[id]] : cp \\in Permutations(CP_MACHINES), wk \\in Permutations(WORKER_MACHINES) }"; p.write_text(t.replace(marker, sym + marker, 1))'
-	@printf 'INIT q_init\nNEXT q_step\nCHECK_DEADLOCK FALSE\nSYMMETRY CpWorkerSymmetry\nINVARIANTS\n    AllSafetyInvariants\n' > $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.cfg
-	@$(TLC) -config $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.cfg $(TLC_SYMMETRY_DIR)/ClusterE2E/ClusterE2E.tla
+verify-tlc-symmetry-clustere2e:  ## TLC symmetry run for ClusterE2ESymmetry.tla (issue #23)
+	@if ! command -v $(TLC) >/dev/null 2>&1; then \
+	  echo "SKIP: tlc not in PATH"; \
+	  exit 0; \
+	fi
+	@echo "==> WITH compound CP/worker symmetry"
+	@$(TLC) -config $(SPECS_DIR)/ClusterE2ESymmetry.cfg $(SPECS_DIR)/ClusterE2ESymmetry.tla
+	@sleep 1
+	@echo "==> WITHOUT symmetry"
+	@$(TLC) -config $(SPECS_DIR)/ClusterE2ESymmetry.nosymmetry.cfg $(SPECS_DIR)/ClusterE2ESymmetry.tla
+
+.PHONY: verify-tlc-symmetry
+verify-tlc-symmetry: verify-tlc-symmetry-lifecycle verify-tlc-symmetry-etcd verify-tlc-symmetry-clustere2e  ## All three symmetry exemplars (issue #23)
 
 .PHONY: verify-tlc-symmetry
 verify-tlc-symmetry: verify-tlc-symmetry-lifecycle verify-tlc-symmetry-etcd verify-tlc-symmetry-clustere2e  ## TLC symmetry runs for Lifecycle, EtcdMembership, ClusterE2E

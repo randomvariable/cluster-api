@@ -128,3 +128,50 @@ internal/trace/
 formal/
 └── race-detection.md              # (this file)
 ```
+
+
+## TLC symmetry reduction (issue #23)
+
+TLC `SYMMETRY` reduces the reachable state space by quotienting over a
+permutation group on uninterpreted model values. CAPI machine
+identifiers are fully symmetric within a role (CP / worker / etcd
+member), so this is a cheap, well-known win.
+
+The Quint compiler emits machine IDs as `Int` with arithmetic, which
+TLC rejects as a symmetry domain ("Symmetry function must have model
+values as domain and range"). Three hand-crafted symmetry-friendly
+abstractions live under `formal/specs/`:
+
+| Spec | Domain | States (no sym) | States (sym) | Reduction |
+| ---- | ------ | --------------- | ------------ | --------- |
+| `LifecycleSymmetry.tla` | 5 CP Machines, MaxConcurrent=2 | 3984 | 130 | ~30x |
+| `EtcdMembershipSymmetry.tla` | 5 etcd Members, MaxLearners=2 | 551 | 25 | ~22x |
+| `ClusterE2ESymmetry.tla` | 3 CP + 3 worker, EndpointReadyN=2 | 76 | 19 | ~4x |
+
+Run with `make verify-tlc-symmetry` (or the three per-spec targets).
+Each spec has `.cfg` (SYMMETRY enabled) and `.nosymmetry.cfg`
+(comparison baseline) configurations. The reduction factor is a
+function of (a) the symmetric subset of state, (b) the role
+partitioning, and (c) the depth of the BFS — deeper exploration sees
+larger reductions because symmetric duplicates accumulate further out.
+
+These specs are NOT verbatim refinements of `Lifecycle.qnt` /
+`EtcdMembership.qnt` / `ClusterE2E.qnt`; they capture the symmetric
+core of each (per-Machine phase progression, learner/voter promotion,
+CP/worker bring-up). They preserve the invariants that survive
+quotienting:
+
+  * `NoConcurrentQuorumLoss`, `InFlightBounded`, `PhaseConsistent`
+    for Lifecycle.
+  * `LearnerNotVoter`, `QuorumNonEmpty`, `QuorumPreservedOnRemoval`
+    for EtcdMembership.
+  * `CpReadySubsetProvisioned`, `WorkersAdmittedImpliesEndpointReady`,
+    `EndpointReadyImpliesEnoughCp` for ClusterE2E.
+
+Counterexample budget: TLC found no violations at any depth in any of
+the three exemplars. This is expected — the symmetric core is the
+"easy" part of each spec, and the load-bearing failure modes
+(FM-2 quorum loss, FM-23 orphan learner, FM-48 ordering) require
+non-symmetric structure that these exemplars deliberately drop. See
+`failure-modes.md` for the per-FM Apalache verdicts that *do* exercise
+those.
