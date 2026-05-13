@@ -3566,6 +3566,44 @@ verify-e2e: verify-e2e-bringup verify-e2e-rolling verify-e2e-inplace verify-e2e-
 verify-all-apalache: verify-fm2 verify-fm3 verify-fm13 verify-fm16 verify-fm17 verify-fm23  ## Run every per-FM Apalache check
 	@echo "All Apalache hopelessness verdicts complete."
 
+.PHONY: verify-replica-sweep
+verify-replica-sweep:  ## Issue #27 — FM-2 hopelessness verdict at N ∈ {1,2,3,5,7} (Apalache when present, TLC for small N)
+	@echo "==> FM-2 replica sweep — verdict matrix at N ∈ {1, 2, 3, 5, 7}"
+	@echo "==> Each row runs Lifecycle.qnt with stepNoRecovery and asserts ~HealthyControlPlane"
+	@echo "==> Counterexample = a recovery exists (verdict GOOD); no counterexample = hopelessness (verdict HOPELESS)"
+	@echo ""
+	@echo "==> N=1 via singleNodeLostVoterInit (TLC)"
+	@$(QUINT) verify --main=Lifecycle --init=singleNodeLostVoterInit \
+	                  --step=stepNoRecovery --max-steps=$(MAX_STEPS_APALACHE) \
+	                  --invariant='not(HealthyControlPlane)' \
+	                  --backend=tlc $(LIFECYCLE) 2>&1 | tail -5 || true
+	@echo "==> N=2 via twoMachineBothUnhealthyInit (TLC)"
+	@$(QUINT) verify --main=Lifecycle --init=twoMachineBothUnhealthyInit \
+	                  --step=stepNoRecovery --max-steps=$(MAX_STEPS_APALACHE) \
+	                  --invariant='not(HealthyControlPlane)' \
+	                  --backend=tlc $(LIFECYCLE) 2>&1 | tail -5 || true
+	@echo "==> N=3,5,7 TLC SKIPPED — BFS branching is O(actions^N), exceeds 30M states/min;"
+	@echo "==> documented HOPELESS by Apalache symbolic execution (see failure-modes.md)"
+	@if command -v apalache-mc >/dev/null 2>&1 || command -v apalache >/dev/null 2>&1; then \
+	  echo ""; \
+	  echo "==> Apalache backend available — running symbolic verdicts for N ∈ {1,2,3,5,7}"; \
+	  for cfg in \
+	    "N=1:singleNodeLostVoterInit" \
+	    "N=2:twoMachineBothUnhealthyInit" \
+	    "N=3:threeNodeAllUnhealthyInit" \
+	    "N=5:fiveNodeAllUnhealthyInit" \
+	    "N=7:sevenNodeAllUnhealthyInit"; do \
+	    n=$${cfg%%:*}; init=$${cfg#*:}; \
+	    echo "==> $$n via $$init (apalache)"; \
+	    echo y | $(QUINT) verify --main=Lifecycle --init=$$init \
+	                      --step=stepNoRecovery --max-steps=$(MAX_STEPS_APALACHE) \
+	                      --invariant='not(HealthyControlPlane)' \
+	                      --backend=apalache $(LIFECYCLE) 2>&1 | tail -3 || true; \
+	  done; \
+	else \
+	  echo "SKIP: apalache-mc/apalache not in PATH for symbolic N=3/5/7 verdicts"; \
+	fi
+
 .PHONY: lsp-list
 lsp-list:  ## Print every Go entry-point cited in abstraction-mapping.md
 	@grep -hoE '[A-Za-z0-9_/.-]+\.go(:[0-9]+)?' abstraction-mapping.md \

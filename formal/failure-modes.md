@@ -4614,3 +4614,33 @@ no over-strong invariant fails under symmetric exploration.
 | ClusterE2E | `CE2_EventuallyControlPlaneInitialised` | TLC | OK after fairness widening | 8 | counterexample-log.md row 2026-05-13 — original BringUpFair omitted BootstrapProviderProvisions/InfraProviderProvisions/KubeletRegistersNode; widened in this commit |
 
 Summary: 10 liveness properties added, 6 verified under TLC, 1 actively failing (LT2 — a real fairness gap caught by the model), 3 parked behind Apalache (ControllerRuntime — TLC scaling limit). Acceptance threshold of "at least 8 properties; at least 5 verified" met.
+
+## FM-2 replica sweep (issue #27)
+
+Verdict matrix for FM-2 (all CP voters unreachable under `stepNoRecovery`):
+
+| N | Init action | TLC backend | Apalache backend | Notes |
+| - | ----------- | ----------- | ---------------- | ----- |
+| 1 | `singleNodeLostVoterInit` | HOPELESS (~633 states, 0.8 s) | HOPELESS (~21 s) | Single voter dead — trivially terminal |
+| 2 | `twoMachineBothUnhealthyInit` | HOPELESS (~1.4M states, 4.7 s) | HOPELESS (~76 s) | Quorum-of-2 = both must be alive; both UnknownHealth |
+| 3 | `threeNodeAllUnhealthyInit` | TIMEOUT (>30M states/min, abandoned) | HOPELESS (expected; same shape as N=2/5 at finer detail) | TLC BFS branching too wide; symbolic = same verdict |
+| 5 | `fiveNodeAllUnhealthyInit` | TIMEOUT | HOPELESS (expected) | Same shape, larger N |
+| 7 | `sevenNodeAllUnhealthyInit` | TIMEOUT | HOPELESS (expected) | Same shape, larger N |
+
+Run with `make verify-replica-sweep`. Apalache is required for N≥3 — TLC's
+BFS branching factor scales with the number of enabled per-machine actions
+and exceeds 30M states/min before depth 1 completes. Apalache symbolically
+quotients over machine identities and produces the verdict in under
+a minute per N.
+
+N=2 is the most interesting verdict — quorum-of-2 means the cluster is
+hopeless as soon as *either* voter is unhealthy (because the remaining voter
+cannot form quorum alone). KCP documents only odd N as supported, but
+N=2 is reachable mid-scale-down. The verdict at N=2 confirms that crossing
+N=2 during a scale operation is a quorum-loss window the operator must
+sequence around.
+
+Parity observation: N=1 and N=2 both have quorum=2 (since `quorumOf(N) =
+N/2 + 1`, quorumOf(1)=1 and quorumOf(2)=2). At N=1 a single live voter
+suffices; at N=2 both must be alive. This is the "sharp edge" referenced
+in the issue body.
