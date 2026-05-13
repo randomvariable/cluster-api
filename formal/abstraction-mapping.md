@@ -107,6 +107,21 @@ consistency check the Go production code performs at commit time
 | RemediationCAS | `GateAndCommitObserveConsistentState` | same | Refinement invariant: `freshVoterSet.size() >= admissionVoterCount` AND `(targetIsLearner => freshTargetIsLearner)` at every successful commit. |
 | RemediationCAS | `EveryRemoveMemberHasMatchingValidCommitAdmission` | same | Refinement invariant: every `RemoveMemberRPC` has a successful (non-aborted) `CommitAdmission` predecessor for the same Machine. |
 
+### ValidatingAdmissionPolicy.qnt
+
+VAP CEL-timeout failure mode (issue #37). Models a single VAP with
+`failurePolicy ∈ {Ignore, Fail}`, a `celBroken` flag, and a stream of
+admission requests with per-request validity and eval outcomes.
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| ValidatingAdmissionPolicy | `CelBecomesBroken` | k8s.io/apiserver/pkg/cel/eval (CEL eval timeout machinery; 1-second hard cap) | Models a Param-referencing CEL expression starting to time out for every incoming request. |
+| ValidatingAdmissionPolicy | `CelGetsFixed` | same | The author edits the CEL expression; eval no longer times out. |
+| ValidatingAdmissionPolicy | `SubmitInvalidRequest` | k8s.io/apiserver/pkg/admission/plugin/validatingadmissionpolicy (admission entry) | A request arrives that's invalid under the policy. |
+| ValidatingAdmissionPolicy | `ResolveRequest` | same | The admission plugin reaches its verdict: depends on evalOutcome × validity × failurePolicy. |
+| ValidatingAdmissionPolicy | `IgnoreWindowDoesNotMutateInvariants` | same | Negative invariant: under `Ignore`, invalid requests do NOT silently land. The counterexample run `ignoreAdmitsInvalidRun` demonstrates the failure mode. |
+| ValidatingAdmissionPolicy | `FailWindowDoesNotMutateInvariants` | same | Positive invariant: under `Fail`, no invalid request lands across the CEL-broken window. |
+
 ### Drain & PDB
 
 | Spec | Action | Go reference | Purpose |

@@ -3648,6 +3648,38 @@ lsp-list:  ## Print every Go entry-point cited in abstraction-mapping.md
 	@grep -hoE '[A-Za-z0-9_/.-]+\.go(:[0-9]+)?' abstraction-mapping.md \
 	  lsp-grounding.md | sort -u
 
+VAP := $(SPECS_DIR)/ValidatingAdmissionPolicy.qnt
+
+.PHONY: verify-vap-counterexample
+verify-vap-counterexample:  ## FM-VAP-37: Ignore policy + CEL timeout admits invalid request
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=ValidatingAdmissionPolicy \
+	             --init=ignoreAdmitsInvalidRun --step=step \
+	             --invariant=IgnoreWindowDoesNotMutateInvariants --max-steps=0 $(VAP)
+
+.PHONY: verify-vap-fail-heals
+verify-vap-fail-heals:  ## FM-VAP-37: Fail policy admits no invalid request even after CEL is fixed
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ValidatingAdmissionPolicy \
+	             --init=failHealsRun --step=step \
+	             --invariant=FailWindowDoesNotMutateInvariants --max-steps=0 $(VAP)
+
+.PHONY: verify-vap-random
+verify-vap-random:  ## Random walk for VAP (200x60)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=ValidatingAdmissionPolicy \
+	             --invariant=FailWindowDoesNotMutateInvariants \
+	             --max-samples=200 --max-steps=60 $(VAP)
+
+.PHONY: verify-vap-apalache
+verify-vap-apalache:  ## FM-VAP-37 Apalache hopelessness verdict at depth 4
+	-@echo y | $(QUINT) verify --main=ValidatingAdmissionPolicy --init=init \
+	                  --step=step --invariant=IgnoreWindowDoesNotMutateInvariants \
+	                  --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache $(VAP)
+	@echo y | $(QUINT) verify --main=ValidatingAdmissionPolicy --init=initFailPolicy \
+	                 --step=step --invariant=FailWindowDoesNotMutateInvariants \
+	                 --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache $(VAP)
+
+.PHONY: verify-vap
+verify-vap: verify-vap-counterexample verify-vap-fail-heals verify-vap-random verify-vap-apalache  ## Full FM-VAP-37 suite
+
 .PHONY: verify-probabilistic
 verify-probabilistic:  ## Issue #29 — PRISM/STORM tail-risk for FM-2/FM-23 (skips if PRISM absent)
 	@if ! command -v prism >/dev/null 2>&1 && ! command -v storm >/dev/null 2>&1; then \

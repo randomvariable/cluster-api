@@ -4666,3 +4666,35 @@ Notes:
 
   * Apalache scaling on Lifecycle.qnt at depth 8 has historically grown super-linearly because of the per-machine cartesian state. FM-23 at depth 12 is the most likely to hit the wall and route to TLC-with-symmetry (see issue #23 exemplars).
   * The bumped depths catch fault-recovery sequences that the depth-4 verdict cannot see — at depth 8 a sequence like `RemoveStuckLearner; DeleteFailedMachine; AddMachine; BeginJoin; ...` (8 transitions to recreate a machine) finally fits inside the symbolic horizon. If any such sequence DOES make a previously-hopeless FM reachable, that's a false-positive on the FM (recovery action erroneously excluded from `stepNoRecovery`) — record it in counterexample-log.md.
+
+## FM-VAP-37 — VAP CEL eval timeout + failurePolicy=Ignore (issue #37)
+
+**Scenario.** A `ValidatingAdmissionPolicy` references a remote
+resource via `Param`; CEL eval exceeds the apiserver's 1-second hard
+cap. With `failurePolicy=Ignore`, the admission plugin treats the
+timeout as "no objection" and the request is admitted. If the request
+violated the VAP's intent (e.g. a ClusterClass-related VAP guarding a
+schema rule), the cluster lands a silently-invalid resource.
+
+**Model.** `formal/specs/ValidatingAdmissionPolicy.qnt`. Single VAP
+with a parameterised `failurePolicy`, a `celBroken` boolean, and a
+stream of pending requests with per-request `validity` and
+`evalOutcome`. Actions: `CelBecomesBroken`, `CelGetsFixed`,
+`SubmitInvalidRequest(r)`, `ResolveRequest(r)`.
+
+**Counterexample.** `ignoreAdmitsInvalidRun` (and `IgnoreWindowDoes
+NotMutateInvariants` invariant) reaches `persistedInvalid = {1}` —
+the Invalid request lands silently. Run via `make
+verify-vap-counterexample`.
+
+**Recovery.** `CelGetsFixed`. After CEL is fixed, future requests
+honour the policy. The invalid resource that landed during the
+broken window must be cleaned up by an out-of-band controller
+reconcile (modelled out-of-scope here).
+
+**Classification**: **MODELLING-GAP** (silent admission under
+Ignore is intentional by the VAP semantics; the failure surfaces a
+policy-design hazard, not an apiserver bug). Provenance: Operational
+(observed in production clusters where CEL referenced a custom
+resource that was rate-limited or unavailable) + Modelling
+(counterexample reproduced here).
