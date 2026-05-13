@@ -1384,3 +1384,31 @@ References that name a function symbolically (without a
 landing site is identified. TBD rows are reviewed at every CAEP
 status promotion and may not persist past `status:
 implementable`.
+
+### Adversarial-FM specs (issues #62-#103)
+
+Each row maps a Quint spec for an adversarial scenario to the
+closest CAPI/Kubernetes Go entry point. Some failure modes are
+upstream-cloud or upstream-kubelet behaviours that CAPI must
+tolerate; for those, the Go reference is the *consumer* of the
+behaviour (the code that experiences the failure).
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| SpotTerminationDrain | `SpotNoticeReceived` / `HardTerminate` / `NoHardTerminate` | internal/controllers/machine/machine_controller.go:841 (`drainNode`); cloud provider observers | Drain MUST begin and complete inside the spot-termination notice deadline (cloud-issued). |
+| NtpClockSkew | `IssueCert` / `KubeletVerify` / `CertVerificationToleratesSkew` | k8s.io/kubernetes/pkg/kubelet/certificate (kubelet client cert rotation) | kubelet TLS verify must tolerate NTP-bounded clock skew via skewTolerance. |
+| LeapSecondMonotonic | `LeapSecond` / `MonotonicTimeoutNonNegative` | k8s.io/client-go/util/workqueue (timeout calcs); pkg/kubelet/kubelet.go (heartbeat) | Timeouts MUST use monotonicTime, never wallClock. |
+| EventFloodCompaction | `EmitEvent` / `CompactExpired` / `CriticalEventsDurableForBound` | k8s.io/client-go/tools/record (event recorder); upstream etcd event TTL | Critical events stay in the store long enough for forensics. |
+| SaImpersonation | `ActAs` / `EffectivePermissionsBoundedByTransitiveClosure` | k8s.io/apiserver/pkg/authentication/serviceaccount; k8s.io/apiserver/pkg/admission (admission RBAC) | Effective permissions bounded by the transitive impersonation closure. |
+| CrdFieldPruning | `WriteObject` / `NoSilentDataLoss` | k8s.io/apiserver/pkg/storage/value (CRD validation + pruning) | preserveUnknownFields=false must not silently drop fields the controller relies on. |
+| CrdRemovedMidReconcile | `DeleteCrd` / `ControllerHandlesCrdMissing` | sigs.k8s.io/controller-runtime/pkg/controller (watch lifecycle); each CAPI manager | Controller manager handles a deleted CRD gracefully (no nil-pointer panic). |
+| SpotPoolDrain | `PoolWideNotice` / `NoCascadingFailureBeyondPoolSize` | internal/controllers/machine/drain (concurrent drain budget) | A pool-wide spot notice does not cascade past the declared budget. |
+| ApiserverPressureQueue | `ApiserverReturns429` / `DegradedModeStable` | sigs.k8s.io/controller-runtime/pkg/client (rate limit + backoff); k8s.io/apiserver (priority queue) | Workqueue does not grow unbounded under 429 + CPU throttle. |
+| BootstrapSecretTtl | `SecretExpire` / `NoExpiredSecretInUse` | bootstrap/kubeadm/internal/controllers (KubeadmConfig secret rotation) | Bootstrap secrets are regenerated on expiry; provisioner does not consume a stale secret. |
+| BootstrapDataSize | `ProviderApplies` / `BootstrapDataFitsLimitOrPreflightRejects` | bootstrap/kubeadm (cloud-init generation); per-provider userData limit | Bootstrap data fits the provider's cap, or preflight rejects before submit. |
+| MultiManagerWorkload | `ManagerJoinsMember` / `WorkloadHasUniqueAuthoritativeManager` | controlplane/kubeadm/internal/controllers/controller.go (cluster reconciler) | Only the lease-holding management cluster acts on a workload. |
+| PropagationPolicyMismatch | `ControllerStartsDeletion` / `OperatorObservedPolicyMatchesActual` | sigs.k8s.io/cluster-api/internal/controllers (Cluster deletion) | Controller MUST honour the operator's PropagationPolicy on cascade-delete. |
+| CrossNamespaceOwnerRef | `CreateChildWithOwner` / `NoOrphanedChildPostDelete` | sigs.k8s.io/cluster-api (controllers that create children across namespaces) | Children must be co-located with parents, or wire a custom GC, to avoid orphans. |
+| CpProviderParity | `ParitySummary` | controlplane/kubeadm vs. github.com/clastix/kamaji | KCP and Kamaji share controller-runtime FMs; Kamaji skips etcd-static-pod FMs. |
+| GoalDirectedTemplates | `BadStateReachable` | n/a — verification harness | The goal-directed Apalache template MUST reach the bad state at depth ≤ 4 — a regression in the model is detected by this gate. |
+| ScalabilityEnvelope | `CounterBounded` | n/a — sanity check for `verify-envelope.sh` | Lightweight smoke test for the envelope measurement harness. |

@@ -4698,3 +4698,76 @@ policy-design hazard, not an apiserver bug). Provenance: Operational
 (observed in production clusters where CEL referenced a custom
 resource that was rate-limited or unavailable) + Modelling
 (counterexample reproduced here).
+
+## Adversarial FM scenarios from issues #62-#103
+
+The following FMs cover Quint-modelled adversarial scenarios from
+the bug-hunting issues. Each ships a Quint spec under
+`formal/specs/`, a counterexample run that witnesses the bad state,
+a positive run / invariant where the fix holds, and a Make target.
+
+| FM | Issue | Spec | Negative-witness run | Recovery / fix-witness | Make target |
+| -- | ----- | ---- | -------------------- | ---------------------- | ----------- |
+| FM-62 | #62 | SpotTerminationDrain.qnt | hardTerminateUngracefulRun | gracefulDrainRun | verify-fm62 |
+| FM-63 | #63 | NtpClockSkew.qnt | kubeletRejectsAfterSkewRun | ntpResyncRecoveryRun | verify-fm63 |
+| FM-64 | #64 | LeapSecondMonotonic.qnt | leapSecondMakesWallclockNegativeRun (wall-clock invariant violated) | monotonicSurvivesLeapSecondRun (monotonic invariant holds) | verify-fm64 |
+| FM-71 | #71 | EventFloodCompaction.qnt | criticalOverflowedRun | criticalSpacedOutRun | verify-fm71 |
+| FM-76 | #76 | SaImpersonation.qnt | aliceImpersonatesCiRunnerRun (transitive closure expands effective permissions) | aliceCannotImpersonateKcpRun | verify-fm76 |
+| FM-78 | #78 | CrdFieldPruning.qnt | silentPruneRun | preserveUnknownKeepsFieldRun | verify-fm78 |
+| FM-79 | #79 | CrdRemovedMidReconcile.qnt | controllerPanicsRun | gracefulShutdownRun | verify-fm79 |
+| FM-88 | #88 | SpotPoolDrain.qnt | poolWideCascadeRun | budgetedDrainRun | verify-fm88 |
+| FM-91 | #91 | ApiserverPressureQueue.qnt | controllerOomsRun | apiserverRecoversRun | verify-fm91 |
+| FM-92 | #92 | BootstrapSecretTtl.qnt | staleSecretRejectsRun | regenerateBeforeProvisionRun | verify-fm92 |
+| FM-93 | #93 | BootstrapDataSize.qnt | silentTruncateRun | compressBootstrapRun | verify-fm93 |
+| FM-95 | #95 | MultiManagerWorkload.qnt | rogueManagerRun | singleManagerRun | verify-fm95 |
+| FM-97 | #97 | PropagationPolicyMismatch.qnt | policyMismatchRun | policyMatchRun | verify-fm97 |
+| FM-98 | #98 | CrossNamespaceOwnerRef.qnt | crossNsOrphanRun | sameNsCleanupRun | verify-fm98 |
+| FM-99 | #99 | CpProviderParity.qnt | n/a — static parity model | ParitySummary invariant holds | verify-fm99 |
+
+Provenance: all marked **Modelling** unless cross-referenced
+upstream. Each invariant is a "what KCP / kube-apiserver / cloud
+provider should do" predicate phrased so the negative run is the
+failure mode. Counterexample-log.md carries the per-FM rows.
+
+## Goal-directed Apalache templates (issue #101)
+
+`formal/specs/GoalDirectedTemplates.qnt` is the harness for the
+"find me a state where INV violates" mode. Two test points:
+
+  1. `quint run --init=expectedCounterexampleRun --invariant='not(BadStateReachable)'`
+     MUST fail (BadStateReachable holds at the witness state).
+  2. `apalache verify --invariant='not(BadStateReachable)'`
+     (or TLC fallback) MUST find a counterexample at depth ≤ 4.
+
+A regression in either direction (counterexample no longer
+reachable, or expected counterexample is broken) fails the gate.
+
+## Scalability envelope (issue #102)
+
+`hack/tools/scripts/verify-envelope.sh` runs every spec at
+depths {4, 6, 8, 10, 12} and records `(spec, invariant, depth,
+backend, elapsed_sec, outcome)` to `scalability-envelope.tsv`.
+Run with `make verify-envelope`. The harness spec
+`ScalabilityEnvelope.qnt` is a trivial counter for the smoke test.
+Real envelope figures depend on host; the CI gate reads the TSV
+and alerts when an envelope shrinks (a previously-feasible
+(spec, depth) tuple now times out).
+
+## Streaming chaos→trace→checker (issue #103)
+
+`internal/trace/streamcheck.go` adds:
+
+  * `StreamingRecorder` — wraps a Recorder with subscriber
+    fan-out. Records pass through to the wrapped recorder; a
+    copy is sent to every subscriber channel.
+  * `StreamingCheck(ctx, ch, checker)` — incremental checker
+    consumer. Each record appends to the running prefix and the
+    checker re-checks. Failures stream out immediately for
+    operator feedback; a final verdict fires when the channel
+    closes.
+
+Two unit tests cover the fan-out and the streaming-failure path.
+The e2e wiring (chaos engine → streaming recorder → live checker
+→ Cluster.Status condition or Prometheus metric) is the next-step
+integration; the primitive lives in `internal/trace/` and the
+e2e harness can subscribe via `trace.NewStreamingRecorder(...)`.

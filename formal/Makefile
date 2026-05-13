@@ -3649,6 +3649,143 @@ lsp-list:  ## Print every Go entry-point cited in abstraction-mapping.md
 	  lsp-grounding.md | sort -u
 
 VAP := $(SPECS_DIR)/ValidatingAdmissionPolicy.qnt
+SPOTTERM := $(SPECS_DIR)/SpotTerminationDrain.qnt
+NTPSKEW := $(SPECS_DIR)/NtpClockSkew.qnt
+LEAPSEC := $(SPECS_DIR)/LeapSecondMonotonic.qnt
+EVENTFLOOD := $(SPECS_DIR)/EventFloodCompaction.qnt
+SAIMPER := $(SPECS_DIR)/SaImpersonation.qnt
+CRDPRUNE := $(SPECS_DIR)/CrdFieldPruning.qnt
+CRDMID := $(SPECS_DIR)/CrdRemovedMidReconcile.qnt
+SPOTPOOL := $(SPECS_DIR)/SpotPoolDrain.qnt
+APIPRESS := $(SPECS_DIR)/ApiserverPressureQueue.qnt
+BSTTL := $(SPECS_DIR)/BootstrapSecretTtl.qnt
+BSDSIZE := $(SPECS_DIR)/BootstrapDataSize.qnt
+MMWL := $(SPECS_DIR)/MultiManagerWorkload.qnt
+PROPPOL := $(SPECS_DIR)/PropagationPolicyMismatch.qnt
+CNSORF := $(SPECS_DIR)/CrossNamespaceOwnerRef.qnt
+CPPAR := $(SPECS_DIR)/CpProviderParity.qnt
+GOALDIR := $(SPECS_DIR)/GoalDirectedTemplates.qnt
+SCALENV := $(SPECS_DIR)/ScalabilityEnvelope.qnt
+
+.PHONY: verify-fm62
+verify-fm62:  ## FM-62 — spot termination not respected by drain (issue #62)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=SpotTerminationDrain \
+	             --init=hardTerminateUngracefulRun --step=step \
+	             --invariant=NoHardTerminate --max-steps=1 $(SPOTTERM)
+	@echo "==> random walk also finds counterexamples (expected): non-zero exit ignored"
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=SpotTerminationDrain \
+	             --invariant=NoHardTerminate \
+	             --max-samples=50 --max-steps=20 $(SPOTTERM)
+
+.PHONY: verify-fm63
+verify-fm63:  ## FM-63 — NTP drift / cert notBefore in future (issue #63)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=NtpClockSkew \
+	             --init=kubeletRejectsAfterSkewRun --step=step \
+	             --invariant=CertVerificationToleratesSkew --max-steps=1 $(NTPSKEW)
+
+.PHONY: verify-fm64
+verify-fm64:  ## FM-64 — leap second / monotonic-skip timeout invariants (issue #64)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=LeapSecondMonotonic \
+	             --init=leapSecondMakesWallclockNegativeRun --step=step \
+	             --invariant=WallclockTimeoutNonNegative --max-steps=1 $(LEAPSEC)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=LeapSecondMonotonic \
+	             --init=monotonicSurvivesLeapSecondRun --step=step \
+	             --invariant=MonotonicTimeoutNonNegative --max-steps=1 $(LEAPSEC)
+
+.PHONY: verify-fm71
+verify-fm71:  ## FM-71 — event flood + etcd compaction loses forensics (issue #71)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=EventFloodCompaction \
+	             --invariant=CriticalEventsDurableForBound \
+	             --max-samples=200 --max-steps=30 $(EVENTFLOOD)
+
+.PHONY: verify-fm76
+verify-fm76:  ## FM-76 — sa-impersonation transitive closure (issue #76)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=SaImpersonation \
+	             --invariant=EffectivePermissionsBoundedByTransitiveClosure \
+	             --max-samples=200 --max-steps=30 $(SAIMPER)
+
+.PHONY: verify-fm78
+verify-fm78:  ## FM-78 — CRD field pruning loses data (issue #78)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=CrdFieldPruning \
+	             --init=silentPruneRun --step=step \
+	             --invariant=NoSilentDataLoss --max-steps=1 $(CRDPRUNE)
+
+.PHONY: verify-fm79
+verify-fm79:  ## FM-79 — CRD removed mid-reconcile panics controller (issue #79)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=CrdRemovedMidReconcile \
+	             --init=controllerPanicsRun --step=step \
+	             --invariant=ControllerHandlesCrdMissing --max-steps=1 $(CRDMID)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=CrdRemovedMidReconcile \
+	             --init=gracefulShutdownRun --step=step \
+	             --invariant=ControllerHandlesCrdMissing --max-steps=1 $(CRDMID)
+
+.PHONY: verify-fm88
+verify-fm88:  ## FM-88 — spot pool drained simultaneously cascade (issue #88)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=SpotPoolDrain \
+	             --init=poolWideCascadeRun --step=step \
+	             --invariant=NoCascadingFailureBeyondPoolSize --max-steps=1 $(SPOTPOOL)
+
+.PHONY: verify-fm91
+verify-fm91:  ## FM-91 — apiserver pressure → workqueue OOM (issue #91)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=ApiserverPressureQueue \
+	             --init=controllerOomsRun --step=step \
+	             --invariant=DegradedModeStable --max-steps=1 $(APIPRESS)
+
+.PHONY: verify-fm92
+verify-fm92:  ## FM-92 — bootstrap secret TTL exceeded (issue #92)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=BootstrapSecretTtl \
+	             --init=staleSecretRejectsRun --step=step \
+	             --invariant=NoExpiredSecretInUse --max-steps=1 $(BSTTL)
+
+.PHONY: verify-fm93
+verify-fm93:  ## FM-93 — bootstrap data exceeds provider userData limit (issue #93)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=BootstrapDataSize \
+	             --init=silentTruncateRun --step=step \
+	             --invariant=BootstrapDataFitsLimitOrPreflightRejects --max-steps=1 $(BSDSIZE)
+
+.PHONY: verify-fm95
+verify-fm95:  ## FM-95 — two management clusters managing same workload (issue #95)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=MultiManagerWorkload \
+	             --init=rogueManagerRun --step=step \
+	             --invariant=WorkloadHasUniqueAuthoritativeManager --max-steps=1 $(MMWL)
+
+.PHONY: verify-fm97
+verify-fm97:  ## FM-97 — PropagationPolicy not honoured (issue #97)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=PropagationPolicyMismatch \
+	             --init=policyMismatchRun --step=step \
+	             --invariant=OperatorObservedPolicyMatchesActual --max-steps=1 $(PROPPOL)
+
+.PHONY: verify-fm98
+verify-fm98:  ## FM-98 — cross-namespace ownerRef orphan (issue #98)
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=CrossNamespaceOwnerRef \
+	             --init=crossNsOrphanRun --step=step \
+	             --invariant=NoOrphanedChildPostDelete --max-steps=1 $(CNSORF)
+
+.PHONY: verify-fm99
+verify-fm99:  ## FM-99 — custom CP provider parity summary (issue #99)
+	$(QUINT) run --backend=$(QUINT_BACKEND) --main=CpProviderParity \
+	             --init=init --step=step --invariant=ParitySummary --max-steps=4 $(CPPAR)
+
+.PHONY: verify-goal-directed
+verify-goal-directed:  ## Issue #101 — goal-directed Apalache exemplar
+	-@$(QUINT) run --backend=$(QUINT_BACKEND) --main=GoalDirectedTemplates \
+	             --init=expectedCounterexampleRun --step=step \
+	             --invariant='not(BadStateReachable)' --max-steps=1 $(GOALDIR)
+	@if command -v apalache-mc >/dev/null 2>&1 || command -v apalache >/dev/null 2>&1; then \
+	  echo y | $(QUINT) verify --main=GoalDirectedTemplates --init=init \
+	                   --step=step --invariant='not(BadStateReachable)' \
+	                   --max-steps=$(MAX_STEPS_APALACHE) --backend=apalache $(GOALDIR); \
+	fi
+
+.PHONY: verify-envelope
+verify-envelope:  ## Issue #102 — scalability envelope per spec
+	bash $(REPO_ROOT)/hack/tools/scripts/verify-envelope.sh | tee scalability-envelope.tsv
+
+.PHONY: verify-streaming-checkers
+verify-streaming-checkers:  ## Issue #103 — chaos→trace→streaming-checker integration
+	cd $(REPO_ROOT) && go test -count=1 -run 'TestStreamingRecorder|TestStreamingCheck' ./internal/trace/...
+
+
 
 .PHONY: verify-vap-counterexample
 verify-vap-counterexample:  ## FM-VAP-37: Ignore policy + CEL timeout admits invalid request
