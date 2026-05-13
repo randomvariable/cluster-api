@@ -3647,3 +3647,18 @@ verify-replica-sweep:  ## Issue #27 — FM-2 hopelessness verdict at N ∈ {1,2,
 lsp-list:  ## Print every Go entry-point cited in abstraction-mapping.md
 	@grep -hoE '[A-Za-z0-9_/.-]+\.go(:[0-9]+)?' abstraction-mapping.md \
 	  lsp-grounding.md | sort -u
+
+.PHONY: verify-probabilistic
+verify-probabilistic:  ## Issue #29 — PRISM/STORM tail-risk for FM-2/FM-23 (skips if PRISM absent)
+	@if ! command -v prism >/dev/null 2>&1 && ! command -v storm >/dev/null 2>&1; then \
+	  echo "SKIP: neither prism nor storm in PATH"; \
+	  echo "==> Install per https://www.prismmodelchecker.org/ then re-run"; \
+	  echo "==> Model files: formal/probabilistic/*.prism, *.props"; \
+	  echo "==> Methodology: formal/probabilistic-methodology.md"; \
+	  exit 0; \
+	fi
+	@echo "==> FM-2 quorum loss (DTMC)"
+	prism probabilistic/fm2-quorum-loss.prism probabilistic/fm2-quorum-loss.props
+	@echo ""
+	@echo "==> FM-23 drain blocked (DTMC)"
+	prism probabilistic/fm23-drain-blocked.prism probabilistic/fm23-drain-blocked.props

@@ -1,0 +1,31 @@
+// fm2-quorum-loss.prism — DTMC model of FM-2 (quorum loss) in a
+// 3-node KCP cluster, with parameterised fault and recovery rates.
+//
+// State: (alive_1, alive_2, alive_3) where alive_i ∈ {0, 1}.
+// A node fails independently with probability p_fault per time step
+// and recovers with probability p_recover per time step.
+// Quorum lost when fewer than 2 nodes are alive.
+//
+// Property file: fm2-quorum-loss.props.
+
+dtmc
+
+const double p_fault = 0.01;       // per-step fault probability per node
+const double p_recover = 0.20;     // per-step recovery probability per failed node
+const int    horizon = 1000;       // step horizon for "tail risk within H"
+
+module Node1
+    alive_1 : [0..1] init 1;
+
+    [tick] alive_1=1 -> (1 - p_fault) : (alive_1'=1) + p_fault : (alive_1'=0);
+    [tick] alive_1=0 -> p_recover     : (alive_1'=1) + (1 - p_recover) : (alive_1'=0);
+endmodule
+
+module Node2 = Node1 [ alive_1 = alive_2 ] endmodule
+module Node3 = Node1 [ alive_1 = alive_3 ] endmodule
+
+// quorum_lost when strictly fewer than two nodes are alive.
+formula quorum_lost = (alive_1 + alive_2 + alive_3) < 2;
+
+// recovered when all three nodes are alive.
+formula full_health = (alive_1 + alive_2 + alive_3) = 3;

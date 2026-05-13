@@ -1,0 +1,15 @@
+// Properties for fm23-drain-blocked.prism.
+//
+// P1: probability of eventually draining (success or force-delete).
+//     Always 1 by the model; sanity check.
+P=? [ F drained ]
+
+// P2: probability of force-delete firing (state 4 reached while in
+//     PDB stall). The key tail-risk reading.
+P=? [ F stuck_in_pdb ]
+
+// P3: probability of clean (no-PDB-stall) drain.
+P=? [ F drained & !(F<=drain_timeout stuck_in_pdb) ]
+
+// E1: expected time to drain.
+R{"steps"}=? [ F drained ]

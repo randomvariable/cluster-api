@@ -1,0 +1,17 @@
+// Properties for fm2-quorum-loss.prism.
+//
+// P1: probability of EVER entering quorum_lost within H steps.
+//     Expectation: monotonic in p_fault, saturates at ~1 for high p_fault.
+P=? [ F<=horizon quorum_lost ]
+
+// P2: probability of being in quorum_lost at step H exactly.
+//     Steady-state-like reading; depends on p_fault / (p_fault + p_recover).
+P=? [ F=horizon quorum_lost ]
+
+// P3: probability of returning to full_health after entering quorum_lost.
+//     "Mean-time-to-recover" envelope.
+P=? [ F<=horizon (quorum_lost & (X (F<=100 full_health))) ]
+
+// E1: expected number of steps until full_health.
+//     Useful for "how long does FM-2 last on average" reading.
+R{"steps"}=? [ F full_health ]
