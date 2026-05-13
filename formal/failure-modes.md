@@ -4644,3 +4644,25 @@ Parity observation: N=1 and N=2 both have quorum=2 (since `quorumOf(N) =
 N/2 + 1`, quorumOf(1)=1 and quorumOf(2)=2). At N=1 a single live voter
 suffices; at N=2 both must be alive. This is the "sharp edge" referenced
 in the issue body.
+
+## Deeper Apalache hopelessness bounds (issue #28)
+
+Targeted next-tier depths for the highest-stakes safety invariants.
+Run with `make verify-deeper-apalache`; target skips cleanly when
+apalache is not in PATH.
+
+| FM | Spec / invariant | Init / step | Current depth | Bumped to | Expected verdict |
+| -- | ---------------- | ----------- | ------------- | --------- | ---------------- |
+| FM-2 | `Lifecycle.qnt::not(HealthyControlPlane)` | `twoMachineBothUnhealthyInit / stepNoRecovery` | 4 (76 s) | 8, then 12 | HOPELESS — quorum-of-2 cluster, both unhealthy, no fault-recovery path that re-elects a leader. Depth 12 still HOPELESS unless `stepRemediation` is used. |
+| FM-3 | `Lifecycle.qnt::not(HealthyControlPlane)` | `partitionedClusterInit / stepNoRecovery` | 4 (82 s) | 8 | HOPELESS — etcd partitioned; no `HealLb` or `HealEtcdReachability` action under `stepNoRecovery`. |
+| FM-13 | `Lifecycle.qnt::not(HealthyControlPlane)` | `lbBrokenInit / stepNoRecovery` | 4 (38 s) | 8 | HOPELESS — apiserver LB broken; `stepNoRecovery` excludes `HealLb`. |
+| FM-23 | `Lifecycle.qnt::AllSafetyInvariants` | `drainStuckInit / stepNoRecovery` | 4 (278 s) | 8 | HOPELESS expected; runtime budget ~8 min (cubic in depth on this init). |
+| FM-45 | `ControllerRuntime.qnt::FM45_PerKeySerialisation` | random step | 8 | 12 | OK — per-key serialisation holds under the modelled queue. |
+| FM-48 | `ClusterE2E.qnt::FM48_NoCpBeforeInfraReady` | random step | 4 | 8 | OK — KCP cannot create CP machines before InfraReady. |
+| FM-49 | `ClusterE2E.qnt::FM49_NoWorkersBeforeCpInit` | random step | 4 | 8 | OK — MD cannot create workers before KCP init. |
+| FM-50 | `ClusterE2E.qnt::FM50_EndpointMonotonic` | random step | 4 | 8 | OK — endpoint, once set, stays set. |
+
+Notes:
+
+  * Apalache scaling on Lifecycle.qnt at depth 8 has historically grown super-linearly because of the per-machine cartesian state. FM-23 at depth 12 is the most likely to hit the wall and route to TLC-with-symmetry (see issue #23 exemplars).
+  * The bumped depths catch fault-recovery sequences that the depth-4 verdict cannot see — at depth 8 a sequence like `RemoveStuckLearner; DeleteFailedMachine; AddMachine; BeginJoin; ...` (8 transitions to recreate a machine) finally fits inside the symbolic horizon. If any such sequence DOES make a previously-hopeless FM reachable, that's a false-positive on the FM (recovery action erroneously excluded from `stepNoRecovery`) — record it in counterexample-log.md.

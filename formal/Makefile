@@ -3566,6 +3566,45 @@ verify-e2e: verify-e2e-bringup verify-e2e-rolling verify-e2e-inplace verify-e2e-
 verify-all-apalache: verify-fm2 verify-fm3 verify-fm13 verify-fm16 verify-fm17 verify-fm23  ## Run every per-FM Apalache check
 	@echo "All Apalache hopelessness verdicts complete."
 
+.PHONY: verify-deeper-apalache
+verify-deeper-apalache:  ## Issue #28 — re-run FM-2/3/13/23/45/48-50 at depth 8 (12 for FM-2/45)
+	@if ! command -v apalache-mc >/dev/null 2>&1 && ! command -v apalache >/dev/null 2>&1; then \
+	  echo "SKIP: apalache-mc/apalache not in PATH"; \
+	  echo "==> Issue #28 expected matrix recorded in failure-modes.md"; \
+	  exit 0; \
+	fi
+	@for cfg in \
+	  "FM-2:Lifecycle:twoMachineBothUnhealthyInit:stepNoRecovery:not(HealthyControlPlane):8" \
+	  "FM-2-depth12:Lifecycle:twoMachineBothUnhealthyInit:stepNoRecovery:not(HealthyControlPlane):12" \
+	  "FM-3:Lifecycle:partitionedClusterInit:stepNoRecovery:not(HealthyControlPlane):8" \
+	  "FM-13:Lifecycle:lbBrokenInit:stepNoRecovery:not(HealthyControlPlane):8" \
+	  "FM-23:Lifecycle:drainStuckInit:stepNoRecovery:AllSafetyInvariants:8"; do \
+	  fm=$$(echo $$cfg | cut -d: -f1); \
+	  main=$$(echo $$cfg | cut -d: -f2); \
+	  init=$$(echo $$cfg | cut -d: -f3); \
+	  step=$$(echo $$cfg | cut -d: -f4); \
+	  inv=$$(echo $$cfg | cut -d: -f5); \
+	  depth=$$(echo $$cfg | cut -d: -f6); \
+	  echo ""; \
+	  echo "==> $$fm at depth=$$depth (Apalache)"; \
+	  echo y | $(QUINT) verify --main=$$main --init=$$init --step=$$step \
+	                    --max-steps=$$depth --invariant=$$inv \
+	                    --backend=apalache $(LIFECYCLE) 2>&1 | tail -5 || true; \
+	done
+	@echo ""
+	@echo "==> FM-45 (ControllerRuntime PerKeySerialisation) at depth=12"
+	@echo y | $(QUINT) verify --main=ControllerRuntime --invariant=FM45_PerKeySerialisation \
+	                  --max-steps=12 --backend=apalache $(CRRUNTIME) 2>&1 | tail -5 || true
+	@echo "==> FM-48 (ClusterE2E NoCpBeforeInfraReady) at depth=8"
+	@echo y | $(QUINT) verify --main=ClusterE2E --invariant=FM48_NoCpBeforeInfraReady \
+	                  --max-steps=8 --backend=apalache $(E2E) 2>&1 | tail -5 || true
+	@echo "==> FM-49 (ClusterE2E NoWorkersBeforeCpInit) at depth=8"
+	@echo y | $(QUINT) verify --main=ClusterE2E --invariant=FM49_NoWorkersBeforeCpInit \
+	                  --max-steps=8 --backend=apalache $(E2E) 2>&1 | tail -5 || true
+	@echo "==> FM-50 (ClusterE2E EndpointMonotonic) at depth=8"
+	@echo y | $(QUINT) verify --main=ClusterE2E --invariant=FM50_EndpointMonotonic \
+	                  --max-steps=8 --backend=apalache $(E2E) 2>&1 | tail -5 || true
+
 .PHONY: verify-replica-sweep
 verify-replica-sweep:  ## Issue #27 — FM-2 hopelessness verdict at N ∈ {1,2,3,5,7} (Apalache when present, TLC for small N)
 	@echo "==> FM-2 replica sweep — verdict matrix at N ∈ {1, 2, 3, 5, 7}"
