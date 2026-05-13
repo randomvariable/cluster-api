@@ -3173,6 +3173,40 @@ verify-concurrent-remediation-apalache:  ## Apalache non-atomic gate counterexam
 .PHONY: verify-concurrent-remediation
 verify-concurrent-remediation: verify-concurrent-remediation-happy verify-concurrent-remediation-counterexample verify-concurrent-remediation-apalache  ## Full non-atomic remediation gate suite
 
+.PHONY: verify-remediation-cas-tla
+verify-remediation-cas-tla:  ## TLC check on RemediationCAS.tla — admission/commit CAS refinement (issue #110)
+	@if ! command -v $(TLC) >/dev/null 2>&1; then \
+	  echo "SKIP: tlc not in PATH"; \
+	  exit 0; \
+	fi
+	$(TLC) -config $(SPECS_DIR)/RemediationCAS.cfg $(SPECS_DIR)/RemediationCAS.tla
+
+REPO_ROOT := $(abspath ..)
+
+.PHONY: verify-remediation-cas-traces
+verify-remediation-cas-traces:  ## Run trace-validator on the CAS refinement testdata corpus (issue #110)
+	cd $(REPO_ROOT) && go test -count=1 ./internal/trace/checkers/etcdscheduler/...
+	@for fixture in \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_orphan_etcd_learner.jsonl \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_cas_stale_voter_count_aborted_pass.jsonl \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_cas_learner_promoted_aborted_pass.jsonl; do \
+	  echo "==> PASS-expected: $$fixture"; \
+	  (cd $(REPO_ROOT)/hack/tools && go run -tags tools ./trace-validator -format jsonl "$$fixture") || exit 1; \
+	done
+	@for fixture in \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_cas_stale_voter_count_fail.jsonl \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_cas_learner_promoted_fail.jsonl \
+	  $(REPO_ROOT)/internal/trace/testdata/remediation_cas_concurrent_cp_remediation_fail.jsonl; do \
+	  echo "==> FAIL-expected: $$fixture"; \
+	  if (cd $(REPO_ROOT)/hack/tools && go run -tags tools ./trace-validator -format jsonl "$$fixture") >/dev/null 2>&1; then \
+	    echo "ERROR: validator passed on FAIL-expected fixture $$fixture" >&2; exit 1; \
+	  fi; \
+	done
+
+.PHONY: verify-remediation-cas
+verify-remediation-cas: verify-remediation-cas-tla verify-remediation-cas-traces  ## Issue #110 — full admission/commit CAS refinement suite
+
 .PHONY: verify-kcp-condemned-peers-happy
 verify-kcp-condemned-peers-happy:  ## 5-node admit + wind-down carve-out stay safe
 	$(QUINT) run --backend=$(QUINT_BACKEND) --main=KCPReconcile \

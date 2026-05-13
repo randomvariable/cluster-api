@@ -1,0 +1,2 @@
+{"seq":1,"time":"2026-05-13T00:00:00Z","spec":"Remediation","action":"ReadGate","vars":{"member":"cp-2","voterSet":["1","2","3"],"inFlightCount":0,"result":true,"targetIsLearner":false,"admissionVoterCount":3},"subject":"cp-2"}
+{"seq":2,"time":"2026-05-13T00:00:01Z","spec":"Remediation","action":"CommitAdmissionAborted","vars":{"member":"cp-2","reason":"stale voter count: freshVoterSet=2 < admissionVoterCount=3"},"subject":"cp-2"}

@@ -91,6 +91,22 @@ interleave between them.
 | ConcurrentRemediationGate | `BlockAfterRead` | same | Model the race-safe branch where a stale positive read is reinterpreted as blocked instead of admitted. |
 | ConcurrentRemediationGate | `AdmitOrBlockAtomic` | `formal/specs/Remediation.tla:91-123` | Fixed variant: fuse read+commit into one atomic admission step and evaluate quorum against the full `inFlight ∪ {m}` post-state. |
 
+### RemediationCAS.tla
+
+Sibling refinement spec for `Remediation.tla` (issue #110). Pairs every
+`ReadGate`/`CommitAdmission` per-Machine and asserts the CAS-style
+consistency check the Go production code performs at commit time
+(`EtcdRemovalExpectation` in `controlplane/kubeadm/internal/workload_cluster_etcd.go`).
+
+| Spec | Action / invariant | Go reference | Purpose |
+| ---- | ------------------ | ------------ | ------- |
+| RemediationCAS | `ReadGate` | `controlplane/kubeadm/internal/controllers/remediation.go` (`canSafelyRemediateMachine`) | Admission-time snapshot: voter count and learner status at gate read. |
+| RemediationCAS | `CommitAdmission` | `controlplane/kubeadm/internal/workload_cluster_etcd.go` (`checkRemovalExpectation`) | Commit-time observation: fresh voter set and fresh learner flag inside the etcd `RemoveMember` path. |
+| RemediationCAS | `CommitAdmissionAborted` | same | Commit-time CAS abort path: the live state diverged from the admission snapshot, so the RPC is dropped and the reconcile retries. |
+| RemediationCAS | `RemoveMemberRPC` | `controlplane/kubeadm/internal/workload_cluster_etcd.go` (`RemoveEtcdMember`, `RemoveEtcdMemberByID`) | The actual `etcdctl member remove` RPC; spec demands a matching non-aborted commit. |
+| RemediationCAS | `GateAndCommitObserveConsistentState` | same | Refinement invariant: `freshVoterSet.size() >= admissionVoterCount` AND `(targetIsLearner => freshTargetIsLearner)` at every successful commit. |
+| RemediationCAS | `EveryRemoveMemberHasMatchingValidCommitAdmission` | same | Refinement invariant: every `RemoveMemberRPC` has a successful (non-aborted) `CommitAdmission` predecessor for the same Machine. |
+
 ### Drain & PDB
 
 | Spec | Action | Go reference | Purpose |

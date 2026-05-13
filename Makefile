@@ -1020,14 +1020,25 @@ verify-refinement: ## Run abstraction-mapping refinement tests (issue #13 Phase 
 	  fi
 
 .PHONY: formal-refinement
-formal-refinement: ## Run remediation trace-refinement corpus (issue #107)
+formal-refinement: ## Run remediation trace-refinement corpus (issues #107, #110)
 	go test -count=1 ./internal/trace/checkers/etcdscheduler/...
 	(cd hack/tools && go test -tags tools -count=1 ./trace-validator)
 	@for fixture in \
 	  internal/trace/testdata/remediation_orphan_etcd_learner.jsonl \
-	  internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl; do \
-	  echo "==> $$fixture"; \
+	  internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl \
+	  internal/trace/testdata/remediation_cas_stale_voter_count_aborted_pass.jsonl \
+	  internal/trace/testdata/remediation_cas_learner_promoted_aborted_pass.jsonl; do \
+	  echo "==> PASS: $$fixture"; \
 	  (cd hack/tools && go run -tags tools ./trace-validator -format jsonl "../../$$fixture") || exit 1; \
+	done
+	@for fixture in \
+	  internal/trace/testdata/remediation_cas_stale_voter_count_fail.jsonl \
+	  internal/trace/testdata/remediation_cas_learner_promoted_fail.jsonl \
+	  internal/trace/testdata/remediation_cas_concurrent_cp_remediation_fail.jsonl; do \
+	  echo "==> FAIL-expected: $$fixture"; \
+	  if (cd hack/tools && go run -tags tools ./trace-validator -format jsonl "../../$$fixture") >/dev/null 2>&1; then \
+	    echo "ERROR: validator passed on FAIL-expected fixture $$fixture" >&2; exit 1; \
+	  fi; \
 	done
 
 .PHONY: test-race

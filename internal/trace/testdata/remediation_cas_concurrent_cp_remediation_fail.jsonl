@@ -1,0 +1,6 @@
+{"seq":1,"time":"2026-05-13T00:00:00Z","spec":"Remediation","action":"ReadGate","vars":{"member":"cp-1","voterSet":["1","2","3"],"inFlightCount":0,"result":true,"targetIsLearner":false,"admissionVoterCount":3},"subject":"cp-1"}
+{"seq":2,"time":"2026-05-13T00:00:01Z","spec":"Remediation","action":"CommitAdmission","vars":{"member":"cp-1","freshVoterSet":["1","2","3"],"freshTargetIsLearner":false},"subject":"cp-1"}
+{"seq":3,"time":"2026-05-13T00:00:02Z","spec":"Remediation","action":"RemoveMemberRPC","vars":{"member":"cp-1"},"subject":"cp-1"}
+{"seq":4,"time":"2026-05-13T00:00:03Z","spec":"Remediation","action":"ReadGate","vars":{"member":"cp-2","voterSet":["1","2","3"],"inFlightCount":0,"result":true,"targetIsLearner":false,"admissionVoterCount":3},"subject":"cp-2"}
+{"seq":5,"time":"2026-05-13T00:00:04Z","spec":"Remediation","action":"CommitAdmission","vars":{"member":"cp-2","freshVoterSet":["2","3"],"freshTargetIsLearner":false},"subject":"cp-2"}
+{"seq":6,"time":"2026-05-13T00:00:05Z","spec":"Remediation","action":"RemoveMemberRPC","vars":{"member":"cp-2"},"subject":"cp-2"}

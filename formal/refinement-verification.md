@@ -189,6 +189,49 @@ Current corpus members:
 - `internal/trace/testdata/remediation_concurrent_cp_remediation.jsonl`
   - two-machine remediation trace where the second commit is correctly
     aborted after the first removal is already in flight
+- `internal/trace/testdata/remediation_cas_stale_voter_count_aborted_pass.jsonl`
+  - admission saw `admissionVoterCount=3`; before commit a concurrent
+    removal landed (`freshVoterSet.size()=2`); CAS aborts and the trace is
+    accepted (issue #110)
+- `internal/trace/testdata/remediation_cas_learner_promoted_aborted_pass.jsonl`
+  - admission saw `targetIsLearner=true`; the learner was promoted before
+    commit (`freshTargetIsLearner=false`); CAS aborts and the trace is
+    accepted (issue #110)
+
+Negative corpus (kept under `internal/trace/testdata/` but expected to fail
+validation — exercised through `make verify-remediation-cas-traces`):
+
+- `remediation_cas_stale_voter_count_fail.jsonl` — commit + RPC proceeded
+  after `freshVoterSet.size() < admissionVoterCount`; checker MUST fail
+  with `GateAndCommitObserveConsistentState`.
+- `remediation_cas_learner_promoted_fail.jsonl` — commit + RPC proceeded
+  after the learner was promoted mid-flight; checker MUST fail with
+  `GateAndCommitObserveConsistentState`.
+- `remediation_cas_concurrent_cp_remediation_fail.jsonl` — two-machine
+  trace where the second commit proceeded after the first removal already
+  dropped the voter count below the admission snapshot; checker MUST fail
+  with `GateAndCommitObserveConsistentState`.
+
+## RemediationCAS.tla (issue #110)
+
+`formal/specs/RemediationCAS.tla` is the TLA+ companion to the trace
+checker. It explicitly models the per-Machine handshake
+`ReadGate → CommitAdmission → RemoveMemberRPC` (or `ReadGate →
+CommitAdmissionAborted`) interleaved with concurrent live-state
+perturbations (`VoterRemoved`, `LearnerPromoted`, `LearnerAdded`). TLC
+enumerates the reachable state space and confirms two refinement
+invariants:
+
+- `GateAndCommitObserveConsistentState` — every successful commit was
+  CAS-consistent with its admission.
+- `EveryRemoveMemberHasMatchingValidCommitAdmission` — every RPC was
+  preceded by a non-aborted commit for the same Machine.
+
+Run with `make verify-remediation-cas-tla`. The model uses
+`Machines={m1, m2}, MaxVoters=3` — the smallest configuration that
+distinguishes both the concurrent-removal abort path and the
+learner-promotion abort path. State count: ~5.6k distinct states,
+sub-second on a modern laptop.
 
 How to add a new remediation trace:
 
