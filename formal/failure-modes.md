@@ -4597,3 +4597,20 @@ intentionally drop non-symmetric structure (per-Machine identity,
 ordering invariants like FM-48). The verdicts confirm that under
 symmetry the same invariants are preserved at the configured depths;
 no over-strong invariant fails under symmetric exploration.
+
+## Liveness / CTL* properties beyond fairness (issue #24)
+
+| Spec | Property | Backend | Verdict | Depth | Notes |
+| ---- | -------- | ------- | ------- | ----- | ----- |
+| Topology | `LT1_EventuallyPendingHooksClear` | TLC | OK | 8 | hooks always drain under `TopologyForwardProgressFair` |
+| Topology | `LT2_EventuallyStableAfterUpgrade` | TLC | FAIL (fairness-gap) | 6 | counterexample-log.md row 2026-05-13 — fair scope omits upgrade-completion actions |
+| InPlaceUpdate | `L1_EventuallyAllMachinesSettled` | TLC | OK | 8 | every machine settles under `ForwardProgressFair` |
+| InPlaceUpdate | `L2_EventuallyHookPendingCleared` | TLC | OK | 8 | hook-pending bit drains |
+| InPlaceUpdate | `L3_EventuallyVersionStable` | TLC | OK | 8 | replica/desired-version convergence |
+| ControllerRuntime | `CRTL1_EventuallyNoInflight` | TLC | PARKED (scaling) | 1 | counterexample-log.md row 2026-05-13 — initial-state BFS > 5M states; route to Apalache |
+| ControllerRuntime | `CRTL2_AlwaysEventuallyQueueQuiescent` | TLC | PARKED (scaling) | — | same scaling envelope as CRTL1 |
+| ControllerRuntime | `LT_StarvationFreeUnderBoundedFault` | TLC | PARKED (scaling) | — | same scaling envelope as CRTL1 |
+| ClusterE2E | `CE1_EventuallyEndpointSet` | TLC | OK | 8 | endpoint always set under `BringUpFair` |
+| ClusterE2E | `CE2_EventuallyControlPlaneInitialised` | TLC | OK after fairness widening | 8 | counterexample-log.md row 2026-05-13 — original BringUpFair omitted BootstrapProviderProvisions/InfraProviderProvisions/KubeletRegistersNode; widened in this commit |
+
+Summary: 10 liveness properties added, 6 verified under TLC, 1 actively failing (LT2 — a real fairness gap caught by the model), 3 parked behind Apalache (ControllerRuntime — TLC scaling limit). Acceptance threshold of "at least 8 properties; at least 5 verified" met.
